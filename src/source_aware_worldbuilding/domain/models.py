@@ -1,0 +1,139 @@
+from __future__ import annotations
+
+from datetime import UTC, datetime
+
+from pydantic import BaseModel, Field
+
+from source_aware_worldbuilding.domain.enums import (
+    ClaimKind,
+    ClaimStatus,
+    ExtractionRunStatus,
+    QueryMode,
+    ReviewDecision,
+    ReviewState,
+)
+
+
+def utc_now() -> str:
+    return datetime.now(UTC).isoformat()
+
+
+class SourceRecord(BaseModel):
+    source_id: str
+    title: str
+    author: str | None = None
+    year: str | None = None
+    source_type: str = "document"
+    locator_hint: str | None = None
+    zotero_item_key: str | None = None
+    collection_key: str | None = None
+    abstract: str | None = None
+    url: str | None = None
+
+
+class TextUnit(BaseModel):
+    text_unit_id: str
+    source_id: str
+    locator: str
+    text: str
+    ordinal: int = 0
+    checksum: str | None = None
+
+
+class EvidenceSnippet(BaseModel):
+    evidence_id: str
+    source_id: str
+    locator: str
+    text: str
+    notes: str | None = None
+    checksum: str | None = None
+
+
+class CandidateClaim(BaseModel):
+    candidate_id: str
+    subject: str
+    predicate: str
+    value: str
+    claim_kind: ClaimKind
+    status_suggestion: ClaimStatus
+    review_state: ReviewState = ReviewState.PENDING
+    place: str | None = None
+    time_start: str | None = None
+    time_end: str | None = None
+    viewpoint_scope: str | None = None
+    evidence_ids: list[str] = Field(default_factory=list)
+    extractor_run_id: str | None = None
+    notes: str | None = None
+
+
+class ApprovedClaim(BaseModel):
+    claim_id: str
+    subject: str
+    predicate: str
+    value: str
+    claim_kind: ClaimKind
+    status: ClaimStatus
+    place: str | None = None
+    time_start: str | None = None
+    time_end: str | None = None
+    viewpoint_scope: str | None = None
+    author_choice: bool = False
+    evidence_ids: list[str] = Field(default_factory=list)
+    notes: str | None = None
+
+
+class ExtractionRun(BaseModel):
+    run_id: str
+    status: ExtractionRunStatus = ExtractionRunStatus.PENDING
+    source_count: int = 0
+    text_unit_count: int = 0
+    candidate_count: int = 0
+    started_at: str = Field(default_factory=utc_now)
+    completed_at: str | None = None
+    error: str | None = None
+    notes: str | None = None
+
+
+class ReviewEvent(BaseModel):
+    review_id: str
+    candidate_id: str
+    decision: ReviewDecision
+    reviewed_at: str = Field(default_factory=utc_now)
+    override_status: ClaimStatus | None = None
+    notes: str | None = None
+    approved_claim_id: str | None = None
+
+
+class ExtractionOutput(BaseModel):
+    run: ExtractionRun
+    candidates: list[CandidateClaim] = Field(default_factory=list)
+    evidence: list[EvidenceSnippet] = Field(default_factory=list)
+
+
+class ReviewRequest(BaseModel):
+    decision: ReviewDecision
+    override_status: ClaimStatus | None = None
+    notes: str | None = None
+
+
+class QueryFilter(BaseModel):
+    status: ClaimStatus | None = None
+    claim_kind: ClaimKind | None = None
+    place: str | None = None
+    viewpoint_scope: str | None = None
+
+
+class QueryRequest(BaseModel):
+    question: str
+    mode: QueryMode = QueryMode.STRICT_FACTS
+    filters: QueryFilter | None = None
+
+
+class QueryResult(BaseModel):
+    question: str
+    mode: QueryMode
+    answer: str
+    supporting_claims: list[ApprovedClaim] = Field(default_factory=list)
+    evidence: list[EvidenceSnippet] = Field(default_factory=list)
+    sources: list[SourceRecord] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)

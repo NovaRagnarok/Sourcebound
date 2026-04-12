@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover"
+    />
+    <meta name="color-scheme" content="light" />
+    <title>Sourcebound Operator Console</title>
+    <link rel="stylesheet" href="./styles.css" />
+    <script>
+      window.SOURCEBOUND_API_BASE = new URLSearchParams(window.location.search).get("api") || "";
+    </script>
+    <script defer src="./data.js"></script>
+    <script defer src="./app.js"></script>
+  </head>
+  <body>
+    <div class="backdrop"></div>
+    <div class="shell">
+      <aside class="rail">
+        <div class="brand">
+          <div class="brand-mark">SB</div>
+          <div>
+            <div class="brand-name">Sourcebound</div>
+            <div class="brand-subtitle">Operator Console</div>
+          </div>
+        </div>
+
+        <nav class="nav" aria-label="Operator screens">
+          <a class="nav-item" href="#sources" data-nav="sources">Sources</a>
+          <a class="nav-item" href="#runs" data-nav="runs">Extraction Runs</a>
+          <a class="nav-item" href="#review" data-nav="review">Review Queue</a>
+          <a class="nav-item" href="#claims" data-nav="claims">Claims</a>
+          <a class="nav-item" href="#ask" data-nav="ask">Ask</a>
+        </nav>
+
+        <section class="rail-card" aria-label="Live status">
+          <div class="rail-label">Mode</div>
+          <div id="mode-badge" class="status-pill status-pill-muted">Connecting</div>
+          <div id="connection-summary" class="rail-note">Waiting for API handshake.</div>
+        </section>
+
+        <section class="rail-card">
+          <div class="rail-label">Pipeline</div>
+          <div class="pipeline">
+            <span>Sources</span>
+            <span>Extraction</span>
+            <span>Review</span>
+            <span>Canon</span>
+            <span>Ask</span>
+          </div>
+        </section>
+      </aside>
+
+      <main class="workspace">
+        <header class="topbar">
+          <div>
+            <div class="eyebrow">Internal tool</div>
+            <h1 id="screen-title">Sources</h1>
+            <p id="screen-summary" class="screen-summary">
+              Pull source records, inspect extraction runs, and move approved claims through the
+              review gate.
+            </p>
+          </div>
+          <div class="topbar-meta">
+            <div class="meta-block">
+              <span class="meta-label">API</span>
+              <span id="api-base" class="meta-value">Same origin</span>
+            </div>
+            <div class="meta-block">
+              <span class="meta-label">Last sync</span>
+              <span id="last-sync" class="meta-value">Idle</span>
+            </div>
+            <button id="refresh-all" class="ghost-button" type="button">Refresh live data</button>
+          </div>
+        </header>
+
+        <section class="metrics" aria-label="Overview metrics">
+          <div class="metric">
+            <span class="metric-label">Sources</span>
+            <strong id="metric-sources">0</strong>
+          </div>
+          <div class="metric">
+            <span class="metric-label">Queued candidates</span>
+            <strong id="metric-pending">0</strong>
+          </div>
+          <div class="metric">
+            <span class="metric-label">Approved claims</span>
+            <strong id="metric-claims">0</strong>
+          </div>
+          <div class="metric">
+            <span class="metric-label">Evidence snippets</span>
+            <strong id="metric-evidence">0</strong>
+          </div>
+        </section>
+
+        <section id="banner" class="banner" aria-live="polite"></section>
+        <section id="app" class="workspace-panel" aria-live="polite"></section>
+      </main>
+    </div>
+  </body>
+</html>

@@ -1,0 +1,18 @@
+[
+  {
+    "evidence_id": "evi-1",
+    "source_id": "src-1",
+    "locator": "folio 12r",
+    "text": "Bread prices rose sharply during the winter shortage.",
+    "notes": "Economic record",
+    "checksum": null
+  },
+  {
+    "evidence_id": "evi-2",
+    "source_id": "src-2",
+    "locator": "chapter 7",
+    "text": "Townspeople whispered that merchants were withholding grain.",
+    "notes": "Later chronicle, lower certainty",
+    "checksum": null
+  }
+]

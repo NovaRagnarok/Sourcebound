@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.org/schemas/evidence.schema.json",
+  "title": "EvidenceSnippet",
+  "type": "object",
+  "required": [
+    "evidence_id",
+    "source_id",
+    "locator",
+    "text"
+  ],
+  "properties": {
+    "evidence_id": {
+      "type": "string"
+    },
+    "source_id": {
+      "type": "string"
+    },
+    "locator": {
+      "type": "string"
+    },
+    "text": {
+      "type": "string"
+    },
+    "notes": {
+      "type": "string"
+    },
+    "checksum": {
+      "type": "string"
+    }
+  },
+  "additionalProperties": false
+}

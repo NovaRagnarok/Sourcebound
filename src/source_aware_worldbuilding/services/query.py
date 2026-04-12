@@ -1,0 +1,125 @@
+from __future__ import annotations
+
+from collections import defaultdict
+
+from source_aware_worldbuilding.domain.enums import QueryMode
+from source_aware_worldbuilding.domain.models import QueryRequest, QueryResult
+from source_aware_worldbuilding.ports import EvidenceStorePort, SourceStorePort, TruthStorePort
+
+
+class QueryService:
+    def __init__(
+        self,
+        truth_store: TruthStorePort,
+        evidence_store: EvidenceStorePort,
+        source_store: SourceStorePort,
+    ):
+        self.truth_store = truth_store
+        self.evidence_store = evidence_store
+        self.source_store = source_store
+
+    def answer(self, request: QueryRequest) -> QueryResult:
+        claims = self.truth_store.list_claims()
+        if request.filters:
+            if request.filters.status:
+                claims = [c for c in claims if c.status == request.filters.status]
+            if request.filters.claim_kind:
+                claims = [c for c in claims if c.claim_kind == request.filters.claim_kind]
+            if request.filters.place:
+                claims = [c for c in claims if c.place == request.filters.place]
+            if request.filters.viewpoint_scope:
+                claims = [c for c in claims if c.viewpoint_scope == request.filters.viewpoint_scope]
+
+        matched = self._rank_claims(request.question, claims)
+        if not matched:
+            matched = claims[:5]
+
+        warnings: list[str] = []
+        if request.mode == QueryMode.STRICT_FACTS:
+            matched = [c for c in matched if c.status.value in {"verified", "probable"}]
+            warnings.append("Strict facts mode hides rumor and legend by design.")
+        elif request.mode == QueryMode.CONTESTED_VIEWS:
+            matched = [c for c in matched if c.status.value == "contested"] or matched
+            warnings.append("Contested views mode prefers disputed claims.")
+        elif request.mode == QueryMode.RUMOR_AND_LEGEND:
+            matched = [c for c in matched if c.status.value in {"rumor", "legend"}] or matched
+            warnings.append("Rumor and legend mode surfaces low-certainty material intentionally.")
+        elif request.mode == QueryMode.CHARACTER_KNOWLEDGE:
+            warnings.append(
+                "Character knowledge mode is a placeholder until viewpoint models are richer."
+            )
+        else:
+            warnings.append("Open exploration mode may include mixed-certainty material.")
+
+        evidence = []
+        for claim in matched:
+            for evidence_id in claim.evidence_ids:
+                snippet = self.evidence_store.get_evidence(evidence_id)
+                if snippet is not None:
+                    evidence.append(snippet)
+
+        source_ids = {item.source_id for item in evidence}
+        sources = [
+            source
+            for source_id in source_ids
+            if (source := self.source_store.get_source(source_id))
+        ]
+
+        if matched:
+            answer_lines = [
+                (
+                    f"- {claim.subject}: {claim.predicate} -> {claim.value} "
+                    f"[{claim.status.value}] "
+                    f"(evidence: {', '.join(claim.evidence_ids) or 'none'})"
+                )
+                for claim in matched[:5]
+            ]
+            answer = "\n".join(answer_lines)
+        else:
+            answer = (
+                "No approved claims matched the request. Treat this as a research gap, "
+                "not as permission to guess."
+            )
+
+        return QueryResult(
+            question=request.question,
+            mode=request.mode,
+            answer=answer,
+            supporting_claims=matched[:5],
+            evidence=evidence[:10],
+            sources=sources,
+            warnings=warnings,
+        )
+
+    def _rank_claims(self, question: str, claims):
+        question_lower = question.lower().strip()
+        tokens = [token for token in question.lower().split() if token]
+        if not tokens:
+            return claims
+
+        scores = defaultdict(int)
+        for claim in claims:
+            haystack = " ".join(
+                fragment or ""
+                for fragment in [
+                    claim.subject,
+                    claim.predicate,
+                    claim.value,
+                    claim.notes,
+                    claim.place,
+                ]
+            ).lower()
+            if question_lower and question_lower in haystack:
+                scores[claim.claim_id] += max(3, len(tokens))
+            for token in tokens:
+                if token in haystack:
+                    scores[claim.claim_id] += 1
+        ranked = sorted(
+            claims,
+            key=lambda claim: (scores[claim.claim_id], claim.claim_id),
+            reverse=True,
+        )
+        strongest_score = max((scores[claim.claim_id] for claim in ranked), default=0)
+        if strongest_score <= 0:
+            return []
+        return [claim for claim in ranked if scores[claim.claim_id] == strongest_score]

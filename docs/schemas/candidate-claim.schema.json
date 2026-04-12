@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.org/schemas/candidate-claim.schema.json",
+  "title": "CandidateClaim",
+  "type": "object",
+  "required": [
+    "candidate_id",
+    "subject",
+    "predicate",
+    "value",
+    "claim_kind",
+    "status_suggestion",
+    "review_state",
+    "evidence_ids"
+  ],
+  "properties": {
+    "candidate_id": {
+      "type": "string"
+    },
+    "subject": {
+      "type": "string"
+    },
+    "predicate": {
+      "type": "string"
+    },
+    "value": {
+      "type": "string"
+    },
+    "claim_kind": {
+      "type": "string"
+    },
+    "status_suggestion": {
+      "type": "string"
+    },
+    "review_state": {
+      "type": "string"
+    },
+    "place": {
+      "type": "string"
+    },
+    "time_start": {
+      "type": "string"
+    },
+    "time_end": {
+      "type": "string"
+    },
+    "viewpoint_scope": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "evidence_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1
+    },
+    "extractor_run_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "notes": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.org/schemas/claim.schema.json",
+  "title": "ApprovedClaim",
+  "type": "object",
+  "required": [
+    "claim_id",
+    "subject",
+    "predicate",
+    "value",
+    "claim_kind",
+    "status",
+    "evidence_ids"
+  ],
+  "properties": {
+    "claim_id": {
+      "type": "string"
+    },
+    "subject": {
+      "type": "string"
+    },
+    "predicate": {
+      "type": "string"
+    },
+    "value": {
+      "type": "string"
+    },
+    "claim_kind": {
+      "type": "string"
+    },
+    "status": {
+      "type": "string"
+    },
+    "place": {
+      "type": "string"
+    },
+    "time_start": {
+      "type": "string"
+    },
+    "time_end": {
+      "type": "string"
+    },
+    "viewpoint_scope": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "author_choice": {
+      "type": "boolean",
+      "default": false
+    },
+    "evidence_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1
+    },
+    "notes": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "additionalProperties": false
+}

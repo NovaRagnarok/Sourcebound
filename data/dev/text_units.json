@@ -1,0 +1,18 @@
+[
+  {
+    "text_unit_id": "txt-1",
+    "source_id": "src-1",
+    "locator": "folio 12r",
+    "text": "Bread prices rose sharply during the winter shortage.",
+    "ordinal": 1,
+    "checksum": "seed-1"
+  },
+  {
+    "text_unit_id": "txt-2",
+    "source_id": "src-2",
+    "locator": "chapter 7",
+    "text": "Townspeople whispered that merchants were withholding grain.",
+    "ordinal": 1,
+    "checksum": "seed-2"
+  }
+]
