@@ -114,7 +114,12 @@ class FileTruthStore:
     def get_claim(self, claim_id: str) -> ApprovedClaim | None:
         return next((item for item in self.list_claims() if item.claim_id == claim_id), None)
 
-    def save_claim(self, claim: ApprovedClaim) -> None:
+    def save_claim(
+        self,
+        claim: ApprovedClaim,
+        evidence: list[EvidenceSnippet] | None = None,
+    ) -> None:
+        _ = evidence
         claims = self.list_claims()
         existing = {item.claim_id: item for item in claims}
         existing[claim.claim_id] = claim

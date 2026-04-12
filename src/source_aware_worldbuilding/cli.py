@@ -7,6 +7,15 @@ import typer
 import uvicorn
 from rich import print
 
+from source_aware_worldbuilding.adapters.postgres_backed import (
+    PostgresCandidateStore,
+    PostgresEvidenceStore,
+    PostgresExtractionRunStore,
+    PostgresReviewStore,
+    PostgresSourceStore,
+    PostgresTextUnitStore,
+    PostgresTruthStore,
+)
 from source_aware_worldbuilding.adapters.sqlite_backed import (
     SqliteCandidateStore,
     SqliteEvidenceStore,
@@ -183,6 +192,32 @@ def seed_dev_data() -> None:
         [item.model_dump(mode="json") for item in extraction_runs],
     )
     _write_json(data_dir / "review_events.json", review_events)
+
+    if settings.app_state_backend == "postgres" or settings.app_truth_backend == "postgres":
+        source_store = PostgresSourceStore(
+            settings.app_postgres_dsn,
+            settings.app_postgres_schema,
+        )
+        source_store.store.clear_all()
+        source_store.save_sources(sources)
+        PostgresTextUnitStore(
+            settings.app_postgres_dsn,
+            settings.app_postgres_schema,
+        ).save_text_units(text_units)
+        PostgresEvidenceStore(
+            settings.app_postgres_dsn,
+            settings.app_postgres_schema,
+        ).save_evidence(evidence)
+        PostgresCandidateStore(
+            settings.app_postgres_dsn,
+            settings.app_postgres_schema,
+        ).save_candidates(candidates)
+        PostgresExtractionRunStore(
+            settings.app_postgres_dsn,
+            settings.app_postgres_schema,
+        ).save_run(extraction_runs[0])
+        PostgresTruthStore(settings.app_postgres_dsn, settings.app_postgres_schema)
+        PostgresReviewStore(settings.app_postgres_dsn, settings.app_postgres_schema)
 
     if settings.app_state_backend == "sqlite" or settings.app_truth_backend == "sqlite":
         if settings.app_sqlite_path.exists():

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from hashlib import sha1
 
 from source_aware_worldbuilding.domain.enums import ClaimKind, ClaimStatus, ReviewState
@@ -11,10 +12,17 @@ from source_aware_worldbuilding.domain.models import (
     SourceRecord,
     TextUnit,
 )
+from source_aware_worldbuilding.domain.normalization import (
+    infer_place,
+    infer_time_range,
+    normalized_candidate_key,
+)
+
+SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+|\n+")
 
 
 class GraphRAGExtractionAdapter:
-    """A pragmatic extraction layer that preserves the GraphRAG seam."""
+    """Sentence-based extraction with explicit evidence mapping."""
 
     def extract_candidates(
         self,
@@ -24,76 +32,122 @@ class GraphRAGExtractionAdapter:
     ) -> ExtractionOutput:
         source_by_id = {source.source_id: source for source in sources}
         evidence: list[EvidenceSnippet] = []
-        candidates: list[CandidateClaim] = []
+        candidate_by_key: dict[tuple[str, str, str], CandidateClaim] = {}
 
         for text_unit in text_units:
             source = source_by_id.get(text_unit.source_id)
             if source is None:
                 continue
 
-            evidence_id = f"evi-{run.run_id}-{text_unit.ordinal}"
-            evidence.append(
-                EvidenceSnippet(
-                    evidence_id=evidence_id,
-                    source_id=text_unit.source_id,
-                    locator=text_unit.locator,
-                    text=text_unit.text,
-                    notes=f"Generated during extraction run {run.run_id}.",
-                    checksum=text_unit.checksum,
+            sentences = self._split_sentences(text_unit.text)
+            for sentence_index, sentence in enumerate(sentences, start=1):
+                evidence_id = f"evi-{run.run_id}-{text_unit.text_unit_id}-{sentence_index}"
+                evidence.append(
+                    EvidenceSnippet(
+                        evidence_id=evidence_id,
+                        source_id=text_unit.source_id,
+                        locator=f"{text_unit.locator}#s{sentence_index}",
+                        text=sentence,
+                        notes=f"Generated during extraction run {run.run_id}.",
+                        checksum=sha1(sentence.encode()).hexdigest(),
+                    )
                 )
-            )
 
-            status = self._suggest_status(text_unit.text)
-            predicate, value = self._extract_predicate_value(text_unit.text)
-            candidate_seed = sha1(f"{run.run_id}:{text_unit.text}".encode()).hexdigest()[:12]
-            candidates.append(
-                CandidateClaim(
-                    candidate_id=f"cand-{candidate_seed}",
-                    subject=source.title,
-                    predicate=predicate,
-                    value=value,
-                    claim_kind=self._claim_kind(source),
-                    status_suggestion=status,
-                    review_state=ReviewState.PENDING,
-                    place=source.locator_hint,
-                    evidence_ids=[evidence_id],
-                    extractor_run_id=run.run_id,
-                    notes=(
-                        "Heuristic extraction result. Replace or augment with a richer "
-                        "GraphRAG pipeline later."
-                    ),
-                )
-            )
+                for predicate, value in self._extract_claims_from_sentence(sentence):
+                    subject = self._claim_subject(sentence, source)
+                    candidate_key = normalized_candidate_key(subject, predicate, value)
+                    existing = candidate_by_key.get(candidate_key)
+                    if existing is not None:
+                        if evidence_id not in existing.evidence_ids:
+                            existing.evidence_ids.append(evidence_id)
+                        continue
 
+                    time_start, time_end = infer_time_range(sentence, source.year)
+                    candidate_seed = sha1(
+                        f"{run.run_id}:{'|'.join(candidate_key)}".encode()
+                    ).hexdigest()[:12]
+                    candidate_by_key[candidate_key] = CandidateClaim(
+                        candidate_id=f"cand-{candidate_seed}",
+                        subject=subject,
+                        predicate=predicate,
+                        value=value[:160],
+                        claim_kind=self._claim_kind(sentence, source),
+                        status_suggestion=self._suggest_status(sentence),
+                        review_state=ReviewState.PENDING,
+                        place=infer_place(sentence, source),
+                        time_start=time_start,
+                        time_end=time_end,
+                        evidence_ids=[evidence_id],
+                        extractor_run_id=run.run_id,
+                        notes="Sentence-derived extraction candidate.",
+                    )
+
+        candidates = list(candidate_by_key.values())
         run.candidate_count = len(candidates)
         run.text_unit_count = len(text_units)
         run.source_count = len(sources)
         return ExtractionOutput(run=run, candidates=candidates, evidence=evidence)
 
+    def _split_sentences(self, text: str) -> list[str]:
+        sentences = [
+            fragment.strip(" -") for fragment in SENTENCE_SPLIT_RE.split(text) if fragment.strip()
+        ]
+        if not sentences:
+            return [text.strip()]
+        return sentences
+
+    def _extract_claims_from_sentence(self, sentence: str) -> list[tuple[str, str]]:
+        normalized = " ".join(sentence.split())
+        lower = normalized.lower()
+
+        if " whispered that " in lower:
+            return [("rumored_that", self._after_phrase(normalized, "whispered that"))]
+        if " withholding " in lower or " withheld " in lower:
+            return [("withheld", normalized)]
+        if " rose " in f" {lower} ":
+            return [("rose_during", normalized)]
+        if " was said to " in lower:
+            return [("was_said_to", self._after_phrase(normalized, "was said to"))]
+        if " during " in lower:
+            return [("occurred_during", self._after_phrase(normalized, "during"))]
+        if len(normalized.split()) >= 5:
+            return [("described_as", normalized)]
+        return []
+
+    def _after_phrase(self, sentence: str, phrase: str) -> str:
+        lower_sentence = sentence.lower()
+        index = lower_sentence.find(phrase)
+        if index < 0:
+            return sentence
+        return sentence[index + len(phrase) :].strip(" .,:;")
+
+    def _claim_subject(self, sentence: str, source: SourceRecord) -> str:
+        match = re.match(
+            r"([A-Z][^,.;]{2,80}?)\s+(rose|was|were|whispered|withheld|withholding)\b",
+            sentence,
+        )
+        if match:
+            return match.group(1).strip()
+        return source.title
+
     def _suggest_status(self, text: str) -> ClaimStatus:
         text_lower = text.lower()
-        if any(word in text_lower for word in ("rumor", "whisper", "legend", "myth")):
+        if any(word in text_lower for word in ("rumor", "whisper", "legend", "myth", "said to")):
             return ClaimStatus.RUMOR
-        if any(word in text_lower for word in ("contested", "disputed", "claimed")):
+        if any(word in text_lower for word in ("contested", "disputed", "claimed", "alleged")):
             return ClaimStatus.CONTESTED
+        if any(word in text_lower for word in ("record", "ledger", "price", "documented")):
+            return ClaimStatus.VERIFIED
         return ClaimStatus.PROBABLE
 
-    def _extract_predicate_value(self, text: str) -> tuple[str, str]:
-        normalized = " ".join(text.split())
-        if " rose " in f" {normalized.lower()} ":
-            return ("rose_during", normalized[:120])
-        if " whispered " in f" {normalized.lower()} ":
-            return ("rumored_in", normalized[:120])
-        return ("described_as", normalized[:120])
-
-    def _claim_kind(self, source: SourceRecord) -> ClaimKind:
-        source_type = source.source_type.lower()
-        if source_type in {"person", "biography"}:
-            return ClaimKind.PERSON
-        if source_type in {"place", "map"}:
+    def _claim_kind(self, sentence: str, source: SourceRecord) -> ClaimKind:
+        sentence_lower = sentence.lower()
+        if any(word in sentence_lower for word in ("town", "city", "market", "square")):
             return ClaimKind.PLACE
-        if source_type in {"chronicle", "belief"}:
+        if any(word in sentence_lower for word in ("merchant", "clerk", "townspeople")):
+            return ClaimKind.PERSON
+        if any(word in sentence_lower for word in ("price", "practice", "record", "ledger")):
+            return ClaimKind.PRACTICE
+        if source.source_type.lower() in {"chronicle", "belief"}:
             return ClaimKind.BELIEF
-        if source_type in {"event"}:
-            return ClaimKind.EVENT
         return ClaimKind.OBJECT

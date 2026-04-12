@@ -29,7 +29,7 @@ The seed starts as a **modular monolith** with explicit ports and adapters. That
 - a backend seed with domain models, ports, services, and HTTP routes
 - JSON schemas for the most important records
 - architecture docs and ADRs so the shape does not drift
-- a file-backed development mode so you can start immediately
+- a Postgres-first app-state setup with an explicit file-backed fallback for quick local work
 - placeholders for the real Zotero / GraphRAG / Wikibase / Qdrant adapters
 
 This seed intentionally does **not** try to fully containerize Wikibase for local development. Wikibase should be treated as an external system behind a `TruthStorePort`, because local Wikibase setup is heavier than the rest of the MVP and should not block early domain work.
@@ -212,13 +212,21 @@ make bootstrap
 cp .env.example .env
 ```
 
-### 3. Seed dev data
+### 3. Start local infra
+
+```bash
+docker compose up -d postgres
+```
+
+Postgres is the default app-state backend. Start `qdrant` too when you want to exercise projection work locally.
+
+### 4. Seed dev data
 
 ```bash
 .venv/bin/saw seed-dev-data
 ```
 
-### 4. Run the API
+### 5. Run the API
 
 ```bash
 .venv/bin/saw serve --reload
@@ -227,13 +235,13 @@ cp .env.example .env
 API docs will be available at `http://localhost:8000/docs`.
 The operator console will be available at `http://localhost:8000/operator/`.
 
-### 5. Optional local infra
+### 6. Explicit file-backed fallback
 
 ```bash
-docker compose up -d postgres qdrant
+APP_STATE_BACKEND=file APP_TRUTH_BACKEND=file .venv/bin/saw seed-dev-data
 ```
 
-The seed uses file-backed stores by default, so Docker is optional on day one.
+Use file-backed mode when you want zero external services while shaping models, workflows, or prompts.
 
 ---
 
@@ -246,6 +254,8 @@ Use this when you are shaping models, workflows, and prompts.
 - no Zotero required
 - no Wikibase required
 - no Qdrant required
+- set `APP_STATE_BACKEND=file`
+- typically pair it with `APP_TRUTH_BACKEND=file`
 - works from `data/dev/*.json`
 
 ### Mode B — real corpus mode
@@ -253,17 +263,51 @@ Use this when you are shaping models, workflows, and prompts.
 Use this when integrating a live Zotero library.
 
 - source intake from Zotero API
-- extracted text normalization
-- candidate claims from GraphRAG
+- extracted text normalization from source metadata, notes, and attachment metadata
+- sentence-level candidate claims and evidence from the extraction pipeline
 - review still local or API-based
 
 ### Mode C — full stack mode
 
 Use this once the domain model is stable.
 
+- app/workflow state persisted to Postgres
 - canonical claims persisted to Wikibase
 - retrieval projection stored in Qdrant
 - query modes backed by approved claims and evidence
+
+### Postgres app state
+
+Default settings:
+
+```bash
+APP_STATE_BACKEND=postgres
+APP_POSTGRES_DSN=postgresql://saw:saw@localhost:5432/saw
+APP_POSTGRES_SCHEMA=sourcebound
+```
+
+This stores sources, text units, extraction runs, candidates, evidence, and review events in Postgres while preserving the same service layer and API routes.
+
+If you want the old no-infra path, switch back explicitly:
+
+```bash
+APP_STATE_BACKEND=file
+APP_TRUTH_BACKEND=file
+```
+
+### Wikibase sync
+
+To sync approved claims into Wikibase, set:
+
+```bash
+APP_TRUTH_BACKEND=wikibase
+WIKIBASE_API_URL=https://your-wikibase.example/w/api.php
+WIKIBASE_USERNAME=...
+WIKIBASE_PASSWORD=...
+WIKIBASE_PROPERTY_MAP='{"main_value":"P1","predicate":"P2","status":"P3","claim_kind":"P4","place":"P5","time_start":"P6","time_end":"P7","viewpoint_scope":"P8","notes":"P9","app_claim_id":"P10","source_id":"P11","locator":"P12","evidence_text":"P13","evidence_id":"P14"}'
+```
+
+If `WIKIBASE_PROPERTY_MAP` is omitted, Sourcebound still authenticates and syncs labels, descriptions, aliases, and a local entity-id map, but structured statements and evidence references are skipped.
 
 ---
 
@@ -326,7 +370,7 @@ That matters because the same corpus should answer different kinds of questions 
 ## Suggested near-term milestones
 
 ### Milestone 0
-Repo scaffolding, schemas, file-backed stores, and review flow.
+Repo scaffolding, schemas, Postgres-backed app state, file-backed fallback, and review flow.
 
 ### Milestone 1
 Real Zotero intake and GraphRAG candidate extraction for a narrow pilot corpus.

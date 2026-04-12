@@ -8,6 +8,7 @@ from source_aware_worldbuilding.domain.models import (
     EvidenceSnippet,
     ExtractionOutput,
     ExtractionRun,
+    ProjectionSearchResult,
     QueryRequest,
     QueryResult,
     ReviewEvent,
@@ -58,7 +59,11 @@ class CandidateStorePort(Protocol):
 class TruthStorePort(Protocol):
     def list_claims(self) -> list[ApprovedClaim]: ...
     def get_claim(self, claim_id: str) -> ApprovedClaim | None: ...
-    def save_claim(self, claim: ApprovedClaim) -> None: ...
+    def save_claim(
+        self,
+        claim: ApprovedClaim,
+        evidence: list[EvidenceSnippet] | None = None,
+    ) -> None: ...
 
 
 class EvidenceStorePort(Protocol):
@@ -78,6 +83,13 @@ class ProjectionPort(Protocol):
         claims: list[ApprovedClaim],
         evidence: list[EvidenceSnippet],
     ) -> None: ...
+    def search_claim_ids(
+        self,
+        question: str,
+        allowed_claim_ids: list[str],
+        *,
+        limit: int = 10,
+    ) -> ProjectionSearchResult: ...
 
 
 class QueryPort(Protocol):

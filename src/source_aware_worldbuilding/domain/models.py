@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -38,6 +39,7 @@ class TextUnit(BaseModel):
     text: str
     ordinal: int = 0
     checksum: str | None = None
+    notes: str | None = None
 
 
 class EvidenceSnippet(BaseModel):
@@ -129,6 +131,19 @@ class QueryRequest(BaseModel):
     filters: QueryFilter | None = None
 
 
+class QueryResultMetadata(BaseModel):
+    retrieval_backend: Literal["memory", "qdrant"] = "memory"
+    fallback_used: bool = False
+    fallback_reason: str | None = None
+
+
+class ProjectionSearchResult(BaseModel):
+    claim_ids: list[str] = Field(default_factory=list)
+    retrieval_backend: Literal["qdrant"] = "qdrant"
+    fallback_used: bool = False
+    fallback_reason: str | None = None
+
+
 class QueryResult(BaseModel):
     question: str
     mode: QueryMode
@@ -137,3 +152,4 @@ class QueryResult(BaseModel):
     evidence: list[EvidenceSnippet] = Field(default_factory=list)
     sources: list[SourceRecord] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
+    metadata: QueryResultMetadata = Field(default_factory=QueryResultMetadata)

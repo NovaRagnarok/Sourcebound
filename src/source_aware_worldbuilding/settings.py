@@ -11,10 +11,15 @@ class Settings(BaseSettings):
     app_env: str = Field(default="dev", alias="APP_ENV")
     app_host: str = Field(default="0.0.0.0", alias="APP_HOST")
     app_port: int = Field(default=8000, alias="APP_PORT")
-    app_state_backend: str = Field(default="file", alias="APP_STATE_BACKEND")
+    app_state_backend: str = Field(default="postgres", alias="APP_STATE_BACKEND")
     app_truth_backend: str = Field(default="file", alias="APP_TRUTH_BACKEND")
     app_data_dir: Path = Field(default=Path("data/dev"), alias="APP_DATA_DIR")
     app_sqlite_path: Path = Field(default=Path("runtime/sourcebound.db"), alias="APP_SQLITE_PATH")
+    app_postgres_dsn: str = Field(
+        default="postgresql://saw:saw@localhost:5432/saw",
+        alias="APP_POSTGRES_DSN",
+    )
+    app_postgres_schema: str = Field(default="sourcebound", alias="APP_POSTGRES_SCHEMA")
     app_ui_enabled: bool = Field(default=True, alias="APP_UI_ENABLED")
 
     zotero_library_type: str = Field(default="user", alias="ZOTERO_LIBRARY_TYPE")
@@ -28,8 +33,10 @@ class Settings(BaseSettings):
     llm_api_key: str | None = Field(default=None, alias="LLM_API_KEY")
 
     wikibase_base_url: str | None = Field(default=None, alias="WIKIBASE_BASE_URL")
+    wikibase_api_url: str | None = Field(default=None, alias="WIKIBASE_API_URL")
     wikibase_username: str | None = Field(default=None, alias="WIKIBASE_USERNAME")
     wikibase_password: str | None = Field(default=None, alias="WIKIBASE_PASSWORD")
+    wikibase_property_map: str | None = Field(default=None, alias="WIKIBASE_PROPERTY_MAP")
 
     qdrant_url: str = Field(default="http://localhost:6333", alias="QDRANT_URL")
     qdrant_collection: str = Field(default="approved_claims", alias="QDRANT_COLLECTION")

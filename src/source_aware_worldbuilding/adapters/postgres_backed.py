@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from pathlib import Path
-
 from source_aware_worldbuilding.domain.models import (
     ApprovedClaim,
     CandidateClaim,
@@ -11,15 +9,15 @@ from source_aware_worldbuilding.domain.models import (
     SourceRecord,
     TextUnit,
 )
-from source_aware_worldbuilding.storage.sqlite_app_state import SqliteAppStateStore
+from source_aware_worldbuilding.storage.postgres_app_state import PostgresAppStateStore
 
 
-class _SqliteAdapterBase:
-    def __init__(self, path: Path):
-        self.store = SqliteAppStateStore(path)
+class _PostgresAdapterBase:
+    def __init__(self, dsn: str, schema: str):
+        self.store = PostgresAppStateStore(dsn, schema)
 
 
-class SqliteSourceStore(_SqliteAdapterBase):
+class PostgresSourceStore(_PostgresAdapterBase):
     def list_sources(self) -> list[SourceRecord]:
         return self.store.list_models("sources", SourceRecord, order_by="source_id")
 
@@ -30,7 +28,7 @@ class SqliteSourceStore(_SqliteAdapterBase):
         self.store.upsert_models("sources", "source_id", sources)
 
 
-class SqliteTextUnitStore(_SqliteAdapterBase):
+class PostgresTextUnitStore(_PostgresAdapterBase):
     def list_text_units(self, source_id: str | None = None) -> list[TextUnit]:
         where = ("source_id", source_id) if source_id else None
         return self.store.list_models(
@@ -49,9 +47,13 @@ class SqliteTextUnitStore(_SqliteAdapterBase):
         )
 
 
-class SqliteExtractionRunStore(_SqliteAdapterBase):
+class PostgresExtractionRunStore(_PostgresAdapterBase):
     def list_runs(self) -> list[ExtractionRun]:
-        return self.store.list_models("extraction_runs", ExtractionRun, order_by="started_at DESC")
+        return self.store.list_models(
+            "extraction_runs",
+            ExtractionRun,
+            order_by="started_at DESC",
+        )
 
     def get_run(self, run_id: str) -> ExtractionRun | None:
         return self.store.get_model("extraction_runs", "run_id", run_id, ExtractionRun)
@@ -68,7 +70,7 @@ class SqliteExtractionRunStore(_SqliteAdapterBase):
         self.save_run(run)
 
 
-class SqliteCandidateStore(_SqliteAdapterBase):
+class PostgresCandidateStore(_PostgresAdapterBase):
     def list_candidates(self, review_state: str | None = None) -> list[CandidateClaim]:
         where = ("review_state", review_state) if review_state else None
         return self.store.list_models(
@@ -86,14 +88,17 @@ class SqliteCandidateStore(_SqliteAdapterBase):
             "candidates",
             "candidate_id",
             candidates,
-            extra_columns={"review_state": "review_state", "extractor_run_id": "extractor_run_id"},
+            extra_columns={
+                "review_state": "review_state",
+                "extractor_run_id": "extractor_run_id",
+            },
         )
 
     def update_candidate(self, candidate: CandidateClaim) -> None:
         self.save_candidates([candidate])
 
 
-class SqliteEvidenceStore(_SqliteAdapterBase):
+class PostgresEvidenceStore(_PostgresAdapterBase):
     def list_evidence(self, source_id: str | None = None) -> list[EvidenceSnippet]:
         where = ("source_id", source_id) if source_id else None
         return self.store.list_models(
@@ -115,7 +120,7 @@ class SqliteEvidenceStore(_SqliteAdapterBase):
         )
 
 
-class SqliteTruthStore(_SqliteAdapterBase):
+class PostgresTruthStore(_PostgresAdapterBase):
     def list_claims(self) -> list[ApprovedClaim]:
         return self.store.list_models("claims", ApprovedClaim, order_by="claim_id")
 
@@ -131,7 +136,7 @@ class SqliteTruthStore(_SqliteAdapterBase):
         self.store.upsert_models("claims", "claim_id", [claim])
 
 
-class SqliteReviewStore(_SqliteAdapterBase):
+class PostgresReviewStore(_PostgresAdapterBase):
     def list_reviews(self, candidate_id: str | None = None) -> list[ReviewEvent]:
         where = ("candidate_id", candidate_id) if candidate_id else None
         return self.store.list_models(

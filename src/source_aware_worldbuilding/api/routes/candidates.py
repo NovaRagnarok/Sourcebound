@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from source_aware_worldbuilding.api.dependencies import get_candidate_store, get_review_service
+from source_aware_worldbuilding.domain.errors import WikibaseSyncError
 from source_aware_worldbuilding.domain.models import ReviewRequest
 from source_aware_worldbuilding.services.review import ReviewService
 
@@ -31,7 +32,10 @@ def review_candidate(
     payload: ReviewRequest,
     service: ReviewService = Depends(get_review_service),
 ) -> dict:
-    approved = service.review_candidate(candidate_id, payload)
+    try:
+        approved = service.review_candidate(candidate_id, payload)
+    except WikibaseSyncError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
     if payload.decision.value == "reject":
         return {"status": "rejected", "candidate_id": candidate_id}
     if approved is None:

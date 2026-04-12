@@ -8,6 +8,7 @@ from source_aware_worldbuilding.adapters.file_backed import (
 )
 from source_aware_worldbuilding.cli import seed_dev_data
 from source_aware_worldbuilding.domain.enums import ClaimStatus, ReviewDecision, ReviewState
+from source_aware_worldbuilding.domain.errors import WikibaseSyncError
 from source_aware_worldbuilding.domain.models import ReviewRequest
 from source_aware_worldbuilding.services.review import ReviewService
 
@@ -95,4 +96,34 @@ def test_review_missing_candidate_returns_none(temp_data_dir: Path) -> None:
         service.review_candidate("missing", ReviewRequest(decision=ReviewDecision.APPROVE)) is None
     )
     assert truth_store.list_claims() == []
+    assert review_store.list_reviews() == []
+
+
+class FailingTruthStore(FileTruthStore):
+    def save_claim(self, claim, evidence=None) -> None:
+        _ = claim, evidence
+        raise WikibaseSyncError("Wikibase sync failed: upstream unavailable")
+
+
+def test_review_keeps_candidate_pending_when_wikibase_sync_fails(temp_data_dir: Path) -> None:
+    seed_dev_data()
+    candidate_store = FileCandidateStore(temp_data_dir)
+    review_store = FileReviewStore(temp_data_dir)
+    service = ReviewService(
+        candidate_store=candidate_store,
+        truth_store=FailingTruthStore(temp_data_dir),
+        review_store=review_store,
+        evidence_store=FileEvidenceStore(temp_data_dir),
+    )
+
+    try:
+        service.review_candidate("cand-1", ReviewRequest(decision=ReviewDecision.APPROVE))
+    except WikibaseSyncError as exc:
+        assert "upstream unavailable" in str(exc)
+    else:
+        raise AssertionError("Expected WikibaseSyncError")
+
+    candidate = candidate_store.get_candidate("cand-1")
+    assert candidate is not None
+    assert candidate.review_state == ReviewState.PENDING
     assert review_store.list_reviews() == []

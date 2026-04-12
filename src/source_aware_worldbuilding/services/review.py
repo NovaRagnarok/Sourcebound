@@ -53,8 +53,11 @@ class ReviewService:
             self.review_store.save_review(review)
             return None
 
-        candidate.review_state = ReviewState.APPROVED
-        self.candidate_store.update_candidate(candidate)
+        evidence = [
+            snippet
+            for evidence_id in candidate.evidence_ids
+            if (snippet := self.evidence_store.get_evidence(evidence_id)) is not None
+        ]
 
         approved = ApprovedClaim(
             claim_id=f"claim-{uuid4().hex[:12]}",
@@ -74,14 +77,11 @@ class ReviewService:
             evidence_ids=candidate.evidence_ids,
             notes=request.notes or candidate.notes,
         )
-        self.truth_store.save_claim(approved)
+        self.truth_store.save_claim(approved, evidence=evidence)
+        candidate.review_state = ReviewState.APPROVED
+        self.candidate_store.update_candidate(candidate)
         review.approved_claim_id = approved.claim_id
         self.review_store.save_review(review)
         if self.projection is not None:
-            evidence = [
-                snippet
-                for evidence_id in approved.evidence_ids
-                if (snippet := self.evidence_store.get_evidence(evidence_id)) is not None
-            ]
             self.projection.upsert_claims([approved], evidence)
         return approved

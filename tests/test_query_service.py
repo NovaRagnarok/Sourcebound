@@ -11,6 +11,7 @@ from source_aware_worldbuilding.domain.enums import ClaimKind, ClaimStatus, Quer
 from source_aware_worldbuilding.domain.models import (
     ApprovedClaim,
     EvidenceSnippet,
+    ProjectionSearchResult,
     QueryFilter,
     QueryRequest,
     SourceRecord,
@@ -144,11 +145,24 @@ def populate_query_fixtures(data_dir: Path) -> None:
     )
 
 
-def build_query_service(data_dir: Path) -> QueryService:
+class FakeProjection:
+    def __init__(self, result: ProjectionSearchResult):
+        self.result = result
+
+    def upsert_claims(self, claims, evidence) -> None:
+        _ = claims, evidence
+
+    def search_claim_ids(self, question: str, allowed_claim_ids: list[str], *, limit: int = 10):
+        _ = question, allowed_claim_ids, limit
+        return self.result
+
+
+def build_query_service(data_dir: Path, projection=None) -> QueryService:
     return QueryService(
         truth_store=FileTruthStore(data_dir),
         evidence_store=FileEvidenceStore(data_dir),
         source_store=FileSourceStore(data_dir),
+        projection=projection,
     )
 
 
@@ -204,6 +218,8 @@ def test_query_modes_return_expected_claims_and_warnings(temp_data_dir: Path) ->
         assert result.sources[0].source_id == expected_source_id
         assert warning_fragment in result.warnings[0]
         assert result.answer.startswith(f"- {result.supporting_claims[0].subject}")
+        assert result.metadata.retrieval_backend == "memory"
+        assert result.metadata.fallback_used is False
 
 
 def test_query_filters_can_narrow_matching_claims(temp_data_dir: Path) -> None:
@@ -223,6 +239,7 @@ def test_query_filters_can_narrow_matching_claims(temp_data_dir: Path) -> None:
     assert result.supporting_claims[0].status == ClaimStatus.PROBABLE
     assert result.evidence[0].evidence_id == "evi-5"
     assert result.sources[0].source_id == "src-5"
+    assert result.metadata.retrieval_backend == "memory"
 
 
 def test_query_strict_facts_reports_gap_when_only_uncertain_claims_remain(
@@ -285,3 +302,55 @@ def test_query_strict_facts_reports_gap_when_only_uncertain_claims_remain(
     assert result.evidence == []
     assert result.sources == []
     assert result.answer.startswith("No approved claims matched")
+    assert result.metadata.retrieval_backend == "memory"
+
+
+def test_query_uses_projection_when_available(temp_data_dir: Path) -> None:
+    populate_query_fixtures(temp_data_dir)
+    service = build_query_service(
+        temp_data_dir,
+        projection=FakeProjection(
+            ProjectionSearchResult(claim_ids=["claim-probable-2", "claim-probable-1"])
+        ),
+    )
+
+    result = service.answer(
+        QueryRequest(
+            question="Market gossip about bread prices",
+            mode=QueryMode.OPEN_EXPLORATION,
+            filters=QueryFilter(status=ClaimStatus.PROBABLE),
+        )
+    )
+
+    assert [claim.claim_id for claim in result.supporting_claims[:2]] == [
+        "claim-probable-2",
+        "claim-probable-1",
+    ]
+    assert result.metadata.retrieval_backend == "qdrant"
+    assert result.metadata.fallback_used is False
+
+
+def test_query_falls_back_to_memory_when_projection_fails(temp_data_dir: Path) -> None:
+    populate_query_fixtures(temp_data_dir)
+    service = build_query_service(
+        temp_data_dir,
+        projection=FakeProjection(
+            ProjectionSearchResult(
+                fallback_used=True,
+                fallback_reason="Qdrant is disabled.",
+            )
+        ),
+    )
+
+    result = service.answer(
+        QueryRequest(
+            question="Rouen bread prices",
+            mode=QueryMode.STRICT_FACTS,
+        )
+    )
+
+    assert result.supporting_claims[0].claim_id == "claim-verified-1"
+    assert result.metadata.retrieval_backend == "memory"
+    assert result.metadata.fallback_used is True
+    assert result.metadata.fallback_reason == "Qdrant is disabled."
+    assert any("Qdrant fallback" in warning for warning in result.warnings)

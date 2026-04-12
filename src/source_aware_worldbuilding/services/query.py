@@ -3,8 +3,18 @@ from __future__ import annotations
 from collections import defaultdict
 
 from source_aware_worldbuilding.domain.enums import QueryMode
-from source_aware_worldbuilding.domain.models import QueryRequest, QueryResult
-from source_aware_worldbuilding.ports import EvidenceStorePort, SourceStorePort, TruthStorePort
+from source_aware_worldbuilding.domain.models import (
+    ProjectionSearchResult,
+    QueryRequest,
+    QueryResult,
+    QueryResultMetadata,
+)
+from source_aware_worldbuilding.ports import (
+    EvidenceStorePort,
+    ProjectionPort,
+    SourceStorePort,
+    TruthStorePort,
+)
 
 
 class QueryService:
@@ -13,10 +23,12 @@ class QueryService:
         truth_store: TruthStorePort,
         evidence_store: EvidenceStorePort,
         source_store: SourceStorePort,
+        projection: ProjectionPort | None = None,
     ):
         self.truth_store = truth_store
         self.evidence_store = evidence_store
         self.source_store = source_store
+        self.projection = projection
 
     def answer(self, request: QueryRequest) -> QueryResult:
         claims = self.truth_store.list_claims()
@@ -30,11 +42,27 @@ class QueryService:
             if request.filters.viewpoint_scope:
                 claims = [c for c in claims if c.viewpoint_scope == request.filters.viewpoint_scope]
 
-        matched = self._rank_claims(request.question, claims)
+        projection_result = self._search_projection(request.question, claims)
+        if projection_result is not None and not projection_result.fallback_used:
+            matched = self._claims_from_projection(claims, projection_result.claim_ids)
+        else:
+            matched = self._rank_claims(request.question, claims)
         if not matched:
             matched = claims[:5]
 
         warnings: list[str] = []
+        metadata = QueryResultMetadata(retrieval_backend="memory")
+        if projection_result is not None and not projection_result.fallback_used:
+            metadata = QueryResultMetadata(retrieval_backend="qdrant")
+        elif projection_result is not None and projection_result.fallback_used:
+            metadata = QueryResultMetadata(
+                retrieval_backend="memory",
+                fallback_used=True,
+                fallback_reason=projection_result.fallback_reason,
+            )
+            if projection_result.fallback_reason:
+                warnings.append(f"Qdrant fallback: {projection_result.fallback_reason}")
+
         if request.mode == QueryMode.STRICT_FACTS:
             matched = [c for c in matched if c.status.value in {"verified", "probable"}]
             warnings.append("Strict facts mode hides rumor and legend by design.")
@@ -89,7 +117,24 @@ class QueryService:
             evidence=evidence[:10],
             sources=sources,
             warnings=warnings,
+            metadata=metadata,
         )
+
+    def _search_projection(self, question: str, claims) -> ProjectionSearchResult | None:
+        if self.projection is None or not claims:
+            return None
+        return self.projection.search_claim_ids(
+            question,
+            [claim.claim_id for claim in claims],
+            limit=min(10, len(claims)),
+        )
+
+    def _claims_from_projection(self, claims, claim_ids: list[str]):
+        claim_by_id = {claim.claim_id: claim for claim in claims}
+        ordered = [claim_by_id[claim_id] for claim_id in claim_ids if claim_id in claim_by_id]
+        if ordered:
+            return ordered
+        return self._rank_claims("", claims)
 
     def _rank_claims(self, question: str, claims):
         question_lower = question.lower().strip()

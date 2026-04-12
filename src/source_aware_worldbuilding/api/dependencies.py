@@ -12,6 +12,15 @@ from source_aware_worldbuilding.adapters.file_backed import (
     FileTruthStore,
 )
 from source_aware_worldbuilding.adapters.graphrag_adapter import GraphRAGExtractionAdapter
+from source_aware_worldbuilding.adapters.postgres_backed import (
+    PostgresCandidateStore,
+    PostgresEvidenceStore,
+    PostgresExtractionRunStore,
+    PostgresReviewStore,
+    PostgresSourceStore,
+    PostgresTextUnitStore,
+    PostgresTruthStore,
+)
 from source_aware_worldbuilding.adapters.qdrant_adapter import QdrantProjectionAdapter
 from source_aware_worldbuilding.adapters.sqlite_backed import (
     SqliteCandidateStore,
@@ -34,48 +43,70 @@ def _sqlite_path() -> Path:
     return Path(settings.app_sqlite_path)
 
 
+def _postgres_args() -> tuple[str, str]:
+    return settings.app_postgres_dsn, settings.app_postgres_schema
+
+
 def get_source_store():
+    if settings.app_state_backend == "postgres":
+        return PostgresSourceStore(*_postgres_args())
     if settings.app_state_backend == "sqlite":
         return SqliteSourceStore(_sqlite_path())
     return FileSourceStore(settings.app_data_dir)
 
 
 def get_text_unit_store():
+    if settings.app_state_backend == "postgres":
+        return PostgresTextUnitStore(*_postgres_args())
     if settings.app_state_backend == "sqlite":
         return SqliteTextUnitStore(_sqlite_path())
     return FileTextUnitStore(settings.app_data_dir)
 
 
 def get_run_store():
+    if settings.app_state_backend == "postgres":
+        return PostgresExtractionRunStore(*_postgres_args())
     if settings.app_state_backend == "sqlite":
         return SqliteExtractionRunStore(_sqlite_path())
     return FileExtractionRunStore(settings.app_data_dir)
 
 
 def get_candidate_store():
+    if settings.app_state_backend == "postgres":
+        return PostgresCandidateStore(*_postgres_args())
     if settings.app_state_backend == "sqlite":
         return SqliteCandidateStore(_sqlite_path())
     return FileCandidateStore(settings.app_data_dir)
 
 
 def get_evidence_store():
+    if settings.app_state_backend == "postgres":
+        return PostgresEvidenceStore(*_postgres_args())
     if settings.app_state_backend == "sqlite":
         return SqliteEvidenceStore(_sqlite_path())
     return FileEvidenceStore(settings.app_data_dir)
 
 
 def get_review_store():
+    if settings.app_state_backend == "postgres":
+        return PostgresReviewStore(*_postgres_args())
     if settings.app_state_backend == "sqlite":
         return SqliteReviewStore(_sqlite_path())
     return FileReviewStore(settings.app_data_dir)
 
 
 def get_truth_store():
+    if settings.app_truth_backend == "postgres":
+        return PostgresTruthStore(*_postgres_args())
     if settings.app_truth_backend == "sqlite":
         return SqliteTruthStore(_sqlite_path())
     if settings.app_truth_backend == "wikibase":
         return WikibaseTruthStore(
             base_url=settings.wikibase_base_url,
+            api_url=settings.wikibase_api_url,
+            username=settings.wikibase_username,
+            password=settings.wikibase_password,
+            property_map_raw=settings.wikibase_property_map,
             cache_dir=settings.app_data_dir,
         )
     return FileTruthStore(settings.app_data_dir)
@@ -112,4 +143,5 @@ def get_query_service() -> QueryService:
         truth_store=get_truth_store(),
         evidence_store=get_evidence_store(),
         source_store=get_source_store(),
+        projection=get_projection(),
     )
