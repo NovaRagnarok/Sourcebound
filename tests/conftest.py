@@ -6,6 +6,7 @@ from uuid import uuid4
 import pytest
 from psycopg import connect
 from psycopg.sql import SQL, Identifier
+from qdrant_client import QdrantClient
 
 from source_aware_worldbuilding.api.main import app
 from source_aware_worldbuilding.settings import settings
@@ -43,6 +44,12 @@ def temp_data_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 
 @pytest.fixture
+def live_cache_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    monkeypatch.setattr(settings, "app_data_dir", tmp_path)
+    return tmp_path
+
+
+@pytest.fixture
 def postgres_app_state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, str | Path]:
     dsn = settings.app_postgres_dsn
     try:
@@ -65,3 +72,48 @@ def postgres_app_state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[
             connection.execute(
                 SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(Identifier(schema))
             )
+
+
+@pytest.fixture
+def require_live_zotero() -> None:
+    if not settings.zotero_library_id:
+        pytest.skip("Live Zotero test requires ZOTERO_LIBRARY_ID.")
+
+
+@pytest.fixture
+def require_live_wikibase(live_cache_dir: Path) -> Path:
+    required = {
+        "WIKIBASE_API_URL": settings.wikibase_api_url,
+        "WIKIBASE_USERNAME": settings.wikibase_username,
+        "WIKIBASE_PASSWORD": settings.wikibase_password,
+        "WIKIBASE_PROPERTY_MAP": settings.wikibase_property_map,
+    }
+    missing = [key for key, value in required.items() if not value]
+    if missing:
+        pytest.skip(f"Live Wikibase test requires {', '.join(missing)}.")
+    return live_cache_dir
+
+
+@pytest.fixture
+def live_qdrant_collection(monkeypatch: pytest.MonkeyPatch) -> str:
+    if not settings.qdrant_url:
+        pytest.skip("Live Qdrant test requires QDRANT_URL.")
+
+    collection = f"sourcebound_live_test_{uuid4().hex[:12]}"
+    client = QdrantClient(url=settings.qdrant_url, check_compatibility=False)
+    try:
+        client.get_collections()
+    except Exception as exc:
+        pytest.skip(f"Qdrant unavailable at {settings.qdrant_url}: {exc}")
+
+    monkeypatch.setattr(settings, "qdrant_enabled", True)
+    monkeypatch.setattr(settings, "qdrant_collection", collection)
+
+    try:
+        yield collection
+    finally:
+        try:
+            if client.collection_exists(collection):
+                client.delete_collection(collection)
+        except Exception:
+            pass

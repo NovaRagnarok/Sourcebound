@@ -47,6 +47,11 @@ where = ["src"]
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 addopts = "-q"
+markers = [
+  "live_zotero: exercises the real Zotero API when configured",
+  "live_wikibase: exercises the real Wikibase sync path when configured",
+  "live_qdrant: exercises the real Qdrant projection/query path when configured",
+]
 
 [tool.ruff]
 line-length = 100

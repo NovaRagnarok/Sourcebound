@@ -243,6 +243,16 @@ APP_STATE_BACKEND=file APP_TRUTH_BACKEND=file .venv/bin/saw seed-dev-data
 
 Use file-backed mode when you want zero external services while shaping models, workflows, or prompts.
 
+### 7. Optional live integration checks
+
+```bash
+.venv/bin/pytest -m live_zotero tests/test_live_integrations.py
+.venv/bin/pytest -m live_qdrant tests/test_live_integrations.py
+.venv/bin/pytest -m live_wikibase tests/test_live_integrations.py
+```
+
+Each live test skips automatically unless its real service is configured. Run the Wikibase live test only against a disposable or non-production instance, because it creates test items.
+
 ---
 
 ## Development modes
