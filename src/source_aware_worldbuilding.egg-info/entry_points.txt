@@ -1,2 +1,0 @@
-[console_scripts]
-saw = source_aware_worldbuilding.cli:app
