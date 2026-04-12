@@ -1,0 +1,20 @@
+[
+  {
+    "source_id": "src-1",
+    "title": "Municipal price records of Rouen",
+    "author": "City clerk",
+    "year": "1421",
+    "source_type": "record",
+    "locator_hint": "folios 10-14",
+    "zotero_item_key": null
+  },
+  {
+    "source_id": "src-2",
+    "title": "Later chronicle of unrest",
+    "author": "Anonymous chronicler",
+    "year": "1450",
+    "source_type": "chronicle",
+    "locator_hint": "chapter 7",
+    "zotero_item_key": null
+  }
+]

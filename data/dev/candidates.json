@@ -1,0 +1,38 @@
+[
+  {
+    "candidate_id": "cand-1",
+    "subject": "Rouen bread prices",
+    "predicate": "rose_during",
+    "value": "winter shortage",
+    "claim_kind": "practice",
+    "status_suggestion": "probable",
+    "review_state": "approved",
+    "place": "Rouen",
+    "time_start": "1421-12-01",
+    "time_end": "1422-02-28",
+    "viewpoint_scope": null,
+    "evidence_ids": [
+      "evi-1"
+    ],
+    "extractor_run_id": "seed-run",
+    "notes": "Derived from municipal records."
+  },
+  {
+    "candidate_id": "cand-2",
+    "subject": "Merchant grain hoarding",
+    "predicate": "rumored_in",
+    "value": "Rouen",
+    "claim_kind": "belief",
+    "status_suggestion": "rumor",
+    "review_state": "pending",
+    "place": "Rouen",
+    "time_start": "1422-01-01",
+    "time_end": "1422-01-31",
+    "viewpoint_scope": "townspeople",
+    "evidence_ids": [
+      "evi-2"
+    ],
+    "extractor_run_id": "seed-run",
+    "notes": "Rumor, not a verified economic fact."
+  }
+]

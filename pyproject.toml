@@ -1,0 +1,63 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "source-aware-worldbuilding"
+version = "0.1.0"
+description = "Source-grounded lore bible seed repository"
+readme = "README.md"
+requires-python = ">=3.11,<3.13"
+authors = [{ name = "OpenAI", email = "noreply@example.com" }]
+dependencies = [
+  "fastapi>=0.115.0",
+  "uvicorn[standard]>=0.30.0",
+  "pydantic>=2.8.0",
+  "pydantic-settings>=2.4.0",
+  "typer>=0.12.0",
+  "httpx>=0.27.0",
+  "qdrant-client>=1.10.0",
+  "python-dotenv>=1.0.1",
+  "orjson>=3.10.0",
+  "rich>=13.7.0",
+  "tenacity>=9.0.0"
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.3.0",
+  "pytest-asyncio>=0.24.0",
+  "ruff>=0.6.0",
+  "mypy>=1.11.0"
+]
+graphrag = [
+  "graphrag"
+]
+
+[project.scripts]
+saw = "source_aware_worldbuilding.cli:app"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+ignore = ["B008"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = false
+warn_unused_ignores = true
+warn_redundant_casts = true
+warn_unused_configs = true

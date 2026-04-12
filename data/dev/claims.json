@@ -1,0 +1,19 @@
+[
+  {
+    "claim_id": "claim-de6045061b76",
+    "subject": "Rouen bread prices",
+    "predicate": "rose_during",
+    "value": "winter shortage",
+    "claim_kind": "practice",
+    "status": "probable",
+    "place": "Rouen",
+    "time_start": "1421-12-01",
+    "time_end": "1422-02-28",
+    "viewpoint_scope": null,
+    "author_choice": false,
+    "evidence_ids": [
+      "evi-1"
+    ],
+    "notes": "Derived from municipal records."
+  }
+]
