@@ -6,6 +6,7 @@ from pathlib import Path
 import typer
 import uvicorn
 from rich import print
+from rich.table import Table
 
 from source_aware_worldbuilding.adapters.postgres_backed import (
     PostgresCandidateStore,
@@ -25,6 +26,7 @@ from source_aware_worldbuilding.adapters.sqlite_backed import (
     SqliteTextUnitStore,
     SqliteTruthStore,
 )
+from source_aware_worldbuilding.adapters.zotero_adapter import ZoteroCorpusAdapter
 from source_aware_worldbuilding.domain.enums import (
     ClaimKind,
     ClaimStatus,
@@ -35,9 +37,11 @@ from source_aware_worldbuilding.domain.models import (
     CandidateClaim,
     EvidenceSnippet,
     ExtractionRun,
+    RuntimeStatus,
     SourceRecord,
     TextUnit,
 )
+from source_aware_worldbuilding.services.status import build_runtime_status
 from source_aware_worldbuilding.settings import settings
 
 app = typer.Typer(help="Source-Aware Worldbuilding CLI")
@@ -231,6 +235,150 @@ def seed_dev_data() -> None:
         SqliteReviewStore(settings.app_sqlite_path)
 
     print(f"[green]Seeded development data in {data_dir}[/green]")
+
+
+@app.command()
+def status(json_output: bool = False) -> None:
+    runtime_status = build_runtime_status()
+    if json_output:
+        typer.echo(json.dumps(runtime_status.model_dump(mode="json"), indent=2))
+        return
+
+    _print_runtime_status(runtime_status)
+
+
+def _print_runtime_status(runtime_status: RuntimeStatus) -> None:
+    print(
+        f"[bold]{runtime_status.app_name}[/bold] "
+        f"({runtime_status.app_env}) - overall status: "
+        f"[cyan]{runtime_status.overall_status}[/cyan]"
+    )
+    print(
+        "State backend: "
+        f"{runtime_status.state_backend} | Truth backend: {runtime_status.truth_backend} | "
+        f"Extraction: {runtime_status.extraction_backend} | "
+        f"Operator UI: {'enabled' if runtime_status.operator_ui_enabled else 'disabled'}"
+    )
+
+    table = Table(title="Runtime Services")
+    table.add_column("Name")
+    table.add_column("Mode")
+    table.add_column("Ready")
+    table.add_column("Detail")
+
+    for service in runtime_status.services:
+        ready_label = "yes" if service.ready else "no"
+        table.add_row(service.name, service.mode, ready_label, service.detail)
+    print(table)
+
+    if runtime_status.next_steps:
+        print("[bold]Next Steps[/bold]")
+        for step in runtime_status.next_steps:
+            print(f"- {step}")
+
+
+@app.command("zotero-check")
+def zotero_check(
+    json_output: bool = False,
+    source_limit: int = 3,
+    include_text_units: bool = True,
+) -> None:
+    report = _build_zotero_report(
+        source_limit=max(1, source_limit),
+        include_text_units=include_text_units,
+    )
+    if json_output:
+        typer.echo(json.dumps(report, indent=2))
+        return
+
+    _print_zotero_report(report)
+
+
+def _build_zotero_report(*, source_limit: int, include_text_units: bool) -> dict:
+    missing: list[str] = []
+    if not settings.zotero_library_id:
+        missing.append("ZOTERO_LIBRARY_ID")
+
+    report: dict = {
+        "configured": not missing,
+        "library_type": settings.zotero_library_type,
+        "library_id_present": bool(settings.zotero_library_id),
+        "collection_key_present": bool(settings.zotero_collection_key),
+        "api_key_present": bool(settings.zotero_api_key),
+        "base_url": settings.zotero_base_url,
+        "source_limit": source_limit,
+        "include_text_units": include_text_units,
+        "missing": missing,
+        "success": False,
+        "source_count": 0,
+        "text_unit_count": 0,
+        "sources_preview": [],
+        "text_units_preview": [],
+    }
+    if missing:
+        report["detail"] = "Zotero is not configured yet."
+        return report
+
+    adapter = ZoteroCorpusAdapter()
+    try:
+        sources = adapter.pull_sources()
+        report["source_count"] = len(sources)
+        report["sources_preview"] = [
+            source.model_dump(mode="json") for source in sources[:source_limit]
+        ]
+
+        if include_text_units and sources:
+            text_units = adapter.pull_text_units(sources[:1])
+            report["text_unit_count"] = len(text_units)
+            report["text_units_preview"] = [
+                text_unit.model_dump(mode="json") for text_unit in text_units[:source_limit]
+            ]
+
+        report["success"] = True
+        report["detail"] = "Zotero pull succeeded."
+        return report
+    except Exception as exc:
+        report["detail"] = f"Zotero pull failed: {exc}"
+        return report
+
+
+def _print_zotero_report(report: dict) -> None:
+    print("[bold]Zotero Check[/bold]")
+    if report["configured"]:
+        print(
+            "Library type: "
+            f"{report['library_type']} | "
+            f"Collection key set: {'yes' if report['collection_key_present'] else 'no'} | "
+            f"API key set: {'yes' if report['api_key_present'] else 'no'}"
+        )
+    else:
+        missing_line = (
+            "Missing: " + ", ".join(report["missing"])
+            if report["missing"]
+            else "Zotero config present."
+        )
+        print(missing_line)
+
+    print(report["detail"])
+
+    if report["success"]:
+        print(
+            f"Sources pulled: {report['source_count']} | "
+            f"Text units previewed: {report['text_unit_count']}"
+        )
+        preview_table = Table(title="Zotero Source Preview")
+        preview_table.add_column("Source ID")
+        preview_table.add_column("Title")
+        preview_table.add_column("Author")
+        preview_table.add_column("Year")
+        for source in report["sources_preview"]:
+            preview_table.add_row(
+                source["source_id"],
+                source["title"],
+                source.get("author") or "n/a",
+                source.get("year") or "n/a",
+            )
+        print(preview_table)
 
 
 if __name__ == "__main__":

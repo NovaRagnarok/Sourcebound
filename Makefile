@@ -1,4 +1,4 @@
-.PHONY: bootstrap install lint test dev seed
+.PHONY: bootstrap install lint test dev seed status
 
 bootstrap:
 	python3 -m venv .venv
@@ -18,6 +18,9 @@ test:
 
 seed:
 	.venv/bin/saw seed-dev-data
+
+status:
+	.venv/bin/saw status
 
 dev:
 	.venv/bin/saw serve --reload

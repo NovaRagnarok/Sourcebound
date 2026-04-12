@@ -5,9 +5,13 @@ import json
 import httpx
 
 from source_aware_worldbuilding.adapters.graphrag_adapter import GraphRAGExtractionAdapter
+from source_aware_worldbuilding.adapters.heuristic_extraction import (
+    HeuristicExtractionAdapter,
+)
 from source_aware_worldbuilding.adapters.qdrant_adapter import QdrantProjectionAdapter
 from source_aware_worldbuilding.adapters.wikibase_adapter import WikibaseTruthStore
 from source_aware_worldbuilding.adapters.zotero_adapter import ZoteroCorpusAdapter
+from source_aware_worldbuilding.api.dependencies import get_extractor
 from source_aware_worldbuilding.domain.enums import ClaimKind, ClaimStatus, ExtractionRunStatus
 from source_aware_worldbuilding.domain.models import (
     ApprovedClaim,
@@ -143,7 +147,7 @@ def test_zotero_adapter_retries_transient_failures(monkeypatch) -> None:
 
 
 def test_extraction_adapter_dedupes_candidates_and_infers_place_and_time() -> None:
-    adapter = GraphRAGExtractionAdapter()
+    adapter = HeuristicExtractionAdapter()
     run = ExtractionRun(run_id="run-test", status=ExtractionRunStatus.RUNNING)
     sources = [
         SourceRecord(
@@ -188,6 +192,44 @@ def test_extraction_adapter_dedupes_candidates_and_infers_place_and_time() -> No
         output.evidence[0].evidence_id,
         output.evidence[1].evidence_id,
     ]
+
+
+def test_graphrag_adapter_preserves_backend_seam_with_preview_notes() -> None:
+    adapter = GraphRAGExtractionAdapter()
+    run = ExtractionRun(run_id="run-preview", status=ExtractionRunStatus.RUNNING)
+    sources = [
+        SourceRecord(
+            source_id="src-1",
+            title="Municipal price records of Rouen",
+            year="1421",
+            source_type="record",
+        )
+    ]
+    text_units = [
+        TextUnit(
+            text_unit_id="tu-1",
+            source_id="src-1",
+            locator="folio 12r",
+            text="Bread prices rose sharply during the winter shortage.",
+            ordinal=1,
+        )
+    ]
+
+    output = adapter.extract_candidates(run=run, sources=sources, text_units=text_units)
+
+    assert output.run.notes is not None
+    assert "preview mode" in output.run.notes
+    assert output.candidates
+    assert output.candidates[0].notes is not None
+    assert "graphrag_preview" in output.candidates[0].notes
+
+
+def test_get_extractor_selects_backend_from_settings(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "graph_rag_enabled", False)
+    assert isinstance(get_extractor(), HeuristicExtractionAdapter)
+
+    monkeypatch.setattr(settings, "graph_rag_enabled", True)
+    assert isinstance(get_extractor(), GraphRAGExtractionAdapter)
 
 
 def test_wikibase_adapter_persists_expanded_entity_map(tmp_path) -> None:
@@ -409,4 +451,5 @@ def test_qdrant_projection_upserts_idempotently_without_recreating(monkeypatch) 
 
     assert client.created == 1
     assert len(client.upserts) == 2
-    assert client.upserts[0][0].id == "claim-1"
+    assert client.upserts[0][0].id == adapter._point_id("claim-1")
+    assert client.upserts[0][0].payload["claim_id"] == "claim-1"

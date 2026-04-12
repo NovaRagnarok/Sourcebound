@@ -153,3 +153,25 @@ class QueryResult(BaseModel):
     sources: list[SourceRecord] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
     metadata: QueryResultMetadata = Field(default_factory=QueryResultMetadata)
+
+
+class RuntimeDependencyStatus(BaseModel):
+    name: str
+    role: str
+    mode: str
+    configured: bool = True
+    reachable: bool | None = None
+    ready: bool = False
+    detail: str
+
+
+class RuntimeStatus(BaseModel):
+    app_name: str
+    app_env: str
+    operator_ui_enabled: bool
+    state_backend: str
+    truth_backend: str
+    extraction_backend: str
+    overall_status: str
+    services: list[RuntimeDependencyStatus] = Field(default_factory=list)
+    next_steps: list[str] = Field(default_factory=list)

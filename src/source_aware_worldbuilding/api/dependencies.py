@@ -12,6 +12,9 @@ from source_aware_worldbuilding.adapters.file_backed import (
     FileTruthStore,
 )
 from source_aware_worldbuilding.adapters.graphrag_adapter import GraphRAGExtractionAdapter
+from source_aware_worldbuilding.adapters.heuristic_extraction import (
+    HeuristicExtractionAdapter,
+)
 from source_aware_worldbuilding.adapters.postgres_backed import (
     PostgresCandidateStore,
     PostgresEvidenceStore,
@@ -116,10 +119,16 @@ def get_projection():
     return QdrantProjectionAdapter()
 
 
+def get_extractor():
+    if settings.graph_rag_enabled:
+        return GraphRAGExtractionAdapter()
+    return HeuristicExtractionAdapter()
+
+
 def get_ingestion_service() -> IngestionService:
     return IngestionService(
         corpus=ZoteroCorpusAdapter(),
-        extractor=GraphRAGExtractionAdapter(),
+        extractor=get_extractor(),
         source_store=get_source_store(),
         text_unit_store=get_text_unit_store(),
         run_store=get_run_store(),

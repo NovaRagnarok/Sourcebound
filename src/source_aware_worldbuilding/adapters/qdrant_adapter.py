@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from math import sqrt
+from uuid import NAMESPACE_URL, uuid5
 
 from source_aware_worldbuilding.domain.models import (
     ApprovedClaim,
@@ -41,7 +42,7 @@ class QdrantProjectionAdapter:
             text = self._claim_text(claim, evidence_by_id)
             points.append(
                 PointStruct(
-                    id=claim.claim_id,
+                    id=self._point_id(claim.claim_id),
                     vector=self._embed(text),
                     payload={
                         "claim_id": claim.claim_id,
@@ -147,6 +148,9 @@ class QdrantProjectionAdapter:
             if evidence_id in evidence_by_id
         )
         return f"{claim.subject} {claim.predicate} {claim.value}. {evidence_text}".strip()
+
+    def _point_id(self, claim_id: str) -> str:
+        return str(uuid5(NAMESPACE_URL, f"sourcebound:{claim_id}"))
 
     def _embed(self, text: str) -> list[float]:
         vector = [0.0] * self.VECTOR_SIZE

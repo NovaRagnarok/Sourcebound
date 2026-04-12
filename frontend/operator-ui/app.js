@@ -1,5 +1,6 @@
 (() => {
   const API = {
+    runtimeStatus: "/health/runtime",
     sources: "/v1/sources",
     runs: "/v1/extraction-runs",
     pullSources: "/v1/ingest/zotero/pull",
@@ -18,6 +19,7 @@
     lastSync: "Idle",
     banner: null,
     loading: false,
+    runtimeStatus: null,
     sources: clone(seed.sources),
     evidence: clone(seed.evidence),
     candidates: clone(seed.candidates),
@@ -57,6 +59,7 @@
     metricPending: document.getElementById("metric-pending"),
     metricClaims: document.getElementById("metric-claims"),
     metricEvidence: document.getElementById("metric-evidence"),
+    runtimePanel: document.getElementById("runtime-panel"),
     nav: Array.from(document.querySelectorAll("[data-nav]")),
   };
 
@@ -307,8 +310,20 @@
 
   function setApiStatus(online, message) {
     state.apiOnline = online;
-    nodes.modeBadge.className = online ? "status-pill status-pill-live" : "status-pill status-pill-muted";
-    nodes.modeBadge.textContent = online ? "Live API" : "Seed fallback";
+    const runtime = state.runtimeStatus;
+    let badgeClass = "status-pill status-pill-muted";
+    let badgeLabel = online ? "Live API" : "Seed fallback";
+
+    if (online && runtime?.overall_status === "ready") {
+      badgeClass = "status-pill status-pill-live";
+      badgeLabel = "Runtime ready";
+    } else if (online && runtime) {
+      badgeClass = "status-pill status-pill-warning";
+      badgeLabel = "Needs setup";
+    }
+
+    nodes.modeBadge.className = badgeClass;
+    nodes.modeBadge.textContent = badgeLabel;
     nodes.connectionSummary.textContent = message;
     nodes.apiBase.textContent = state.apiBase || "Same origin";
   }
@@ -320,12 +335,14 @@
     }
 
     try {
-      const [sourcesResult, runsResult, candidatesResult, claimsResult] = await Promise.allSettled([
-        fetchJson(API.sources),
-        fetchJson(API.runs),
-        fetchJson(API.candidates),
-        fetchJson(API.claims),
-      ]);
+      const [sourcesResult, runsResult, candidatesResult, claimsResult, runtimeResult] =
+        await Promise.allSettled([
+          fetchJson(API.sources),
+          fetchJson(API.runs),
+          fetchJson(API.candidates),
+          fetchJson(API.claims),
+          fetchJson(API.runtimeStatus),
+        ]);
 
       if (sourcesResult.status === "fulfilled") {
         state.sources = sourcesResult.value;
@@ -343,12 +360,19 @@
         state.claims = claimsResult.value;
       }
 
-      const online = [sourcesResult, runsResult, candidatesResult, claimsResult].some(
+      if (runtimeResult?.status === "fulfilled") {
+        state.runtimeStatus = runtimeResult.value;
+      }
+
+      const online = [sourcesResult, runsResult, candidatesResult, claimsResult, runtimeResult].some(
         (result) => result.status === "fulfilled"
       );
+      const runtimeSummary = summarizeRuntime();
       setApiStatus(
         online,
-        online ? "Live sources, runs, candidates, and claims loaded." : "Using seed data until the API responds."
+        online
+          ? runtimeSummary || "Live sources, runs, candidates, claims, and runtime status loaded."
+          : "Using seed data until the API responds."
       );
       updateMetrics();
       updateSelectionFallbacks();
@@ -404,9 +428,84 @@
     updateNavigation();
     updateHeader();
     updateMetrics();
+    renderRuntimeOverview();
     renderBanner();
     nodes.app.innerHTML = renderScreen();
     wireScreenTitle();
+  }
+
+  function renderRuntimeOverview() {
+    if (!state.runtimeStatus) {
+      nodes.runtimePanel.innerHTML = `
+        <div class="runtime-shell">
+          <div class="runtime-summary">
+            <p class="runtime-kicker">Runtime overview</p>
+            <h2>Waiting for backend status</h2>
+            <p>The operator console is still usable with seed data, but the runtime report has not loaded yet.</p>
+          </div>
+          <div class="helper">The API can expose a live readiness report at <code>/health/runtime</code>.</div>
+        </div>
+      `;
+      return;
+    }
+
+    const readyCount = state.runtimeStatus.services.filter((service) => service.ready).length;
+    const overallTone = state.runtimeStatus.overall_status === "ready" ? "live" : "queued";
+    const summaryLine = summarizeRuntime() || "Runtime details are available.";
+
+    nodes.runtimePanel.innerHTML = `
+      <div class="runtime-shell">
+        <div class="runtime-summary">
+          <p class="runtime-kicker">Runtime overview</p>
+          <h2>${escapeHtml(titleize(state.runtimeStatus.overall_status.replaceAll("_", " ")))}</h2>
+          <p>${escapeHtml(summaryLine)}</p>
+          <div class="service-meta">
+            <span class="pill ${escapeHtml(overallTone)}">${readyCount}/${state.runtimeStatus.services.length} services ready</span>
+            <span class="pill ${escapeHtml(state.runtimeStatus.state_backend)}">${escapeHtml(state.runtimeStatus.state_backend)} state</span>
+            <span class="pill ${escapeHtml(state.runtimeStatus.truth_backend)}">${escapeHtml(state.runtimeStatus.truth_backend)} truth</span>
+            <span class="pill ${escapeHtml(state.runtimeStatus.extraction_backend)}">${escapeHtml(state.runtimeStatus.extraction_backend)}</span>
+          </div>
+          ${
+            state.runtimeStatus.next_steps.length
+              ? `
+                <div class="field">
+                  <label>Next steps</label>
+                  <ol class="next-step-list">
+                    ${state.runtimeStatus.next_steps
+                      .map((step) => `<li>${escapeHtml(step)}</li>`)
+                      .join("")}
+                  </ol>
+                </div>
+              `
+              : "<div class='helper'>No follow-up steps are reported.</div>"
+          }
+        </div>
+        <div class="service-grid">
+          ${state.runtimeStatus.services
+            .map((service) => {
+              const tone = service.ready ? "live" : service.configured ? "failed" : "queued";
+              return `
+                <article class="service-card">
+                  <div class="service-head">
+                    <div>
+                      <strong>${escapeHtml(titleize(service.name.replaceAll("_", " ")))}</strong>
+                      <div class="detail-note">${escapeHtml(service.role)}</div>
+                    </div>
+                    <span class="pill ${escapeHtml(tone)}">${service.ready ? "ready" : "attention"}</span>
+                  </div>
+                  <div class="service-meta">
+                    <span class="code">${escapeHtml(service.mode)}</span>
+                    <span class="detail-note">configured: ${service.configured ? "yes" : "no"}</span>
+                    <span class="detail-note">reachable: ${renderReachability(service.reachable)}</span>
+                  </div>
+                  <div>${escapeHtml(service.detail)}</div>
+                </article>
+              `;
+            })
+            .join("")}
+        </div>
+      </div>
+    `;
   }
 
   function updateNavigation() {
@@ -589,7 +688,7 @@
                   <button class="list-row ${run.run_id === selected?.run_id ? "is-selected" : ""}" type="button" data-select-run="${escapeHtml(run.run_id)}">
                     <div>
                       <div class="row-title">${escapeHtml(run.run_id)}</div>
-                      <div class="row-subtitle">${escapeHtml(run.note)}</div>
+                      <div class="row-subtitle">${escapeHtml(run.notes || run.note || "Extraction run")}</div>
                     </div>
                     <div class="row-meta">
                       <span class="pill ${escapeHtml(run.status)}">${escapeHtml(run.status)}</span>
@@ -618,7 +717,7 @@
       <div class="detail-head">
         <div>
           <h3>${escapeHtml(run.run_id)}</h3>
-          <div class="detail-note">${escapeHtml(run.note)}</div>
+          <div class="detail-note">${escapeHtml(run.notes || run.note || "No run note")}</div>
         </div>
         <span class="pill ${escapeHtml(run.status)}">${escapeHtml(run.status)}</span>
       </div>
@@ -626,11 +725,11 @@
         <span>${escapeHtml(run.source_count)} sources</span>
         <span>${escapeHtml(run.candidate_count)} candidates</span>
         <span>Started: ${escapeHtml(formatDate(run.started_at))}</span>
-        <span>Finished: ${escapeHtml(run.finished_at ? formatDate(run.finished_at) : "n/a")}</span>
+        <span>Finished: ${escapeHtml(run.completed_at ? formatDate(run.completed_at) : run.finished_at ? formatDate(run.finished_at) : "n/a")}</span>
       </div>
       <div class="field">
         <label>Run note</label>
-        <div>${escapeHtml(run.note)}</div>
+        <div>${escapeHtml(run.notes || run.note || "n/a")}</div>
       </div>
       <div class="field">
         <label>Candidates from this run</label>
@@ -1091,6 +1190,7 @@
       }
       state.lastSync = new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
       nodes.lastSync.textContent = state.lastSync;
+      await refreshRuntimeStatus();
       setApiStatus(true, `Pulled ${payload.count ?? state.sources.length} sources from Zotero.`);
       setBanner("live", "Sources pulled", `Received ${payload.count ?? state.sources.length} source records from the live endpoint.`);
       render();
@@ -1127,6 +1227,7 @@
       state.selectedCandidateId = state.candidates.find((candidate) => candidate.review_state === "pending")?.candidate_id ?? state.candidates[0]?.candidate_id ?? null;
       state.lastSync = new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
       nodes.lastSync.textContent = state.lastSync;
+      await refreshRuntimeStatus();
       setApiStatus(true, `Extraction returned ${payload.count ?? state.candidates.length} candidates.`);
       setBanner("live", "Extraction complete", `Queued ${payload.count ?? state.candidates.length} candidates from the live endpoint.`);
       render();
@@ -1231,6 +1332,7 @@
       const [candidates, claims] = await Promise.all([fetchJson(API.candidates), fetchJson(API.claims)]);
       state.candidates = candidates;
       state.claims = claims;
+      await refreshRuntimeStatus();
       state.selectedCandidateId =
         state.candidates.find((candidate) => candidate.review_state === "pending")?.candidate_id ??
         state.candidates.find((candidate) => candidate.candidate_id === candidateId)?.candidate_id ??
@@ -1274,6 +1376,7 @@
         body: request,
       });
       state.queryResult = payload;
+      await refreshRuntimeStatus();
       setBanner("live", "Query answered", "The question was resolved against approved claims and their evidence.");
       setApiStatus(true, "Query response received.");
       render();
@@ -1325,5 +1428,37 @@
     }
 
     return response.json();
+  }
+
+  async function refreshRuntimeStatus() {
+    try {
+      state.runtimeStatus = await fetchJson(API.runtimeStatus);
+    } catch (error) {
+      console.warn("Could not refresh runtime status", error);
+    }
+  }
+
+  function summarizeRuntime() {
+    const runtime = state.runtimeStatus;
+    if (!runtime) {
+      return "";
+    }
+
+    const readyCount = runtime.services.filter((service) => service.ready).length;
+    return `${readyCount}/${runtime.services.length} services ready. Extraction backend: ${runtime.extraction_backend}.`;
+  }
+
+  function renderReachability(value) {
+    if (value === true) return "yes";
+    if (value === false) return "no";
+    return "n/a";
+  }
+
+  function titleize(value) {
+    return String(value)
+      .split(/\s+/)
+      .filter(Boolean)
+      .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+      .join(" ");
   }
 })();
