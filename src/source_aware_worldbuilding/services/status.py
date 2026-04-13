@@ -5,6 +5,7 @@ from pathlib import Path
 import httpx
 from psycopg import connect
 
+from source_aware_worldbuilding.adapters.graphrag_adapter import GraphRAGExtractionAdapter
 from source_aware_worldbuilding.domain.models import RuntimeDependencyStatus, RuntimeStatus
 from source_aware_worldbuilding.settings import settings
 
@@ -26,7 +27,7 @@ def build_runtime_status() -> RuntimeStatus:
         operator_ui_enabled=settings.app_ui_enabled,
         state_backend=settings.app_state_backend,
         truth_backend=settings.app_truth_backend,
-        extraction_backend="graphrag_preview" if settings.graph_rag_enabled else "heuristic",
+        extraction_backend="graphrag" if settings.graph_rag_enabled else "heuristic",
         overall_status=overall_status,
         services=services,
         next_steps=next_steps,
@@ -80,71 +81,30 @@ def _state_store_status() -> RuntimeDependencyStatus:
 
 
 def _truth_store_status() -> RuntimeDependencyStatus:
-    backend = settings.app_truth_backend
-    if backend == "wikibase":
-        configured = all(
-            [
-                settings.wikibase_api_url,
-                settings.wikibase_username,
-                settings.wikibase_password,
-                settings.wikibase_property_map,
-            ]
+    configured = all(
+        [
+            settings.wikibase_api_url,
+            settings.wikibase_username,
+            settings.wikibase_password,
+            settings.wikibase_property_map,
+        ]
+    )
+    if not configured:
+        detail = (
+            "Canonical approved claims require WIKIBASE_API_URL, WIKIBASE_USERNAME, "
+            "WIKIBASE_PASSWORD, and WIKIBASE_PROPERTY_MAP."
         )
-        if not configured:
-            detail = "Wikibase sync needs API URL, username, password, and property map."
-            reachable = None
-        else:
-            reachable, detail = _probe_wikibase(settings.wikibase_api_url or "")
-        return RuntimeDependencyStatus(
-            name="truth_store",
-            role="Canonical approved claims",
-            mode="wikibase",
-            configured=configured,
-            reachable=reachable,
-            ready=configured and reachable is True,
-            detail=detail,
-        )
-    if backend == "postgres":
-        configured = bool(settings.app_postgres_dsn)
-        reachable, detail = (
-            _probe_postgres(settings.app_postgres_dsn)
-            if configured
-            else (
-                None,
-                "APP_POSTGRES_DSN is required for the Postgres truth backend.",
-            )
-        )
-        return RuntimeDependencyStatus(
-            name="truth_store",
-            role="Canonical approved claims",
-            mode="postgres",
-            configured=configured,
-            reachable=reachable,
-            ready=configured and reachable is True,
-            detail=detail,
-        )
-    if backend == "sqlite":
-        sqlite_path = Path(settings.app_sqlite_path)
-        directory = sqlite_path.parent
-        ready = directory.exists() or _can_create_directory(directory)
-        detail = f"SQLite truth store at {sqlite_path}."
-        if not ready:
-            detail = f"SQLite directory is not writable: {directory}"
-        return RuntimeDependencyStatus(
-            name="truth_store",
-            role="Canonical approved claims",
-            mode="sqlite",
-            reachable=None,
-            ready=ready,
-            detail=detail,
-        )
+        reachable = None
+    else:
+        reachable, detail = _probe_wikibase(settings.wikibase_api_url or "")
     return RuntimeDependencyStatus(
         name="truth_store",
         role="Canonical approved claims",
-        mode="file",
-        reachable=None,
-        ready=True,
-        detail=f"File-backed approved claims in {settings.app_data_dir}.",
+        mode="wikibase",
+        configured=configured,
+        reachable=reachable,
+        ready=configured and reachable is True,
+        detail=detail,
     )
 
 
@@ -184,17 +144,15 @@ def _extraction_status() -> RuntimeDependencyStatus:
             detail="Heuristic sentence-based extractor is active for local MVP work.",
         )
 
+    probe = GraphRAGExtractionAdapter.runtime_probe()
     return RuntimeDependencyStatus(
         name="extraction",
         role="Candidate generation",
-        mode="graphrag_preview",
-        configured=True,
+        mode=probe.mode,
+        configured=probe.configured,
         reachable=None,
-        ready=True,
-        detail=(
-            "GraphRAG backend selection is enabled, but the current adapter "
-            "still delegates to heuristic extraction until the real pipeline lands."
-        ),
+        ready=probe.ready,
+        detail=probe.detail,
     )
 
 
@@ -235,20 +193,20 @@ def _next_steps(services: list[RuntimeDependencyStatus]) -> list[str]:
             "Run `docker compose up -d qdrant` and set QDRANT_ENABLED=true "
             "to exercise projection-backed retrieval."
         )
-    if settings.app_truth_backend != "wikibase":
+    if by_name["truth_store"].ready is False:
         steps.append(
-            "Switch APP_TRUTH_BACKEND=wikibase and add Wikibase credentials "
-            "when you are ready for canonical sync."
+            "Configure WIKIBASE_API_URL, WIKIBASE_USERNAME, WIKIBASE_PASSWORD, and "
+            "WIKIBASE_PROPERTY_MAP to enable canonical approved-claim reads and writes."
         )
     if by_name["extraction"].mode == "heuristic":
         steps.append(
             "Replace or augment the heuristic extractor with the real GraphRAG "
             "or LLM-backed extraction path."
         )
-    elif by_name["extraction"].mode == "graphrag_preview":
+    elif by_name["extraction"].ready is False:
         steps.append(
-            "Swap the GraphRAG preview adapter for the real GraphRAG pipeline "
-            "once the external runner is ready."
+            "Install/configure GraphRAG and ensure the selected GRAPH_RAG_MODE "
+            "has a runnable workspace or artifact directory."
         )
 
     return steps

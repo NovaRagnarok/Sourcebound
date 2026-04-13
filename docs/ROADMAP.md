@@ -4,7 +4,8 @@
 
 - Phase 0 is complete.
 - Large parts of Phase 4 already exist as an operator MVP.
-- The main work now is making the core integrations real: live Zotero intake, non-heuristic extraction, Wikibase sync in a configured environment, and Qdrant-backed retrieval in the normal dev loop.
+- Canonical approved-claim reads and writes now assume Wikibase.
+- The main work now is making the remaining integrations real: live Zotero intake, non-heuristic extraction, broader Wikibase usage in configured environments, and Qdrant-backed retrieval in the normal dev loop.
 
 ## Phase 0 — architecture seed
 
@@ -25,8 +26,9 @@
 
 ## Phase 2 — canonical truth
 
-- run approved-claim sync against a configured Wikibase instance
+- keep approved-claim review/write/read working against a configured Wikibase instance
 - write references and qualifiers with a project-specific property map
+- prove one approved-claim round trip through the live review flow
 - handle competing claims cleanly
 
 ## Phase 3 — retrieval

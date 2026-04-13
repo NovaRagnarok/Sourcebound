@@ -21,6 +21,16 @@ def restore_api_dependency_overrides() -> None:
     original_truth_backend = settings.app_truth_backend
     original_postgres_dsn = settings.app_postgres_dsn
     original_postgres_schema = settings.app_postgres_schema
+    original_wikibase_base_url = settings.wikibase_base_url
+    original_wikibase_api_url = settings.wikibase_api_url
+    original_wikibase_username = settings.wikibase_username
+    original_wikibase_password = settings.wikibase_password
+    original_wikibase_property_map = settings.wikibase_property_map
+    original_qdrant_enabled = settings.qdrant_enabled
+    original_qdrant_collection = settings.qdrant_collection
+    original_graph_rag_mode = settings.graph_rag_mode
+    original_graph_rag_root = settings.graph_rag_root
+    original_graph_rag_artifacts_dir = settings.graph_rag_artifacts_dir
     try:
         yield
     finally:
@@ -32,6 +42,16 @@ def restore_api_dependency_overrides() -> None:
         settings.app_truth_backend = original_truth_backend
         settings.app_postgres_dsn = original_postgres_dsn
         settings.app_postgres_schema = original_postgres_schema
+        settings.wikibase_base_url = original_wikibase_base_url
+        settings.wikibase_api_url = original_wikibase_api_url
+        settings.wikibase_username = original_wikibase_username
+        settings.wikibase_password = original_wikibase_password
+        settings.wikibase_property_map = original_wikibase_property_map
+        settings.qdrant_enabled = original_qdrant_enabled
+        settings.qdrant_collection = original_qdrant_collection
+        settings.graph_rag_mode = original_graph_rag_mode
+        settings.graph_rag_root = original_graph_rag_root
+        settings.graph_rag_artifacts_dir = original_graph_rag_artifacts_dir
 
 
 @pytest.fixture
@@ -39,7 +59,13 @@ def temp_data_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setattr(settings, "app_data_dir", tmp_path)
     monkeypatch.setattr(settings, "app_sqlite_path", tmp_path / "sourcebound.db")
     monkeypatch.setattr(settings, "app_state_backend", "file")
-    monkeypatch.setattr(settings, "app_truth_backend", "file")
+    monkeypatch.setattr(settings, "app_truth_backend", "wikibase")
+    monkeypatch.setattr(settings, "wikibase_base_url", None)
+    monkeypatch.setattr(settings, "wikibase_api_url", None)
+    monkeypatch.setattr(settings, "wikibase_username", None)
+    monkeypatch.setattr(settings, "wikibase_password", None)
+    monkeypatch.setattr(settings, "wikibase_property_map", None)
+    monkeypatch.setattr(settings, "qdrant_enabled", False)
     return tmp_path
 
 
@@ -62,8 +88,14 @@ def postgres_app_state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[
     monkeypatch.setattr(settings, "app_data_dir", tmp_path)
     monkeypatch.setattr(settings, "app_sqlite_path", tmp_path / "sourcebound.db")
     monkeypatch.setattr(settings, "app_state_backend", "postgres")
-    monkeypatch.setattr(settings, "app_truth_backend", "postgres")
+    monkeypatch.setattr(settings, "app_truth_backend", "wikibase")
     monkeypatch.setattr(settings, "app_postgres_schema", schema)
+    monkeypatch.setattr(settings, "wikibase_base_url", None)
+    monkeypatch.setattr(settings, "wikibase_api_url", None)
+    monkeypatch.setattr(settings, "wikibase_username", None)
+    monkeypatch.setattr(settings, "wikibase_password", None)
+    monkeypatch.setattr(settings, "wikibase_property_map", None)
+    monkeypatch.setattr(settings, "qdrant_enabled", False)
 
     try:
         yield {"dsn": dsn, "schema": schema, "data_dir": tmp_path}

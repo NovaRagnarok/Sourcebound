@@ -863,6 +863,10 @@
                   (snippet) => `
                     <div class="mini">
                       <div class="code">${escapeHtml(snippet.evidence_id)} · ${escapeHtml(snippet.locator)}</div>
+                      <div class="detail-note">
+                        ${escapeHtml(snippet.text_unit_id || "n/a")} ·
+                        [${escapeHtml(snippet.span_start ?? "n/a")}, ${escapeHtml(snippet.span_end ?? "n/a")}]
+                      </div>
                       <div>${escapeHtml(snippet.text)}</div>
                       <div class="detail-note">${escapeHtml(snippet.notes || "No note")}</div>
                     </div>

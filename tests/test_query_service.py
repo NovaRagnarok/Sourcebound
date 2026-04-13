@@ -2,11 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from source_aware_worldbuilding.adapters.file_backed import (
-    FileEvidenceStore,
-    FileSourceStore,
-    FileTruthStore,
-)
+from source_aware_worldbuilding.adapters.file_backed import FileEvidenceStore, FileSourceStore
 from source_aware_worldbuilding.domain.enums import ClaimKind, ClaimStatus, QueryMode
 from source_aware_worldbuilding.domain.models import (
     ApprovedClaim,
@@ -20,7 +16,22 @@ from source_aware_worldbuilding.services.query import QueryService
 from source_aware_worldbuilding.storage.json_store import JsonListStore
 
 
-def populate_query_fixtures(data_dir: Path) -> None:
+class InMemoryTruthStore:
+    def __init__(self, claims: list[ApprovedClaim]) -> None:
+        self.claims = {claim.claim_id: claim for claim in claims}
+
+    def list_claims(self) -> list[ApprovedClaim]:
+        return list(self.claims.values())
+
+    def get_claim(self, claim_id: str) -> ApprovedClaim | None:
+        return self.claims.get(claim_id)
+
+    def save_claim(self, claim: ApprovedClaim, evidence=None) -> None:
+        _ = evidence
+        self.claims[claim.claim_id] = claim
+
+
+def populate_query_fixtures(data_dir: Path) -> list[ApprovedClaim]:
     JsonListStore(data_dir / "sources.json").write_models(
         [
             SourceRecord(source_id="src-1", title="Rouen records", source_type="record"),
@@ -77,72 +88,70 @@ def populate_query_fixtures(data_dir: Path) -> None:
             ),
         ]
     )
-    JsonListStore(data_dir / "claims.json").write_models(
-        [
-            ApprovedClaim(
-                claim_id="claim-verified-1",
-                subject="Rouen bread prices",
-                predicate="rose_during",
-                value="winter shortage",
-                claim_kind=ClaimKind.PRACTICE,
-                status=ClaimStatus.VERIFIED,
-                place="Rouen",
-                evidence_ids=["evi-1"],
-            ),
-            ApprovedClaim(
-                claim_id="claim-probable-1",
-                subject="Market gossip about bread prices",
-                predicate="is_reported_in",
-                value="Rouen market accounts",
-                claim_kind=ClaimKind.BELIEF,
-                status=ClaimStatus.PROBABLE,
-                place="Rouen",
-                evidence_ids=["evi-5"],
-            ),
-            ApprovedClaim(
-                claim_id="claim-probable-2",
-                subject="Market gossip about bread prices",
-                predicate="is_reported_in",
-                value="Paris market accounts",
-                claim_kind=ClaimKind.BELIEF,
-                status=ClaimStatus.PROBABLE,
-                place="Paris",
-                evidence_ids=["evi-6"],
-            ),
-            ApprovedClaim(
-                claim_id="claim-contested-1",
-                subject="Merchant grain hoarding",
-                predicate="is_reported_in",
-                value="townspeople accounts",
-                claim_kind=ClaimKind.BELIEF,
-                status=ClaimStatus.CONTESTED,
-                place="Rouen",
-                viewpoint_scope="townspeople",
-                evidence_ids=["evi-2"],
-            ),
-            ApprovedClaim(
-                claim_id="claim-rumor-1",
-                subject="Whispered rumor",
-                predicate="circulates_in",
-                value="the marketplace",
-                claim_kind=ClaimKind.BELIEF,
-                status=ClaimStatus.RUMOR,
-                place="Rouen",
-                viewpoint_scope="townspeople",
-                evidence_ids=["evi-3"],
-            ),
-            ApprovedClaim(
-                claim_id="claim-legend-1",
-                subject="Market ghost",
-                predicate="haunts",
-                value="the square",
-                claim_kind=ClaimKind.BELIEF,
-                status=ClaimStatus.LEGEND,
-                place="Rouen",
-                evidence_ids=["evi-4"],
-            ),
-        ]
-    )
+    return [
+        ApprovedClaim(
+            claim_id="claim-verified-1",
+            subject="Rouen bread prices",
+            predicate="rose_during",
+            value="winter shortage",
+            claim_kind=ClaimKind.PRACTICE,
+            status=ClaimStatus.VERIFIED,
+            place="Rouen",
+            evidence_ids=["evi-1"],
+        ),
+        ApprovedClaim(
+            claim_id="claim-probable-1",
+            subject="Market gossip about bread prices",
+            predicate="is_reported_in",
+            value="Rouen market accounts",
+            claim_kind=ClaimKind.BELIEF,
+            status=ClaimStatus.PROBABLE,
+            place="Rouen",
+            evidence_ids=["evi-5"],
+        ),
+        ApprovedClaim(
+            claim_id="claim-probable-2",
+            subject="Market gossip about bread prices",
+            predicate="is_reported_in",
+            value="Paris market accounts",
+            claim_kind=ClaimKind.BELIEF,
+            status=ClaimStatus.PROBABLE,
+            place="Paris",
+            evidence_ids=["evi-6"],
+        ),
+        ApprovedClaim(
+            claim_id="claim-contested-1",
+            subject="Merchant grain hoarding",
+            predicate="is_reported_in",
+            value="townspeople accounts",
+            claim_kind=ClaimKind.BELIEF,
+            status=ClaimStatus.CONTESTED,
+            place="Rouen",
+            viewpoint_scope="townspeople",
+            evidence_ids=["evi-2"],
+        ),
+        ApprovedClaim(
+            claim_id="claim-rumor-1",
+            subject="Whispered rumor",
+            predicate="circulates_in",
+            value="the marketplace",
+            claim_kind=ClaimKind.BELIEF,
+            status=ClaimStatus.RUMOR,
+            place="Rouen",
+            viewpoint_scope="townspeople",
+            evidence_ids=["evi-3"],
+        ),
+        ApprovedClaim(
+            claim_id="claim-legend-1",
+            subject="Market ghost",
+            predicate="haunts",
+            value="the square",
+            claim_kind=ClaimKind.BELIEF,
+            status=ClaimStatus.LEGEND,
+            place="Rouen",
+            evidence_ids=["evi-4"],
+        ),
+    ]
 
 
 class FakeProjection:
@@ -157,9 +166,13 @@ class FakeProjection:
         return self.result
 
 
-def build_query_service(data_dir: Path, projection=None) -> QueryService:
+def build_query_service(
+    data_dir: Path,
+    claims: list[ApprovedClaim],
+    projection=None,
+) -> QueryService:
     return QueryService(
-        truth_store=FileTruthStore(data_dir),
+        truth_store=InMemoryTruthStore(claims),
         evidence_store=FileEvidenceStore(data_dir),
         source_store=FileSourceStore(data_dir),
         projection=projection,
@@ -167,8 +180,8 @@ def build_query_service(data_dir: Path, projection=None) -> QueryService:
 
 
 def test_query_modes_return_expected_claims_and_warnings(temp_data_dir: Path) -> None:
-    populate_query_fixtures(temp_data_dir)
-    service = build_query_service(temp_data_dir)
+    claims = populate_query_fixtures(temp_data_dir)
+    service = build_query_service(temp_data_dir, claims)
 
     cases = [
         (
@@ -223,8 +236,8 @@ def test_query_modes_return_expected_claims_and_warnings(temp_data_dir: Path) ->
 
 
 def test_query_filters_can_narrow_matching_claims(temp_data_dir: Path) -> None:
-    populate_query_fixtures(temp_data_dir)
-    service = build_query_service(temp_data_dir)
+    claims = populate_query_fixtures(temp_data_dir)
+    service = build_query_service(temp_data_dir, claims)
 
     result = service.answer(
         QueryRequest(
@@ -269,32 +282,30 @@ def test_query_strict_facts_reports_gap_when_only_uncertain_claims_remain(
             ),
         ]
     )
-    JsonListStore(temp_data_dir / "claims.json").write_models(
-        [
-            ApprovedClaim(
-                claim_id="claim-rumor-1",
-                subject="Whispered rumor",
-                predicate="circulates_in",
-                value="the marketplace",
-                claim_kind=ClaimKind.BELIEF,
-                status=ClaimStatus.RUMOR,
-                place="Rouen",
-                evidence_ids=["evi-3"],
-            ),
-            ApprovedClaim(
-                claim_id="claim-legend-1",
-                subject="Market ghost",
-                predicate="haunts",
-                value="the square",
-                claim_kind=ClaimKind.BELIEF,
-                status=ClaimStatus.LEGEND,
-                place="Rouen",
-                evidence_ids=["evi-4"],
-            ),
-        ]
-    )
+    claims = [
+        ApprovedClaim(
+            claim_id="claim-rumor-1",
+            subject="Whispered rumor",
+            predicate="circulates_in",
+            value="the marketplace",
+            claim_kind=ClaimKind.BELIEF,
+            status=ClaimStatus.RUMOR,
+            place="Rouen",
+            evidence_ids=["evi-3"],
+        ),
+        ApprovedClaim(
+            claim_id="claim-legend-1",
+            subject="Market ghost",
+            predicate="haunts",
+            value="the square",
+            claim_kind=ClaimKind.BELIEF,
+            status=ClaimStatus.LEGEND,
+            place="Rouen",
+            evidence_ids=["evi-4"],
+        ),
+    ]
 
-    result = build_query_service(temp_data_dir).answer(
+    result = build_query_service(temp_data_dir, claims).answer(
         QueryRequest(question="market", mode=QueryMode.STRICT_FACTS)
     )
 
@@ -306,9 +317,10 @@ def test_query_strict_facts_reports_gap_when_only_uncertain_claims_remain(
 
 
 def test_query_uses_projection_when_available(temp_data_dir: Path) -> None:
-    populate_query_fixtures(temp_data_dir)
+    claims = populate_query_fixtures(temp_data_dir)
     service = build_query_service(
         temp_data_dir,
+        claims,
         projection=FakeProjection(
             ProjectionSearchResult(claim_ids=["claim-probable-2", "claim-probable-1"])
         ),
@@ -331,9 +343,10 @@ def test_query_uses_projection_when_available(temp_data_dir: Path) -> None:
 
 
 def test_query_falls_back_to_memory_when_projection_fails(temp_data_dir: Path) -> None:
-    populate_query_fixtures(temp_data_dir)
+    claims = populate_query_fixtures(temp_data_dir)
     service = build_query_service(
         temp_data_dir,
+        claims,
         projection=FakeProjection(
             ProjectionSearchResult(
                 fallback_used=True,

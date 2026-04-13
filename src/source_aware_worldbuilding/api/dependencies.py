@@ -9,9 +9,7 @@ from source_aware_worldbuilding.adapters.file_backed import (
     FileReviewStore,
     FileSourceStore,
     FileTextUnitStore,
-    FileTruthStore,
 )
-from source_aware_worldbuilding.adapters.graphrag_adapter import GraphRAGExtractionAdapter
 from source_aware_worldbuilding.adapters.heuristic_extraction import (
     HeuristicExtractionAdapter,
 )
@@ -22,7 +20,6 @@ from source_aware_worldbuilding.adapters.postgres_backed import (
     PostgresReviewStore,
     PostgresSourceStore,
     PostgresTextUnitStore,
-    PostgresTruthStore,
 )
 from source_aware_worldbuilding.adapters.qdrant_adapter import QdrantProjectionAdapter
 from source_aware_worldbuilding.adapters.sqlite_backed import (
@@ -32,7 +29,6 @@ from source_aware_worldbuilding.adapters.sqlite_backed import (
     SqliteReviewStore,
     SqliteSourceStore,
     SqliteTextUnitStore,
-    SqliteTruthStore,
 )
 from source_aware_worldbuilding.adapters.wikibase_adapter import WikibaseTruthStore
 from source_aware_worldbuilding.adapters.zotero_adapter import ZoteroCorpusAdapter
@@ -99,20 +95,14 @@ def get_review_store():
 
 
 def get_truth_store():
-    if settings.app_truth_backend == "postgres":
-        return PostgresTruthStore(*_postgres_args())
-    if settings.app_truth_backend == "sqlite":
-        return SqliteTruthStore(_sqlite_path())
-    if settings.app_truth_backend == "wikibase":
-        return WikibaseTruthStore(
-            base_url=settings.wikibase_base_url,
-            api_url=settings.wikibase_api_url,
-            username=settings.wikibase_username,
-            password=settings.wikibase_password,
-            property_map_raw=settings.wikibase_property_map,
-            cache_dir=settings.app_data_dir,
-        )
-    return FileTruthStore(settings.app_data_dir)
+    return WikibaseTruthStore(
+        base_url=settings.wikibase_base_url,
+        api_url=settings.wikibase_api_url,
+        username=settings.wikibase_username,
+        password=settings.wikibase_password,
+        property_map_raw=settings.wikibase_property_map,
+        cache_dir=settings.app_data_dir,
+    )
 
 
 def get_projection():
@@ -121,7 +111,13 @@ def get_projection():
 
 def get_extractor():
     if settings.graph_rag_enabled:
-        return GraphRAGExtractionAdapter()
+        from source_aware_worldbuilding.adapters.graphrag_adapter import GraphRAGExtractionAdapter
+
+        return GraphRAGExtractionAdapter(
+            mode=settings.graph_rag_mode,
+            graph_rag_root=settings.graph_rag_root,
+            artifacts_dir=settings.graph_rag_artifacts_dir,
+        )
     return HeuristicExtractionAdapter()
 
 

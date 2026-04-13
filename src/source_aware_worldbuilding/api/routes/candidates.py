@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from source_aware_worldbuilding.api.dependencies import get_candidate_store, get_review_service
-from source_aware_worldbuilding.domain.errors import WikibaseSyncError
+from source_aware_worldbuilding.domain.errors import CanonUnavailableError, WikibaseSyncError
 from source_aware_worldbuilding.domain.models import ReviewRequest
 from source_aware_worldbuilding.services.review import ReviewService
 
@@ -34,6 +34,8 @@ def review_candidate(
 ) -> dict:
     try:
         approved = service.review_candidate(candidate_id, payload)
+    except CanonUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     except WikibaseSyncError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     if payload.decision.value == "reject":

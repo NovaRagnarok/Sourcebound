@@ -39,10 +39,6 @@ TABLE_DEFINITIONS = {
         source_id TEXT NOT NULL,
         payload JSONB NOT NULL
     """,
-    "claims": """
-        claim_id TEXT PRIMARY KEY,
-        payload JSONB NOT NULL
-    """,
     "review_events": """
         review_id TEXT PRIMARY KEY,
         candidate_id TEXT NOT NULL,
@@ -53,7 +49,6 @@ TABLE_DEFINITIONS = {
 
 TABLE_ORDER = [
     "review_events",
-    "claims",
     "evidence",
     "candidates",
     "extraction_runs",

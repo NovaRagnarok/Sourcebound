@@ -15,7 +15,6 @@ from source_aware_worldbuilding.adapters.postgres_backed import (
     PostgresReviewStore,
     PostgresSourceStore,
     PostgresTextUnitStore,
-    PostgresTruthStore,
 )
 from source_aware_worldbuilding.adapters.sqlite_backed import (
     SqliteCandidateStore,
@@ -24,7 +23,6 @@ from source_aware_worldbuilding.adapters.sqlite_backed import (
     SqliteReviewStore,
     SqliteSourceStore,
     SqliteTextUnitStore,
-    SqliteTruthStore,
 )
 from source_aware_worldbuilding.adapters.zotero_adapter import ZoteroCorpusAdapter
 from source_aware_worldbuilding.domain.enums import (
@@ -103,6 +101,9 @@ def _seed_evidence() -> list[EvidenceSnippet]:
             source_id="src-1",
             locator="folio 12r",
             text="Bread prices rose sharply during the winter shortage.",
+            text_unit_id="txt-1",
+            span_start=0,
+            span_end=48,
             notes="Economic record",
         ),
         EvidenceSnippet(
@@ -110,6 +111,9 @@ def _seed_evidence() -> list[EvidenceSnippet]:
             source_id="src-2",
             locator="chapter 7",
             text="Townspeople whispered that merchants were withholding grain.",
+            text_unit_id="txt-2",
+            span_start=0,
+            span_end=59,
             notes="Later chronicle, lower certainty",
         ),
     ]
@@ -182,7 +186,6 @@ def seed_dev_data() -> None:
     text_units = _seed_text_units()
     evidence = _seed_evidence()
     candidates = _seed_candidates()
-    claims: list[dict] = []
     extraction_runs = [_seed_run()]
     review_events: list[dict] = []
 
@@ -190,14 +193,16 @@ def seed_dev_data() -> None:
     _write_json(data_dir / "text_units.json", [item.model_dump(mode="json") for item in text_units])
     _write_json(data_dir / "evidence.json", [item.model_dump(mode="json") for item in evidence])
     _write_json(data_dir / "candidates.json", [item.model_dump(mode="json") for item in candidates])
-    _write_json(data_dir / "claims.json", claims)
     _write_json(
         data_dir / "extraction_runs.json",
         [item.model_dump(mode="json") for item in extraction_runs],
     )
     _write_json(data_dir / "review_events.json", review_events)
+    claims_path = data_dir / "claims.json"
+    if claims_path.exists():
+        claims_path.unlink()
 
-    if settings.app_state_backend == "postgres" or settings.app_truth_backend == "postgres":
+    if settings.app_state_backend == "postgres":
         source_store = PostgresSourceStore(
             settings.app_postgres_dsn,
             settings.app_postgres_schema,
@@ -220,10 +225,9 @@ def seed_dev_data() -> None:
             settings.app_postgres_dsn,
             settings.app_postgres_schema,
         ).save_run(extraction_runs[0])
-        PostgresTruthStore(settings.app_postgres_dsn, settings.app_postgres_schema)
         PostgresReviewStore(settings.app_postgres_dsn, settings.app_postgres_schema)
 
-    if settings.app_state_backend == "sqlite" or settings.app_truth_backend == "sqlite":
+    if settings.app_state_backend == "sqlite":
         if settings.app_sqlite_path.exists():
             settings.app_sqlite_path.unlink()
         SqliteSourceStore(settings.app_sqlite_path).save_sources(sources)
@@ -231,7 +235,6 @@ def seed_dev_data() -> None:
         SqliteEvidenceStore(settings.app_sqlite_path).save_evidence(evidence)
         SqliteCandidateStore(settings.app_sqlite_path).save_candidates(candidates)
         SqliteExtractionRunStore(settings.app_sqlite_path).save_run(extraction_runs[0])
-        SqliteTruthStore(settings.app_sqlite_path)
         SqliteReviewStore(settings.app_sqlite_path)
 
     print(f"[green]Seeded development data in {data_dir}[/green]")

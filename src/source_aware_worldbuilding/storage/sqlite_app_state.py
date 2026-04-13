@@ -52,10 +52,6 @@ class SqliteAppStateStore:
                     source_id TEXT NOT NULL,
                     payload TEXT NOT NULL
                 );
-                CREATE TABLE IF NOT EXISTS claims (
-                    claim_id TEXT PRIMARY KEY,
-                    payload TEXT NOT NULL
-                );
                 CREATE TABLE IF NOT EXISTS review_events (
                     review_id TEXT PRIMARY KEY,
                     candidate_id TEXT NOT NULL,

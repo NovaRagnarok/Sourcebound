@@ -44,6 +44,9 @@ def test_operator_flow_routes_share_file_backed_state(temp_data_dir) -> None:
         assert run_body["count"] >= 1
         assert run_body["run"]["status"] == "completed"
         assert run_body["evidence"]
+        assert "text_unit_id" in run_body["evidence"][0]
+        assert "span_start" in run_body["evidence"][0]
+        assert "span_end" in run_body["evidence"][0]
 
         runs = client.get("/v1/extraction-runs")
         assert runs.status_code == 200
@@ -58,30 +61,34 @@ def test_operator_flow_routes_share_file_backed_state(temp_data_dir) -> None:
             f"/v1/candidates/{first_candidate_id}/review",
             json={"decision": "approve"},
         )
-        assert approve_response.status_code == 200
-        approved_claim_id = approve_response.json()["claim"]["claim_id"]
+        assert approve_response.status_code == 503
+        assert "Canonical Wikibase truth store is not configured" in approve_response.json()[
+            "detail"
+        ]
 
         source_detail = client.get("/v1/sources/src-1")
         assert source_detail.status_code == 200
         assert source_detail.json()["source"]["source_id"] == "src-1"
         assert source_detail.json()["text_units"]
 
-        claim_detail = client.get(f"/v1/claims/{approved_claim_id}")
-        assert claim_detail.status_code == 200
-        assert claim_detail.json()["claim_id"] == approved_claim_id
+        candidate_detail = client.get(f"/v1/candidates/{first_candidate_id}")
+        assert candidate_detail.status_code == 200
+        assert candidate_detail.json()["review_state"] == "pending"
+
+        claims_response = client.get("/v1/claims")
+        assert claims_response.status_code == 503
+        assert "Canonical Wikibase truth store is not configured" in claims_response.json()[
+            "detail"
+        ]
 
         query_response = client.post(
             "/v1/query",
             json={"question": "Rouen bread prices", "mode": "strict_facts"},
         )
-        assert query_response.status_code == 200
-        query_body = query_response.json()
-        assert query_body["supporting_claims"]
-        assert query_body["evidence"]
-        assert query_body["sources"]
-        assert query_body["metadata"]["retrieval_backend"] == "memory"
-        assert query_body["metadata"]["fallback_used"] is True
-        assert any("Strict facts mode" in warning for warning in query_body["warnings"])
+        assert query_response.status_code == 503
+        assert "Canonical Wikibase truth store is not configured" in query_response.json()[
+            "detail"
+        ]
 
 
 def test_review_route_surfaces_wikibase_sync_failures(temp_data_dir) -> None:

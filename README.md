@@ -158,7 +158,6 @@ source-aware-worldbuilding/
 ├── data/
 │   └── dev/
 │       ├── candidates.json
-│       ├── claims.json
 │       ├── evidence.json
 │       ├── extraction_runs.json
 │       ├── review_events.json
@@ -272,13 +271,14 @@ This reports which parts of the stack are live, disabled, stubbed, or missing co
 API docs will be available at `http://localhost:8000/docs`.
 The operator console will be available at `http://localhost:8000/operator/`.
 
-### 7. Explicit file-backed fallback
+### 7. File-backed workflow state
 
 ```bash
-APP_STATE_BACKEND=file APP_TRUTH_BACKEND=file .venv/bin/saw seed-dev-data
+APP_STATE_BACKEND=file .venv/bin/saw seed-dev-data
 ```
 
 Use file-backed mode when you want zero external services while shaping models, workflows, or prompts.
+Canonical approved-claim routes still require Wikibase configuration.
 
 ### 8. Optional live integration checks
 
@@ -299,11 +299,11 @@ Each live test skips automatically unless its real service is configured. Run th
 Use this when you are shaping models, workflows, and prompts.
 
 - no Zotero required
-- no Wikibase required
+- no Wikibase required for ingest, extraction, and review-state iteration
 - no Qdrant required
 - set `APP_STATE_BACKEND=file`
-- typically pair it with `APP_TRUTH_BACKEND=file`
 - works from `data/dev/*.json`
+- canonical approval, claim reads, and canonical query stay unavailable until Wikibase is configured
 
 ### Mode B — real corpus mode
 
@@ -339,22 +339,20 @@ If you want the old no-infra path, switch back explicitly:
 
 ```bash
 APP_STATE_BACKEND=file
-APP_TRUTH_BACKEND=file
 ```
 
 ### Wikibase sync
 
-To sync approved claims into Wikibase, set:
+Canonical approved-claim reads and writes require:
 
 ```bash
-APP_TRUTH_BACKEND=wikibase
 WIKIBASE_API_URL=https://your-wikibase.example/w/api.php
 WIKIBASE_USERNAME=...
 WIKIBASE_PASSWORD=...
 WIKIBASE_PROPERTY_MAP='{"main_value":"P1","predicate":"P2","status":"P3","claim_kind":"P4","place":"P5","time_start":"P6","time_end":"P7","viewpoint_scope":"P8","notes":"P9","app_claim_id":"P10","source_id":"P11","locator":"P12","evidence_text":"P13","evidence_id":"P14"}'
 ```
 
-If `WIKIBASE_PROPERTY_MAP` is omitted, Sourcebound still authenticates and syncs labels, descriptions, aliases, and a local entity-id map, but structured statements and evidence references are skipped.
+If Wikibase is not configured, Sourcebound can still run non-canonical workflow paths, but claim approval, claim reads, and canonical query routes return a clear configuration error instead of falling back to local claim files.
 
 ---
 

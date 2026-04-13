@@ -47,6 +47,9 @@ class EvidenceSnippet(BaseModel):
     source_id: str
     locator: str
     text: str
+    text_unit_id: str | None = None
+    span_start: int | None = None
+    span_end: int | None = None
     notes: str | None = None
     checksum: str | None = None
 

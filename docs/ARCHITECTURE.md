@@ -60,7 +60,8 @@ FastAPI routes and dependency wiring.
 ## Storage strategy
 
 ### Day-one development
-Use JSON files in `data/dev/`.
+Use JSON files in `data/dev/` for workflow state such as sources, text units, candidates, evidence, and review events.
+Canonical approved claims still live in Wikibase.
 
 ### Real system
 - Zotero: source metadata + attachments
@@ -76,6 +77,7 @@ Because the system contains several kinds of data with different responsibilitie
 - canonical reviewed claims belong in Wikibase
 - retrieval projections belong in Qdrant
 - workflow/application state belongs in app storage
+- local JSON/SQLite/Postgres app state is not a fallback canonical claim store
 
 ## Review gate
 

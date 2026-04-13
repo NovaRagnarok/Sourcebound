@@ -3,7 +3,6 @@ from __future__ import annotations
 from pathlib import Path
 
 from source_aware_worldbuilding.domain.models import (
-    ApprovedClaim,
     CandidateClaim,
     EvidenceSnippet,
     ExtractionRun,
@@ -113,22 +112,6 @@ class SqliteEvidenceStore(_SqliteAdapterBase):
             evidence,
             extra_columns={"source_id": "source_id"},
         )
-
-
-class SqliteTruthStore(_SqliteAdapterBase):
-    def list_claims(self) -> list[ApprovedClaim]:
-        return self.store.list_models("claims", ApprovedClaim, order_by="claim_id")
-
-    def get_claim(self, claim_id: str) -> ApprovedClaim | None:
-        return self.store.get_model("claims", "claim_id", claim_id, ApprovedClaim)
-
-    def save_claim(
-        self,
-        claim: ApprovedClaim,
-        evidence: list[EvidenceSnippet] | None = None,
-    ) -> None:
-        _ = evidence
-        self.store.upsert_models("claims", "claim_id", [claim])
 
 
 class SqliteReviewStore(_SqliteAdapterBase):

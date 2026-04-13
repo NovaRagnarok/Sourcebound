@@ -34,7 +34,6 @@ def test_operator_flow_routes_share_postgres_backed_state(
     assert _table_count(dsn, schema, "extraction_runs") == 1
     assert _table_count(dsn, schema, "candidates") == 2
     assert _table_count(dsn, schema, "evidence") == 2
-    assert _table_count(dsn, schema, "claims") == 0
     assert _table_count(dsn, schema, "review_events") == 0
 
     with TestClient(app) as client:
@@ -73,29 +72,32 @@ def test_operator_flow_routes_share_postgres_backed_state(
             f"/v1/candidates/{first_candidate_id}/review",
             json={"decision": "approve"},
         )
-        assert approve_response.status_code == 200
-        approved_claim_id = approve_response.json()["claim"]["claim_id"]
-        assert _table_count(dsn, schema, "claims") == 1
-        assert _table_count(dsn, schema, "review_events") == 1
+        assert approve_response.status_code == 503
+        assert "Canonical Wikibase truth store is not configured" in approve_response.json()[
+            "detail"
+        ]
+        assert _table_count(dsn, schema, "review_events") == 0
 
         source_detail = client.get("/v1/sources/src-1")
         assert source_detail.status_code == 200
         assert source_detail.json()["source"]["source_id"] == "src-1"
         assert len(source_detail.json()["text_units"]) == 3
 
-        claim_detail = client.get(f"/v1/claims/{approved_claim_id}")
-        assert claim_detail.status_code == 200
-        assert claim_detail.json()["claim_id"] == approved_claim_id
+        candidate_detail = client.get(f"/v1/candidates/{first_candidate_id}")
+        assert candidate_detail.status_code == 200
+        assert candidate_detail.json()["review_state"] == "pending"
+
+        claims_response = client.get("/v1/claims")
+        assert claims_response.status_code == 503
+        assert "Canonical Wikibase truth store is not configured" in claims_response.json()[
+            "detail"
+        ]
 
         query_response = client.post(
             "/v1/query",
             json={"question": "Rouen bread prices", "mode": "strict_facts"},
         )
-        assert query_response.status_code == 200
-        query_body = query_response.json()
-        assert query_body["supporting_claims"]
-        assert query_body["evidence"]
-        assert query_body["sources"]
-        assert query_body["metadata"]["retrieval_backend"] == "memory"
-        assert query_body["metadata"]["fallback_used"] is True
-        assert any("Strict facts mode" in warning for warning in query_body["warnings"])
+        assert query_response.status_code == 503
+        assert "Canonical Wikibase truth store is not configured" in query_response.json()[
+            "detail"
+        ]

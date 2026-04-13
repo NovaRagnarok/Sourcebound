@@ -1,10 +1,15 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import httpx
 
-from source_aware_worldbuilding.adapters.graphrag_adapter import GraphRAGExtractionAdapter
+from source_aware_worldbuilding.adapters.graphrag_adapter import (
+    GraphRAGArtifactBundle,
+    GraphRAGExtractionAdapter,
+    resolve_graph_rag_artifacts_dir,
+)
 from source_aware_worldbuilding.adapters.heuristic_extraction import (
     HeuristicExtractionAdapter,
 )
@@ -194,9 +199,9 @@ def test_extraction_adapter_dedupes_candidates_and_infers_place_and_time() -> No
     ]
 
 
-def test_graphrag_adapter_preserves_backend_seam_with_preview_notes() -> None:
-    adapter = GraphRAGExtractionAdapter()
-    run = ExtractionRun(run_id="run-preview", status=ExtractionRunStatus.RUNNING)
+def test_graphrag_adapter_maps_claims_and_evidence_spans(monkeypatch) -> None:
+    adapter = GraphRAGExtractionAdapter(mode="in_process")
+    run = ExtractionRun(run_id="run-graphrag", status=ExtractionRunStatus.RUNNING)
     sources = [
         SourceRecord(
             source_id="src-1",
@@ -215,13 +220,136 @@ def test_graphrag_adapter_preserves_backend_seam_with_preview_notes() -> None:
         )
     ]
 
+    def fake_run(_text_units: list[TextUnit]) -> GraphRAGArtifactBundle:
+        assert _text_units == text_units
+        return GraphRAGArtifactBundle(
+            covariates=[
+                {
+                    "covariate_type": "claim",
+                    "type": "Rose During",
+                    "description": "Bread prices rose sharply during the winter shortage.",
+                    "subject_id": "Rouen bread prices",
+                    "object_id": "winter shortage",
+                    "status": "TRUE",
+                    "start_date": None,
+                    "end_date": None,
+                    "source_text": "rose sharply during the winter shortage",
+                    "text_unit_id": "gtu-1",
+                },
+                {
+                    "covariate_type": "claim",
+                    "type": "Rose During",
+                    "description": "Bread prices rose sharply during the winter shortage.",
+                    "subject_id": "Rouen bread prices",
+                    "object_id": "winter shortage",
+                    "status": "TRUE",
+                    "start_date": None,
+                    "end_date": None,
+                    "source_text": "rose sharply during the winter shortage",
+                    "text_unit_id": "gtu-1",
+                },
+            ],
+            text_units=[
+                {
+                    "id": "gtu-1",
+                    "document_id": "doc-1",
+                }
+            ],
+            documents=[
+                {
+                    "id": "doc-1",
+                    "metadata": {
+                        "text_unit_id": "tu-1",
+                        "source_id": "src-1",
+                        "locator": "folio 12r",
+                    },
+                }
+            ],
+            output_dir=Path("/tmp/graphrag-output"),
+        )
+
+    monkeypatch.setattr(adapter, "_run_in_process_graph_rag", fake_run)
     output = adapter.extract_candidates(run=run, sources=sources, text_units=text_units)
 
     assert output.run.notes is not None
-    assert "preview mode" in output.run.notes
-    assert output.candidates
-    assert output.candidates[0].notes is not None
-    assert "graphrag_preview" in output.candidates[0].notes
+    assert "mode=in_process" in output.run.notes
+    assert output.run.candidate_count == 1
+    assert len(output.candidates) == 1
+    assert len(output.evidence) == 1
+    candidate = output.candidates[0]
+    evidence = output.evidence[0]
+    assert candidate.predicate == "rose_during"
+    assert candidate.status_suggestion == ClaimStatus.VERIFIED
+    assert candidate.evidence_ids == [evidence.evidence_id]
+    assert "raw_status=TRUE" in (candidate.notes or "")
+    assert evidence.text_unit_id == "tu-1"
+    assert evidence.span_start == 13
+    assert evidence.span_end == 52
+    assert evidence.text == "rose sharply during the winter shortage"
+
+
+def test_graphrag_adapter_imports_artifacts_and_resolves_output_dir(monkeypatch, tmp_path) -> None:
+    root = tmp_path / "workspace"
+    root.mkdir()
+    (root / "settings.yaml").write_text("output:\n  base_dir: custom-output\n", encoding="utf-8")
+
+    adapter = GraphRAGExtractionAdapter(
+        mode="artifact_import",
+        graph_rag_root=root,
+    )
+    run = ExtractionRun(run_id="run-artifact", status=ExtractionRunStatus.RUNNING)
+    sources = [
+        SourceRecord(
+            source_id="src-2",
+            title="Later chronicle of unrest",
+            year="1450",
+            source_type="chronicle",
+        )
+    ]
+    text_units = [
+        TextUnit(
+            text_unit_id="tu-2",
+            source_id="src-2",
+            locator="chapter 7",
+            text="Townspeople whispered that merchants were withholding grain.",
+            ordinal=1,
+        )
+    ]
+
+    monkeypatch.setattr(
+        "source_aware_worldbuilding.adapters.graphrag_adapter._graph_rag_output_base_dir_from_config",
+        lambda _root: root / "custom-output",
+    )
+
+    def fake_load(output_dir: Path | None = None) -> GraphRAGArtifactBundle:
+        return GraphRAGArtifactBundle(
+            covariates=[
+                {
+                    "covariate_type": "claim",
+                    "type": "Rumored In",
+                    "description": "Townspeople whispered that merchants were withholding grain.",
+                    "subject_id": "Merchant grain hoarding",
+                    "object_id": "Rouen",
+                    "status": "SUSPECTED",
+                    "source_text": "whispered that merchants were withholding grain",
+                    "text_unit_id": "gtu-2",
+                }
+            ],
+            text_units=[{"id": "gtu-2", "document_id": "doc-2"}],
+            documents=[{"id": "doc-2", "metadata": {"text_unit_id": "tu-2"}}],
+            output_dir=output_dir or root / "custom-output",
+        )
+
+    monkeypatch.setattr(adapter, "_load_graph_rag_artifacts", fake_load)
+    output = adapter.extract_candidates(run=run, sources=sources, text_units=text_units)
+
+    assert output.run.candidate_count == 1
+    assert output.candidates[0].status_suggestion == ClaimStatus.PROBABLE
+    assert output.evidence[0].text_unit_id == "tu-2"
+    assert (
+        resolve_graph_rag_artifacts_dir(root=root, explicit_artifacts_dir=None)
+        == root / "custom-output"
+    )
 
 
 def test_get_extractor_selects_backend_from_settings(monkeypatch) -> None:
@@ -229,6 +357,7 @@ def test_get_extractor_selects_backend_from_settings(monkeypatch) -> None:
     assert isinstance(get_extractor(), HeuristicExtractionAdapter)
 
     monkeypatch.setattr(settings, "graph_rag_enabled", True)
+    monkeypatch.setattr(settings, "graph_rag_mode", "in_process")
     assert isinstance(get_extractor(), GraphRAGExtractionAdapter)
 
 
@@ -369,9 +498,7 @@ def test_wikibase_adapter_round_trips_qualifiers_and_references(tmp_path) -> Non
                         "references": [
                             {
                                 "snaks": {
-                                    "P14": [
-                                        {"datavalue": {"value": "evi-1", "type": "string"}}
-                                    ]
+                                    "P14": [{"datavalue": {"value": "evi-1", "type": "string"}}]
                                 }
                             }
                         ],

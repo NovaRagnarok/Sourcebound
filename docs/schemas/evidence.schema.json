@@ -22,6 +22,24 @@
     "text": {
       "type": "string"
     },
+    "text_unit_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "span_start": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "span_end": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
     "notes": {
       "type": "string"
     },

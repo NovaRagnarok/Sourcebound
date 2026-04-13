@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Literal
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -12,7 +13,7 @@ class Settings(BaseSettings):
     app_host: str = Field(default="0.0.0.0", alias="APP_HOST")
     app_port: int = Field(default=8000, alias="APP_PORT")
     app_state_backend: str = Field(default="postgres", alias="APP_STATE_BACKEND")
-    app_truth_backend: str = Field(default="file", alias="APP_TRUTH_BACKEND")
+    app_truth_backend: Literal["wikibase"] = Field(default="wikibase", alias="APP_TRUTH_BACKEND")
     app_data_dir: Path = Field(default=Path("data/dev"), alias="APP_DATA_DIR")
     app_sqlite_path: Path = Field(default=Path("runtime/sourcebound.db"), alias="APP_SQLITE_PATH")
     app_postgres_dsn: str = Field(
@@ -30,6 +31,14 @@ class Settings(BaseSettings):
 
     graph_rag_root: Path = Field(default=Path("runtime/graphrag"), alias="GRAPH_RAG_ROOT")
     graph_rag_enabled: bool = Field(default=False, alias="GRAPH_RAG_ENABLED")
+    graph_rag_mode: Literal["in_process", "artifact_import"] = Field(
+        default="in_process",
+        alias="GRAPH_RAG_MODE",
+    )
+    graph_rag_artifacts_dir: Path | None = Field(
+        default=None,
+        alias="GRAPH_RAG_ARTIFACTS_DIR",
+    )
     llm_api_key: str | None = Field(default=None, alias="LLM_API_KEY")
 
     wikibase_base_url: str | None = Field(default=None, alias="WIKIBASE_BASE_URL")

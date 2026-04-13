@@ -8,7 +8,7 @@ import httpx
 from pydantic import BaseModel
 
 from source_aware_worldbuilding.domain.enums import ClaimKind, ClaimStatus
-from source_aware_worldbuilding.domain.errors import WikibaseSyncError
+from source_aware_worldbuilding.domain.errors import CanonUnavailableError, WikibaseSyncError
 from source_aware_worldbuilding.domain.models import ApprovedClaim, EvidenceSnippet, utc_now
 from source_aware_worldbuilding.storage.json_store import JsonListStore
 
@@ -36,42 +36,42 @@ class WikibaseTruthStore:
         self._csrf_token: str | None = None
 
     def list_claims(self) -> list[ApprovedClaim]:
-        cached = {item.claim_id: item for item in self.cache.read_models(ApprovedClaim)}
-        if not self.api_url:
-            return list(cached.values())
-
+        self._ensure_canon_available()
         entity_map = self._entity_map()
         entity_ids = [entry["entity_id"] for entry in entity_map.values() if entry.get("entity_id")]
         if not entity_ids:
-            return list(cached.values())
+            return []
 
-        for remote_claim in self._fetch_remote_claims(entity_ids):
-            cached[remote_claim.claim_id] = remote_claim
-
-        self.cache.write_models(cached.values())
-        return list(cached.values())
+        try:
+            claims = self._fetch_remote_claims(entity_ids)
+        except Exception as exc:
+            raise WikibaseSyncError(f"Wikibase read failed: {exc}") from exc
+        self.cache.write_models(claims)
+        return claims
 
     def get_claim(self, claim_id: str) -> ApprovedClaim | None:
+        self._ensure_canon_available()
         cached = self._get_cached_claim(claim_id)
-        if not self.api_url:
-            return cached
 
         entity_map = self._entity_map()
         entity_entry = entity_map.get(claim_id)
-        if entity_entry and entity_entry.get("entity_id"):
+        if not entity_entry or not entity_entry.get("entity_id"):
+            return None
+
+        try:
             remote_claim = self._fetch_remote_claim(entity_entry["entity_id"], cached)
-            if remote_claim is not None:
-                self._upsert_cache(remote_claim)
-                return remote_claim
-        return cached
+        except Exception as exc:
+            raise WikibaseSyncError(f"Wikibase read failed: {exc}") from exc
+        if remote_claim is not None:
+            self._upsert_cache(remote_claim)
+        return remote_claim
 
     def save_claim(
         self,
         claim: ApprovedClaim,
         evidence: list[EvidenceSnippet] | None = None,
     ) -> None:
-        if not self._can_sync():
-            raise WikibaseSyncError("Wikibase sync is not configured.")
+        self._ensure_canon_available()
 
         sync_record = self._sync_claim(claim, evidence or [])
         entity_map = self._entity_map()
@@ -475,7 +475,16 @@ class WikibaseTruthStore:
         self.cache.write_models(claims.values())
 
     def _can_sync(self) -> bool:
-        return bool(self.api_url and self.username and self.password)
+        return bool(
+            self.api_url and self.username and self.password and self.property_map
+        )
+
+    def _ensure_canon_available(self) -> None:
+        if self._can_sync():
+            return
+        raise CanonUnavailableError(
+            "Canonical Wikibase truth store is not configured."
+        )
 
     def _find_claim_statement(
         self,
