@@ -17,6 +17,7 @@ from source_aware_worldbuilding.adapters.qdrant_adapter import (
     QdrantProjectionAdapter,
     QdrantResearchSemanticAdapter,
 )
+from source_aware_worldbuilding.adapters.web_research_scout import WebOpenResearchScout
 from source_aware_worldbuilding.adapters.wikibase_adapter import WikibaseTruthStore
 from source_aware_worldbuilding.adapters.zotero_adapter import ZoteroCorpusAdapter
 from source_aware_worldbuilding.api.dependencies import get_extractor
@@ -220,6 +221,28 @@ def test_zotero_adapter_can_create_text_source_and_pull_by_item_key(monkeypatch)
     assert any(method == "POST" for method, _, _ in requests)
 
 
+def test_web_search_filters_duckduckgo_ad_redirects(monkeypatch) -> None:
+    html = """
+    <html><body>
+      <a class="result__a" href="https://duckduckgo.com/y.js?ad_domain=ebay.com">Ad Result</a>
+      <a class="result__snippet">sponsored</a>
+      <a class="result__a" href="/l/?uddg=https%3A%2F%2Farchive.example.org%2F2003-scene-report">Archive Result</a>
+      <a class="result__snippet">2003 scene report</a>
+    </body></html>
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, text=html)
+
+    scout = WebOpenResearchScout(user_agent="SourceboundResearchScout/Test")
+    monkeypatch.setattr(scout, "_client", httpx.Client(transport=httpx.MockTransport(handler)))
+
+    hits = scout.search('"2003" chicago house music', limit=5)
+
+    assert len(hits) == 1
+    assert hits[0].url == "https://archive.example.org/2003-scene-report"
+
+
 def test_zotero_adapter_file_intake_returns_warning_for_binary_file(monkeypatch) -> None:
     monkeypatch.setattr(settings, "zotero_library_id", "12345")
     monkeypatch.setattr(settings, "zotero_collection_key", None)
@@ -304,6 +327,43 @@ def test_extraction_adapter_dedupes_candidates_and_infers_place_and_time() -> No
         output.evidence[0].evidence_id,
         output.evidence[1].evidence_id,
     ]
+
+
+def test_extraction_adapter_skips_fragments_and_generic_subjects() -> None:
+    adapter = HeuristicExtractionAdapter()
+    run = ExtractionRun(run_id="run-fragments", status=ExtractionRunStatus.RUNNING)
+    sources = [
+        SourceRecord(
+            source_id="src-1",
+            title="Chicago venue report",
+            year="2003",
+            source_type="report",
+            locator_hint="section 2",
+        )
+    ]
+    text_units = [
+        TextUnit(
+            text_unit_id="tu-1",
+            source_id="src-1",
+            locator="section 2",
+            text=(
+                "People were very intentional about protecting those spaces. "
+                "Listen to our documentary about the scene. "
+                "The city required all-ages juice bars to obtain zoning permits. "
+                "And as Powell says, \"It is"
+            ),
+            ordinal=1,
+            checksum="seed",
+        )
+    ]
+
+    output = adapter.extract_candidates(run=run, sources=sources, text_units=text_units)
+
+    assert output.candidates
+    assert all(candidate.subject != "People" for candidate in output.candidates)
+    assert all("Listen to our documentary" not in candidate.value for candidate in output.candidates)
+    assert all("And as Powell says" not in candidate.value for candidate in output.candidates)
+    assert any(candidate.predicate == "required" for candidate in output.candidates)
 
 
 def test_graphrag_adapter_maps_claims_and_evidence_spans(monkeypatch) -> None:
@@ -757,3 +817,97 @@ def test_qdrant_research_semantic_embedding_is_deterministic() -> None:
     second = adapter._embed("same text repeated")
 
     assert first == second
+
+
+def test_qdrant_research_semantic_embedding_prefers_related_findings() -> None:
+    adapter = QdrantResearchSemanticAdapter()
+
+    related_a = ResearchFinding(
+        finding_id="finding-a",
+        run_id="research-1",
+        facet_id="media_culture",
+        query="2003 dj scene chicago media",
+        url="https://zine.example.org/a",
+        canonical_url="https://zine.example.org/a",
+        title="Chicago DJ radio scene coverage",
+        publisher="City Zine",
+        published_at="2003-05-12",
+        snippet_text="Local radio coverage tracked record pools, club flyers, and DJ residencies.",
+        page_excerpt="Local radio coverage tracked record pools, club flyers, and DJ residencies.",
+        source_type="news",
+        score=0.7,
+        relevance_score=0.6,
+        quality_score=0.8,
+        novelty_score=1.0,
+        decision="accepted",
+        provenance=ResearchFindingProvenance(
+            facet_id="media_culture",
+            facet_label="Media / Culture",
+            originating_query="2003 dj scene chicago media",
+            scoring=ResearchFindingScoring(
+                normalized_title="chicago dj radio scene coverage",
+            ),
+        ),
+    )
+    related_b = ResearchFinding(
+        finding_id="finding-b",
+        run_id="research-1",
+        facet_id="media_culture",
+        query="2003 dj scene chicago magazines",
+        url="https://news.example.org/b",
+        canonical_url="https://news.example.org/b",
+        title="Chicago radio and club scene feature",
+        publisher="Regional News",
+        published_at="2003-06-02",
+        snippet_text="A feature on DJs, record pools, flyers, and club residencies in Chicago.",
+        page_excerpt="A feature on DJs, record pools, flyers, and club residencies in Chicago.",
+        source_type="news",
+        score=0.72,
+        relevance_score=0.62,
+        quality_score=0.82,
+        novelty_score=1.0,
+        decision="accepted",
+        provenance=ResearchFindingProvenance(
+            facet_id="media_culture",
+            facet_label="Media / Culture",
+            originating_query="2003 dj scene chicago magazines",
+            scoring=ResearchFindingScoring(
+                normalized_title="chicago radio and club scene feature",
+            ),
+        ),
+    )
+    distant = ResearchFinding(
+        finding_id="finding-c",
+        run_id="research-1",
+        facet_id="economics_commercial_context",
+        query="medieval grain ledgers 1400",
+        url="https://archive.example.org/c",
+        canonical_url="https://archive.example.org/c",
+        title="Medieval grain tax ledger",
+        publisher="Archive",
+        published_at="1403-01-01",
+        snippet_text="Ledger entries recorded wheat tax obligations, harvest dues, and market tolls.",
+        page_excerpt="Ledger entries recorded wheat tax obligations, harvest dues, and market tolls.",
+        source_type="archive",
+        score=0.65,
+        relevance_score=0.58,
+        quality_score=0.74,
+        novelty_score=1.0,
+        decision="accepted",
+        provenance=ResearchFindingProvenance(
+            facet_id="economics_commercial_context",
+            facet_label="Economics / Commercial Context",
+            originating_query="medieval grain ledgers 1400",
+            scoring=ResearchFindingScoring(
+                normalized_title="medieval grain tax ledger",
+            ),
+        ),
+    )
+
+    def cosine(left: list[float], right: list[float]) -> float:
+        return sum(a * b for a, b in zip(left, right))
+
+    related_similarity = cosine(adapter._embed_finding(related_a), adapter._embed_finding(related_b))
+    distant_similarity = cosine(adapter._embed_finding(related_a), adapter._embed_finding(distant))
+
+    assert related_similarity > distant_similarity

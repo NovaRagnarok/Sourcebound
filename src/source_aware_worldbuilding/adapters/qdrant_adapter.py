@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from collections import defaultdict
 from hashlib import sha1
 from math import sqrt
+import re
 from uuid import NAMESPACE_URL, uuid5
 
 from source_aware_worldbuilding.domain.models import (
@@ -14,10 +16,57 @@ from source_aware_worldbuilding.domain.models import (
 )
 from source_aware_worldbuilding.settings import settings
 
+_EMBED_TOKEN_RE = re.compile(r"[a-z0-9]+")
+
 
 def _stable_token_slot(token: str, vector_size: int) -> int:
     digest = sha1(token.encode("utf-8")).digest()
     return int.from_bytes(digest[:8], "big") % vector_size
+
+
+def _stable_token_sign(token: str) -> float:
+    digest = sha1(f"sign:{token}".encode("utf-8")).digest()
+    return 1.0 if digest[0] % 2 == 0 else -1.0
+
+
+def _embedding_tokens(text: str) -> list[str]:
+    return _EMBED_TOKEN_RE.findall(text.lower())
+
+
+def _weighted_text_features(
+    text: str,
+    *,
+    unigram_weight: float = 1.0,
+    bigram_weight: float = 0.65,
+    trigram_weight: float = 0.2,
+) -> dict[str, float]:
+    tokens = _embedding_tokens(text)
+    features: dict[str, float] = defaultdict(float)
+    for token in tokens:
+        features[f"w:{token}"] += unigram_weight
+        if len(token) >= 6:
+            for index in range(len(token) - 2):
+                features[f"c3:{token[index:index + 3]}"] += trigram_weight
+    for left, right in zip(tokens, tokens[1:]):
+        features[f"b:{left}_{right}"] += bigram_weight
+    return dict(features)
+
+
+def _merge_weighted_features(*feature_maps: dict[str, float]) -> dict[str, float]:
+    merged: dict[str, float] = defaultdict(float)
+    for feature_map in feature_maps:
+        for feature, weight in feature_map.items():
+            merged[feature] += weight
+    return dict(merged)
+
+
+def _embed_weighted_features(features: dict[str, float], vector_size: int) -> list[float]:
+    vector = [0.0] * vector_size
+    for feature, weight in features.items():
+        slot = _stable_token_slot(feature, vector_size)
+        vector[slot] += _stable_token_sign(feature) * weight
+    norm = sqrt(sum(value * value for value in vector)) or 1.0
+    return [value / norm for value in vector]
 
 
 class QdrantProjectionAdapter:
@@ -162,12 +211,7 @@ class QdrantProjectionAdapter:
         return str(uuid5(NAMESPACE_URL, f"sourcebound:{claim_id}"))
 
     def _embed(self, text: str) -> list[float]:
-        vector = [0.0] * self.VECTOR_SIZE
-        for token in text.lower().split():
-            slot = _stable_token_slot(token, self.VECTOR_SIZE)
-            vector[slot] += 1.0
-        norm = sqrt(sum(value * value for value in vector)) or 1.0
-        return [value / norm for value in vector]
+        return _embed_weighted_features(_weighted_text_features(text), self.VECTOR_SIZE)
 
 
 class QdrantResearchSemanticAdapter:
@@ -194,7 +238,7 @@ class QdrantResearchSemanticAdapter:
             points.append(
                 PointStruct(
                     id=self._point_id(finding.finding_id),
-                    vector=self._embed(text),
+                    vector=self._embed_finding(finding),
                     payload={
                         "run_id": run_id,
                         "finding_id": finding.finding_id,
@@ -241,7 +285,7 @@ class QdrantResearchSemanticAdapter:
                 )
             response = client.query_points(
                 collection_name=self.collection,
-                query=self._embed(self._finding_text(finding)),
+                query=self._embed_finding(finding),
                 limit=min(limit, len(allowed_finding_ids)),
                 query_filter=Filter(
                     must=[
@@ -306,9 +350,17 @@ class QdrantResearchSemanticAdapter:
         return str(uuid5(NAMESPACE_URL, f"sourcebound:research:{finding_id}"))
 
     def _embed(self, text: str) -> list[float]:
-        vector = [0.0] * self.VECTOR_SIZE
-        for token in text.lower().split():
-            slot = _stable_token_slot(token, self.VECTOR_SIZE)
-            vector[slot] += 1.0
-        norm = sqrt(sum(value * value for value in vector)) or 1.0
-        return [value / norm for value in vector]
+        return _embed_weighted_features(_weighted_text_features(text), self.VECTOR_SIZE)
+
+    def _embed_finding(self, finding: ResearchFinding) -> list[float]:
+        normalized_title = finding.provenance.scoring.normalized_title if finding.provenance else finding.title
+        facet = finding.provenance.facet_label if finding.provenance else finding.facet_id
+        excerpt = finding.page_excerpt or finding.snippet_text or ""
+        source_type = finding.source_type or ""
+        features = _merge_weighted_features(
+            _weighted_text_features(normalized_title or "", unigram_weight=2.6, bigram_weight=1.2, trigram_weight=0.3),
+            _weighted_text_features(excerpt, unigram_weight=1.2, bigram_weight=0.75, trigram_weight=0.15),
+            _weighted_text_features(facet or "", unigram_weight=0.45, bigram_weight=0.2, trigram_weight=0.0),
+            _weighted_text_features(source_type, unigram_weight=0.2, bigram_weight=0.0, trigram_weight=0.0),
+        )
+        return _embed_weighted_features(features, self.VECTOR_SIZE)

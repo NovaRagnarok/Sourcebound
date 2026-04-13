@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from io import BytesIO
 import re
 from html import unescape
 from html.parser import HTMLParser
@@ -14,7 +15,7 @@ from source_aware_worldbuilding.domain.models import (
     ResearchSearchHit,
 )
 
-_PUBLISH_DATE_RE = re.compile(r"\b(19|20)\d{2}(?:-\d{2}-\d{2})?\b")
+_PUBLISH_DATE_RE = re.compile(r"\b((?:19|20)\d{2})(?:[-/]\d{2}[-/]\d{2})?\b")
 
 
 class _DuckDuckGoSearchParser(HTMLParser):
@@ -148,7 +149,7 @@ class _BaseHtmlResearchScout:
 
     def __init__(self, *, user_agent: str) -> None:
         self._client = httpx.Client(
-            timeout=20.0,
+            timeout=8.0,
             follow_redirects=True,
             headers={"User-Agent": user_agent},
         )
@@ -158,16 +159,26 @@ class _BaseHtmlResearchScout:
     def fetch_page(self, url: str) -> ResearchFetchedPage:
         response = self._client.get(url)
         response.raise_for_status()
-        parser = _PageContentParser()
-        parser.feed(response.text)
-        text = "\n".join(part for part in parser.text_parts if part).strip()
-        published_at = parser.published_at or self._infer_publish_date(text)
         final_url = str(response.url)
+        content_type = response.headers.get("content-type", "").lower()
+        title: str | None = None
+        publisher: str | None = None
+        if "pdf" in content_type or final_url.lower().endswith(".pdf"):
+            text = self._extract_pdf_text(response.content)
+            title = self._pdf_title(final_url, text)
+            published_at = self._infer_publish_date(final_url, title or "")
+        else:
+            parser = _PageContentParser()
+            parser.feed(response.text)
+            text = "\n".join(part for part in parser.text_parts if part).strip()
+            title = " ".join(parser.title).strip() or None
+            publisher = parser.publisher
+            published_at = parser.published_at or self._infer_publish_date(final_url, title or "")
         return ResearchFetchedPage(
             url=url,
             final_url=final_url,
-            title=" ".join(parser.title).strip() or None,
-            publisher=parser.publisher or self._publisher_from_url(final_url),
+            title=title,
+            publisher=publisher or self._publisher_from_url(final_url),
             published_at=published_at,
             locator=None,
             source_type=self._classify_source(final_url),
@@ -196,13 +207,32 @@ class _BaseHtmlResearchScout:
             return None
         return parser.can_fetch(user_agent or self._user_agent, url)
 
-    def _infer_publish_date(self, text: str) -> str | None:
-        match = _PUBLISH_DATE_RE.search(text[:3000])
-        return match.group(0) if match else None
+    def _infer_publish_date(self, url: str, title: str) -> str | None:
+        haystacks = [url, title]
+        for haystack in haystacks:
+            match = _PUBLISH_DATE_RE.search(haystack[:400])
+            if match:
+                return match.group(1)
+        return None
 
     def _publisher_from_url(self, url: str) -> str:
         host = urlparse(url).netloc.lower()
         return host.removeprefix("www.")
+
+    def _extract_pdf_text(self, content: bytes) -> str:
+        try:
+            from pdfminer.high_level import extract_text
+
+            return extract_text(BytesIO(content)).strip()
+        except Exception:
+            return ""
+
+    def _pdf_title(self, url: str, text: str) -> str | None:
+        first_line = next((line.strip() for line in text.splitlines() if line.strip()), "")
+        if first_line and len(first_line) <= 180:
+            return first_line
+        path = urlparse(url).path.rsplit("/", 1)[-1]
+        return path or None
 
     def _classify_source(self, url: str) -> str:
         host = urlparse(url).netloc.lower()
@@ -212,9 +242,33 @@ class _BaseHtmlResearchScout:
             return "educational"
         if any(part in host for part in ("archive", "library", "museum")):
             return "archive"
-        if any(part in host for part in ("news", "newspaper", "times", "post", "guardian", "bbc")):
+        if any(part in host for part in ("wikipedia", "britannica", "encyclopedia")):
+            return "reference"
+        if any(part in host for part in ("youtube", "youtu.be", "vimeo", "soundcloud", "mixcloud")):
+            return "video"
+        if any(
+            part in host
+            for part in (
+                "news",
+                "newspaper",
+                "times",
+                "post",
+                "guardian",
+                "bbc",
+                "tribune",
+                "reader",
+                "journal",
+                "npr",
+                "fox",
+                "abc",
+                "cbs",
+                "nbc",
+                "wttw",
+                "kutx",
+            )
+        ):
             return "news"
-        if any(part in host for part in ("magazine", "rollingstone", "billboard", "vice")):
+        if any(part in host for part in ("magazine", "rollingstone", "billboard", "vice", "djmag", "5mag", "chicagomag")):
             return "magazine"
         if any(part in host for part in ("forum", "board")):
             return "forum"
@@ -245,10 +299,21 @@ class WebOpenResearchScout(_BaseHtmlResearchScout):
         response.raise_for_status()
         parser = _DuckDuckGoSearchParser()
         parser.feed(response.text)
-        results = parser.results[:limit]
+        results = [
+            item
+            for item in parser.results
+            if self._is_organic_search_hit(item.url)
+        ][:limit]
         for item in results:
             item.query = query
         return results
+
+    def _is_organic_search_hit(self, url: str) -> bool:
+        parsed = urlparse(url)
+        host = parsed.netloc.lower().removeprefix("www.")
+        if host.endswith("duckduckgo.com"):
+            return False
+        return bool(host)
 
 
 class CuratedInputsResearchScout(_BaseHtmlResearchScout):

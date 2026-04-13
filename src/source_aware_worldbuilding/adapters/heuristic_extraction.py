@@ -19,6 +19,15 @@ from source_aware_worldbuilding.domain.normalization import (
 )
 
 SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+|\n+")
+GENERIC_SUBJECTS = {"people", "person", "they", "it", "this", "that", "these", "those"}
+NOISY_TEXT_PATTERNS = (
+    "photo by",
+    "listen to",
+    "sign up",
+    "read more",
+    "shop ",
+    "buy ",
+)
 
 
 class HeuristicExtractionAdapter:
@@ -43,6 +52,8 @@ class HeuristicExtractionAdapter:
 
             sentences = self._split_sentences(text_unit.text)
             for sentence_index, sentence in enumerate(sentences, start=1):
+                if not self._is_usable_sentence(sentence):
+                    continue
                 evidence_id = f"evi-{run.run_id}-{text_unit.text_unit_id}-{sentence_index}"
                 evidence.append(
                     EvidenceSnippet(
@@ -57,6 +68,10 @@ class HeuristicExtractionAdapter:
 
                 for predicate, value in self._extract_claims_from_sentence(sentence):
                     subject = self._claim_subject(sentence, source)
+                    if not subject or self._is_generic_subject(subject):
+                        continue
+                    if not self._is_usable_claim_value(value):
+                        continue
                     candidate_key = normalized_candidate_key(subject, predicate, value)
                     existing = candidate_by_key.get(candidate_key)
                     if existing is not None:
@@ -98,6 +113,23 @@ class HeuristicExtractionAdapter:
             return [text.strip()]
         return sentences
 
+    def _is_usable_sentence(self, sentence: str) -> bool:
+        normalized = " ".join(sentence.split()).strip()
+        lower = normalized.lower()
+        if len(normalized) < 35 or len(normalized.split()) < 6:
+            return False
+        if len(normalized) > 320:
+            return False
+        if normalized.endswith((":", "—", "-", "“", "\"")):
+            return False
+        if "…" in normalized or normalized.endswith("..."):
+            return False
+        if any(pattern in lower for pattern in NOISY_TEXT_PATTERNS):
+            return False
+        if normalized.count('"') % 2 == 1 and not normalized.endswith('"'):
+            return False
+        return True
+
     def _extract_claims_from_sentence(self, sentence: str) -> list[tuple[str, str]]:
         normalized = " ".join(sentence.split())
         lower = normalized.lower()
@@ -112,6 +144,14 @@ class HeuristicExtractionAdapter:
             return [("was_said_to", self._after_phrase(normalized, "was said to"))]
         if " during " in lower:
             return [("occurred_during", self._after_phrase(normalized, "during"))]
+        if " includes " in lower or " include " in lower:
+            return [("includes", normalized)]
+        if " required " in lower or " requires " in lower:
+            return [("required", normalized)]
+        if " declined " in lower and " thanks to " in lower:
+            return [("declined_due_to", normalized)]
+        if " focus on " in lower or " focuses on " in lower:
+            return [("focuses_on", self._after_phrase(normalized, "focus on"))]
         if len(normalized.split()) >= 5:
             return [("described_as", normalized)]
         return []
@@ -129,8 +169,26 @@ class HeuristicExtractionAdapter:
             sentence,
         )
         if match:
-            return match.group(1).strip()
+            subject = match.group(1).strip()
+            if self._is_generic_subject(subject):
+                return source.title
+            return subject
         return source.title
+
+    def _is_generic_subject(self, subject: str) -> bool:
+        normalized = " ".join(subject.split()).strip().lower()
+        return normalized in GENERIC_SUBJECTS
+
+    def _is_usable_claim_value(self, value: str) -> bool:
+        cleaned = " ".join(value.split()).strip(" .,:;")
+        lower = cleaned.lower()
+        if len(cleaned) < 24 or len(cleaned.split()) < 4:
+            return False
+        if cleaned.endswith((":", "—", "-", "“", "\"")):
+            return False
+        if any(pattern in lower for pattern in NOISY_TEXT_PATTERNS):
+            return False
+        return True
 
     def _suggest_status(self, text: str) -> ClaimStatus:
         text_lower = text.lower()

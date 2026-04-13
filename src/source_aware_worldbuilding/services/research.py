@@ -100,6 +100,8 @@ _PREFERRED_CLASS_BOOSTS = {
 }
 _PENALIZED_CLASSES = {
     "forum": 0.18,
+    "reference": 0.18,
+    "video": 0.2,
     "social": 0.2,
     "shopping": 0.12,
     "blog": 0.06,
@@ -141,6 +143,73 @@ _DEFAULT_PAGE_NAMES = {
     "default.aspx",
 }
 _RETRYABLE_STATUSES = {408, 409, 425, 429, 500, 502, 503, 504}
+_GUIDE_TITLE_PATTERNS = (
+    "history of",
+    "guide to",
+    "your guide to",
+    "origins of",
+    "origins and evolution",
+    "evolution of",
+    "birth of",
+    "top 10",
+    "top 20",
+    "top 100",
+    "most influential",
+    "documentaries",
+    "documentary",
+    "best ",
+    "essentials",
+    "condensed history",
+    "explores",
+    "archive of",
+)
+_RETROSPECTIVE_TITLE_PATTERNS = (
+    "timeline",
+    "legacy lives",
+    "since the first",
+    "years since",
+    "tribute to",
+    "important artists",
+    "key moments",
+    "shaped the",
+    "birth of",
+    "origins of",
+)
+_PROMO_TEXT_PATTERNS = (
+    "listen to",
+    "shop ",
+    "buy ",
+    "sign up",
+    "watch now",
+    "read more",
+    "photo by",
+    "tickets",
+    "podcast",
+    "newsletter",
+)
+_LOW_VALUE_EXCERPT_PATTERNS = (
+    "retrieved from",
+    "read more",
+    "click here",
+    "photo by",
+)
+_VAGUE_STAGE_PATTERNS = (
+    "what started as",
+    "throughout europe and beyond",
+    "worldwide phenomenon",
+    "changed the clubbing world",
+)
+_LOW_VALUE_RESULT_PATTERNS = (
+    "glossary",
+    "playlist",
+    "tracklist",
+    "watch?v=",
+    "youtube",
+    "artistdirect",
+    "archive of electronic music",
+    "top 20",
+    "top 10",
+)
 
 
 class ResearchService:
@@ -258,6 +327,8 @@ class ResearchService:
         started_monotonic = time.monotonic()
         accepted_signatures: dict[str, dict[str, str]] = {}
         findings: list[ResearchFinding] = []
+        page_cache: dict[str, ResearchFetchedPage] = {}
+        failed_fetch_cache: dict[str, tuple[str, str]] = {}
         stop_reason: str | None = None
 
         try:
@@ -275,6 +346,8 @@ class ResearchService:
                     facets=facets,
                     findings=findings,
                     accepted_signatures=accepted_signatures,
+                    page_cache=page_cache,
+                    failed_fetch_cache=failed_fetch_cache,
                     run=run,
                     policy=execution_policy,
                     started_monotonic=started_monotonic,
@@ -292,6 +365,8 @@ class ResearchService:
                     facets=facets,
                     findings=findings,
                     accepted_signatures=accepted_signatures,
+                    page_cache=page_cache,
+                    failed_fetch_cache=failed_fetch_cache,
                     run=run,
                     policy=execution_policy,
                     queries=queries,
@@ -532,47 +607,93 @@ class ResearchService:
         facets: list[ResearchFacet],
         findings: list[ResearchFinding],
         accepted_signatures: dict[str, dict[str, str]],
+        page_cache: dict[str, ResearchFetchedPage],
+        failed_fetch_cache: dict[str, tuple[str, str]],
         run: ResearchRun,
         policy: ResearchExecutionPolicy,
         queries: list[tuple[str, str]],
         started_monotonic: float,
     ) -> str | None:
+        queries_by_facet: dict[str, list[str]] = {}
         for facet_id, query in queries:
-            if len(findings) >= brief.max_findings:
-                return "Stopped early because max_findings was reached."
-            if self._deadline_exceeded(started_monotonic, policy):
-                return "Stopped early because total fetch time was exhausted."
-            facet = next(item for item in facets if item.facet_id == facet_id)
-            facet.queries_attempted += 1
-            run.telemetry.queries_attempted += 1
-            try:
-                hits = self._run_retrying_search(adapter, query, brief.max_results_per_query, run, policy)
-            except Exception as exc:
-                run.logs.append(f"Query [{facet_id}] failed: {exc}")
-                run.warnings.append(f"Query [{facet_id}] failed and was skipped: {exc}")
-                self._sync_run_progress(run, facets, findings, started_monotonic)
-                continue
-            facet.hits_seen += len(hits)
-            run.logs.append(f"Query [{facet_id}] returned {len(hits)} candidate hits.")
-            for hit in hits:
-                if len(findings) >= brief.max_findings:
-                    return "Stopped early because max_findings was reached."
+            queries_by_facet.setdefault(facet_id, []).append(query)
+
+        pending_by_facet: dict[str, list[ResearchFinding]] = {facet.facet_id: [] for facet in facets}
+        max_rounds = max((len(items) for items in queries_by_facet.values()), default=0)
+
+        def _pending_count() -> int:
+            return sum(len(items) for items in pending_by_facet.values())
+
+        def _stop(reason: str) -> str:
+            self._finalize_pending_candidates(
+                brief=brief,
+                program=program,
+                facets=facets,
+                pending_by_facet=pending_by_facet,
+                findings=findings,
+                accepted_signatures=accepted_signatures,
+                run=run,
+                started_monotonic=started_monotonic,
+            )
+            return reason
+
+        for round_index in range(max_rounds):
+            for facet in facets:
+                if len(findings) + _pending_count() >= brief.max_findings:
+                    return _stop("Stopped early because max_findings was reached.")
                 if self._deadline_exceeded(started_monotonic, policy):
-                    return "Stopped early because total fetch time was exhausted."
-                self._process_hit(
-                    adapter_id=adapter_id,
-                    adapter=adapter,
-                    brief=brief,
-                    program=program,
-                    facet=facet,
-                    query=query,
-                    hit=hit,
-                    run=run,
-                    policy=policy,
-                    findings=findings,
-                    accepted_signatures=accepted_signatures,
-                    started_monotonic=started_monotonic,
-                )
+                    return _stop("Stopped early because total fetch time was exhausted.")
+                facet_queries = queries_by_facet.get(facet.facet_id, [])
+                if round_index >= len(facet_queries):
+                    continue
+                query = facet_queries[round_index]
+                facet.queries_attempted += 1
+                run.telemetry.queries_attempted += 1
+                try:
+                    hits = self._rank_search_hits_for_fetch(
+                        brief,
+                        facet,
+                        self._run_retrying_search(adapter, query, brief.max_results_per_query, run, policy),
+                    )
+                except Exception as exc:
+                    run.logs.append(f"Query [{facet.facet_id}] failed: {exc}")
+                    run.warnings.append(f"Query [{facet.facet_id}] failed and was skipped: {exc}")
+                    self._sync_run_progress(run, facets, findings, started_monotonic)
+                    continue
+                facet.hits_seen += len(hits)
+                run.logs.append(f"Query [{facet.facet_id}] returned {len(hits)} candidate hits.")
+                for hit in hits:
+                    if len(findings) + _pending_count() >= brief.max_findings:
+                        return _stop("Stopped early because max_findings was reached.")
+                    if self._deadline_exceeded(started_monotonic, policy):
+                        return _stop("Stopped early because total fetch time was exhausted.")
+                    finding = self._prepare_finding_from_hit(
+                        adapter_id=adapter_id,
+                        adapter=adapter,
+                        brief=brief,
+                        program=program,
+                        facet=facet,
+                        query=query,
+                        hit=hit,
+                        page_cache=page_cache,
+                        failed_fetch_cache=failed_fetch_cache,
+                        run=run,
+                        policy=policy,
+                        findings=findings,
+                        started_monotonic=started_monotonic,
+                    )
+                    if finding is not None:
+                        pending_by_facet[facet.facet_id].append(finding)
+        self._finalize_pending_candidates(
+            brief=brief,
+            program=program,
+            facets=facets,
+            pending_by_facet=pending_by_facet,
+            findings=findings,
+            accepted_signatures=accepted_signatures,
+            run=run,
+            started_monotonic=started_monotonic,
+        )
         return None
 
     def _process_curated_inputs(
@@ -585,12 +706,26 @@ class ResearchService:
         facets: list[ResearchFacet],
         findings: list[ResearchFinding],
         accepted_signatures: dict[str, dict[str, str]],
+        page_cache: dict[str, ResearchFetchedPage],
+        failed_fetch_cache: dict[str, tuple[str, str]],
         run: ResearchRun,
         policy: ResearchExecutionPolicy,
         started_monotonic: float,
     ) -> str | None:
+        pending_by_facet: dict[str, list[ResearchFinding]] = {facet.facet_id: [] for facet in facets}
         for item in brief.curated_inputs:
-            if len(findings) >= brief.max_findings:
+            pending_count = sum(len(items) for items in pending_by_facet.values())
+            if len(findings) + pending_count >= brief.max_findings:
+                self._finalize_pending_candidates(
+                    brief=brief,
+                    program=program,
+                    facets=facets,
+                    pending_by_facet=pending_by_facet,
+                    findings=findings,
+                    accepted_signatures=accepted_signatures,
+                    run=run,
+                    started_monotonic=started_monotonic,
+                )
                 return "Stopped early because max_findings was reached."
             if item.input_type == "text":
                 facet = self._best_facet_for_text(facets, brief, item.title or "", item.text or "")
@@ -622,16 +757,7 @@ class ResearchService:
                     fetch_status="curated_text",
                 )
                 finding.source_type = item.source_type or finding.source_type or "curated_text"
-                self._finalize_finding(
-                    brief=brief,
-                    program=program,
-                    facet=facet,
-                    finding=finding,
-                    findings=findings,
-                    accepted_signatures=accepted_signatures,
-                    run=run,
-                    started_monotonic=started_monotonic,
-                )
+                pending_by_facet[facet.facet_id].append(finding)
                 continue
 
             hit = ResearchSearchHit(
@@ -643,7 +769,7 @@ class ResearchService:
             )
             facet = self._best_facet_for_text(facets, brief, hit.title, hit.snippet or "")
             facet.hits_seen += 1
-            self._process_hit(
+            finding = self._prepare_finding_from_hit(
                 adapter_id=adapter_id,
                 adapter=adapter,
                 brief=brief,
@@ -651,15 +777,57 @@ class ResearchService:
                 facet=facet,
                 query="curated_input",
                 hit=hit,
+                page_cache=page_cache,
+                failed_fetch_cache=failed_fetch_cache,
                 run=run,
                 policy=policy,
                 findings=findings,
+                started_monotonic=started_monotonic,
+            )
+            if finding is not None:
+                pending_by_facet[facet.facet_id].append(finding)
+        for facet in facets:
+            self._finalize_facet_candidates(
+                brief=brief,
+                program=program,
+                facet=facet,
+                facet_candidates=pending_by_facet[facet.facet_id],
+                findings=findings,
                 accepted_signatures=accepted_signatures,
+                run=run,
                 started_monotonic=started_monotonic,
             )
         return None
 
-    def _process_hit(
+    def _finalize_pending_candidates(
+        self,
+        *,
+        brief: ResearchBrief,
+        program: ResearchProgram,
+        facets: list[ResearchFacet],
+        pending_by_facet: dict[str, list[ResearchFinding]],
+        findings: list[ResearchFinding],
+        accepted_signatures: dict[str, dict[str, str]],
+        run: ResearchRun,
+        started_monotonic: float,
+    ) -> None:
+        for facet in facets:
+            facet_candidates = pending_by_facet.get(facet.facet_id, [])
+            if not facet_candidates:
+                continue
+            self._finalize_facet_candidates(
+                brief=brief,
+                program=program,
+                facet=facet,
+                facet_candidates=facet_candidates,
+                findings=findings,
+                accepted_signatures=accepted_signatures,
+                run=run,
+                started_monotonic=started_monotonic,
+            )
+            pending_by_facet[facet.facet_id] = []
+
+    def _prepare_finding_from_hit(
         self,
         *,
         adapter_id: str,
@@ -669,12 +837,13 @@ class ResearchService:
         facet: ResearchFacet,
         query: str,
         hit: ResearchSearchHit,
+        page_cache: dict[str, ResearchFetchedPage],
+        failed_fetch_cache: dict[str, tuple[str, str]],
         run: ResearchRun,
         policy: ResearchExecutionPolicy,
         findings: list[ResearchFinding],
-        accepted_signatures: dict[str, dict[str, str]],
         started_monotonic: float,
-    ) -> None:
+    ) -> ResearchFinding | None:
         canonical_url = self._canonical_url(hit.url)
         host = self._host_for_url(canonical_url)
         if self._is_blocked_by_domain_policy(canonical_url, policy):
@@ -682,13 +851,36 @@ class ResearchService:
             run.telemetry.blocked_by_policy_count += 1
             run.logs.append(f"Skipped {canonical_url} because it was blocked by domain policy.")
             self._sync_run_progress(run, run.facets, findings, started_monotonic)
-            return
+            return None
+        if canonical_url in page_cache:
+            page = page_cache[canonical_url]
+            finding = self._build_finding(
+                adapter_id=adapter_id,
+                run=run,
+                brief=brief,
+                facet=facet,
+                query=query,
+                hit=hit,
+                page=page,
+                fetch_outcome=ResearchFetchOutcome.FETCHED,
+                fetch_status="cached",
+            )
+            finding.provenance.fetch_status = "cached"
+            return finding
+        if canonical_url in failed_fetch_cache:
+            _, message = failed_fetch_cache[canonical_url]
+            facet.skipped_count += 1
+            run.logs.append(
+                f"Reused cached fetch failure for [{facet.facet_id}] {canonical_url}: {message}"
+            )
+            self._sync_run_progress(run, run.facets, findings, started_monotonic)
+            return None
         if host and run.telemetry.per_host_fetch_counts.get(host, 0) >= policy.per_host_fetch_cap:
             facet.skipped_count += 1
             run.telemetry.skipped_host_counts[host] = run.telemetry.skipped_host_counts.get(host, 0) + 1
             run.logs.append(f"Skipped {canonical_url} because host cap for {host} was reached.")
             self._sync_run_progress(run, run.facets, findings, started_monotonic)
-            return
+            return None
         if policy.respect_robots:
             allowed = adapter.allows_fetch(canonical_url, user_agent=self.research_user_agent)
             if allowed is False:
@@ -696,16 +888,24 @@ class ResearchService:
                 run.telemetry.blocked_by_robots_count += 1
                 run.logs.append(f"Skipped {canonical_url} because robots disallowed fetch.")
                 self._sync_run_progress(run, run.facets, findings, started_monotonic)
-                return
+                return None
             if allowed is None and "robots_unavailable" not in run.telemetry.fallback_flags:
                 run.telemetry.fallback_flags.append("robots_unavailable")
                 run.logs.append("Robots check was unavailable for one or more hosts; continuing in degraded mode.")
+        if self._should_skip_hit_before_fetch(brief, facet, hit):
+            facet.skipped_count += 1
+            run.logs.append(
+                f"Skipped {canonical_url} before fetch because it looked low-value for this brief."
+            )
+            self._sync_run_progress(run, run.facets, findings, started_monotonic)
+            return None
 
         try:
-            page = self._run_retrying_fetch(adapter, canonical_url, run, policy)
             if host:
                 run.telemetry.per_host_fetch_counts[host] = run.telemetry.per_host_fetch_counts.get(host, 0) + 1
-                run.telemetry.successful_fetches += 1
+            page = self._run_retrying_fetch(adapter, canonical_url, run, policy)
+            page_cache[canonical_url] = page
+            run.telemetry.successful_fetches += 1
             finding = self._build_finding(
                 adapter_id=adapter_id,
                 run=run,
@@ -720,6 +920,7 @@ class ResearchService:
         except Exception as exc:
             facet.rejected_count += 1
             category = self._failure_category(exc)
+            failed_fetch_cache[canonical_url] = (category, str(exc))
             self._record_failure(run.telemetry, category)
             finding = ResearchFinding(
                 finding_id=self._finding_id(run.run_id, facet.facet_id, query, hit.url, hit.rank),
@@ -754,18 +955,130 @@ class ResearchService:
             self.finding_store.save_findings([finding])
             run.logs.append(f"Fetch failed for [{facet.facet_id}] {canonical_url}: {exc}")
             self._sync_run_progress(run, run.facets, findings, started_monotonic)
-            return
+            return None
+        return finding
 
-        self._finalize_finding(
-            brief=brief,
-            program=program,
-            facet=facet,
-            finding=finding,
-            findings=findings,
-            accepted_signatures=accepted_signatures,
-            run=run,
-            started_monotonic=started_monotonic,
+    def _rank_search_hits_for_fetch(
+        self,
+        brief: ResearchBrief,
+        facet: ResearchFacet,
+        hits: list[ResearchSearchHit],
+    ) -> list[ResearchSearchHit]:
+        return sorted(
+            hits,
+            key=lambda item: (
+                self._prefetch_hit_score(brief, facet, item),
+                -(item.rank or 9999),
+            ),
+            reverse=True,
         )
+
+    def _prefetch_hit_score(
+        self,
+        brief: ResearchBrief,
+        facet: ResearchFacet,
+        hit: ResearchSearchHit,
+    ) -> float:
+        title = hit.title or ""
+        snippet = hit.snippet or ""
+        url = self._canonical_url(hit.url)
+        source_type = self._classify_source(url)
+        relevance = self._relevance_score(
+            " ".join(filter(None, [title, snippet])),
+            self._scoring_tokens(brief.topic, facet.label, brief.locale, self._time_hint(brief), *(brief.domain_hints or [])),
+        )
+        score = relevance
+        score += self._source_class_score(source_type)[0]
+        score += self._source_shape_score(url, title, snippet, "", source_type, brief)
+        score += self._prefetch_era_score(url, title, snippet, brief)
+        if source_type in {"shopping", "social"}:
+            score -= 0.25
+        return round(score, 4)
+
+    def _should_skip_hit_before_fetch(
+        self,
+        brief: ResearchBrief,
+        facet: ResearchFacet,
+        hit: ResearchSearchHit,
+    ) -> bool:
+        url = self._canonical_url(hit.url)
+        title = hit.title or ""
+        snippet = hit.snippet or ""
+        source_type = self._classify_source(url)
+        combined = " ".join(filter(None, [url, title, snippet])).lower()
+        score = self._prefetch_hit_score(brief, facet, hit)
+        has_time_anchor = self._text_mentions_requested_time(combined, brief)
+        if source_type in {"social", "shopping", "video"}:
+            return True
+        if source_type == "reference" and not has_time_anchor:
+            return True
+        if any(pattern in combined for pattern in _LOW_VALUE_RESULT_PATTERNS):
+            if has_time_anchor:
+                return score < 0.1
+            return score < 0.55
+        return score < -0.05
+
+    def _prefetch_era_score(
+        self,
+        url: str,
+        title: str,
+        snippet: str,
+        brief: ResearchBrief,
+    ) -> float:
+        target_year = self._target_year(brief)
+        if target_year is None:
+            return 0.0
+        score = 0.0
+        text = " ".join(filter(None, [url, title, snippet]))
+        if self._text_mentions_requested_time(text, brief):
+            score += 0.2
+        years = [int(year) for year in re.findall(r"\b((?:19|20)\d{2})\b", text)]
+        for year in years:
+            delta = abs(year - target_year)
+            if delta == 0:
+                score += 0.18
+            elif delta <= 1:
+                score += 0.1
+            elif delta <= 3:
+                score += 0.05
+            if year > target_year + 10:
+                score -= 0.12
+        return score
+
+    def _finalize_facet_candidates(
+        self,
+        *,
+        brief: ResearchBrief,
+        program: ResearchProgram,
+        facet: ResearchFacet,
+        facet_candidates: list[ResearchFinding],
+        findings: list[ResearchFinding],
+        accepted_signatures: dict[str, dict[str, str]],
+        run: ResearchRun,
+        started_monotonic: float,
+    ) -> None:
+        ranked = sorted(
+            facet_candidates,
+            key=lambda item: (
+                item.score,
+                item.relevance_score,
+                item.quality_score,
+                self._finding_has_requested_time_anchor(item, brief),
+                len(item.page_excerpt or item.snippet_text),
+            ),
+            reverse=True,
+        )
+        for finding in ranked:
+            self._finalize_finding(
+                brief=brief,
+                program=program,
+                facet=facet,
+                finding=finding,
+                findings=findings,
+                accepted_signatures=accepted_signatures,
+                run=run,
+                started_monotonic=started_monotonic,
+            )
 
     def _finalize_finding(
         self,
@@ -798,6 +1111,7 @@ class ResearchService:
                 signature,
                 finding.canonical_url or finding.url,
                 finding.title,
+                facet.facet_id,
                 accepted_signatures,
                 program.dedupe_similarity_threshold,
             )
@@ -827,6 +1141,7 @@ class ResearchService:
             else:
                 finding.decision = ResearchFindingDecision.ACCEPTED
                 accepted_signatures[signature] = {
+                    "facet_id": facet.facet_id,
                     "title": finding.title,
                     "normalized_title": self._normalize_title(finding.title),
                     "host": self._host_for_url(finding.canonical_url or finding.url),
@@ -930,18 +1245,44 @@ class ResearchService:
         facets: list[ResearchFacet],
         program: ResearchProgram,
     ) -> list[tuple[str, str]]:
-        queries: list[tuple[str, str]] = []
-        preferred_hint = " ".join(program.preferred_source_classes[:2])
-        time_hint = self._time_hint(brief)
+        primary_queries: list[tuple[str, str]] = []
+        tightened_queries: list[tuple[str, str]] = []
+        topic_phrase = self._compact_query_phrase(self._query_topic_phrase(brief), max_words=6)
+        locale_phrase = self._compact_query_phrase(brief.locale or "", max_words=3)
+        audience_phrase = self._compact_query_phrase(brief.audience or "", max_words=3)
+        domain_phrase = self._quoted_domain_phrase(brief)
+        domain_tail = self._domain_tail_phrase(brief)
         for facet in facets:
-            parts = [brief.topic, facet.query_hint, time_hint, brief.locale, brief.audience]
-            if brief.domain_hints:
-                parts.extend(brief.domain_hints[:2])
-            if preferred_hint:
-                parts.append(preferred_hint)
-            query = " ".join(part.strip() for part in parts if part and part.strip())
-            queries.append((facet.facet_id, query))
-        return queries[: brief.max_queries]
+            facet_phrase = self._compact_query_phrase(facet.query_hint, max_words=4)
+            primary_parts = [
+                self._query_time_phrase(brief),
+                topic_phrase,
+                facet_phrase,
+                locale_phrase,
+                audience_phrase,
+            ]
+            if domain_phrase:
+                primary_parts.append(domain_phrase)
+            primary_query = " ".join(part.strip() for part in primary_parts if part and part.strip())
+            primary_queries.append((facet.facet_id, primary_query))
+
+            tightened_parts = [
+                self._expanded_query_time_phrase(brief),
+                topic_phrase,
+                facet_phrase,
+                locale_phrase,
+                "archive interview report listing review primary source",
+            ]
+            if domain_phrase:
+                tightened_parts.append(domain_phrase)
+            if domain_tail:
+                tightened_parts.append(domain_tail)
+            tightened_query = " ".join(
+                part.strip() for part in tightened_parts if part and part.strip()
+            )
+            if tightened_query and tightened_query != primary_query:
+                tightened_queries.append((facet.facet_id, tightened_query))
+        return (primary_queries + tightened_queries)[: brief.max_queries]
 
     def _build_finding(
         self,
@@ -964,6 +1305,7 @@ class ResearchService:
         excerpt = self._best_excerpt(
             page.text,
             self._scoring_tokens(brief.topic, facet.label, brief.locale, self._time_hint(brief)),
+            brief,
         )
         snippet = (hit.snippet or excerpt or title).strip()
         publisher = page.publisher or self._host_for_url(canonical_url)
@@ -973,11 +1315,19 @@ class ResearchService:
         )
         structural_score = self._structural_score(title, snippet, page.published_at)
         source_class_score, boost, penalty = self._source_class_score(source_type)
-        era_score = self._era_score(page.published_at, brief)
+        era_score = self._era_score(page.published_at, brief, title=title, excerpt=" ".join(filter(None, [snippet, excerpt])))
         coverage_score = self._coverage_score(facet, brief)
+        shape_score = self._source_shape_score(
+            canonical_url,
+            title,
+            snippet,
+            excerpt,
+            source_type,
+            brief,
+        )
         quality = max(
             0.0,
-            min(structural_score + source_class_score + era_score + coverage_score, 1.0),
+            min(structural_score + source_class_score + era_score + coverage_score + shape_score, 1.0),
         )
         novelty = 1.0
         score = round((0.50 * relevance) + (0.50 * quality), 4)
@@ -1340,16 +1690,20 @@ class ResearchService:
         signature: str,
         url: str,
         title: str,
+        facet_id: str,
         accepted_signatures: dict[str, dict[str, str]],
         similarity_threshold: float,
     ) -> tuple[str | None, str | None]:
         if signature in accepted_signatures:
-            return "Duplicate of an already accepted finding.", "exact_signature"
+            if accepted_signatures[signature].get("facet_id") == facet_id:
+                return "Duplicate of an already accepted finding.", "exact_signature"
         canonical_url = self._canonical_url(url)
         normalized_title = self._normalize_title(title)
         host = self._host_for_url(url)
         path = self._path_for_url(url)
         for existing in accepted_signatures.values():
+            if existing.get("facet_id") != facet_id:
+                continue
             existing_title_raw = existing.get("title", "")
             existing_title = existing.get("normalized_title", "")
             existing_host = existing.get("host", "")
@@ -1408,28 +1762,100 @@ class ResearchService:
         return warnings
 
     def _build_staged_text(self, run: ResearchRun, finding: ResearchFinding) -> str:
-        _ = run
-        primary = (finding.page_excerpt or "").strip()
-        secondary = finding.snippet_text.strip()
-        if primary and secondary and secondary not in primary:
-            return f"{primary}\n\n{secondary}".strip()
-        return primary or secondary
-
-    def _best_excerpt(self, text: str, desired_tokens: set[str]) -> str:
-        if not text:
-            return ""
-        paragraphs = [segment.strip() for segment in re.split(r"\n{2,}", text) if segment.strip()]
-        if not paragraphs:
-            paragraphs = [text.strip()]
+        combined = "\n".join(
+            part.strip()
+            for part in [finding.page_excerpt or "", finding.snippet_text]
+            if part and part.strip()
+        ).strip()
+        sentences = self._candidate_stage_sentences(combined)
         ranked = sorted(
-            paragraphs,
-            key=lambda paragraph: (
-                self._relevance_score(paragraph, desired_tokens),
-                min(len(paragraph), 700),
+            sentences,
+            key=lambda sentence: (
+                self._stage_sentence_score(sentence, run.brief, finding),
+                len(sentence),
             ),
             reverse=True,
         )
-        return ranked[0][:700] if ranked else ""
+        chosen: list[str] = []
+        seen: set[str] = set()
+        for sentence in ranked:
+            normalized = self._normalize_text(sentence)
+            if not normalized or normalized in seen:
+                continue
+            seen.add(normalized)
+            chosen.append(sentence)
+            if len(chosen) == 3:
+                break
+        if chosen:
+            return "\n\n".join(chosen)
+        return combined
+
+    def _best_excerpt(
+        self,
+        text: str,
+        desired_tokens: set[str],
+        brief: ResearchBrief,
+    ) -> str:
+        if not text:
+            return ""
+        candidates = self._candidate_stage_sentences(text)
+        if not candidates:
+            candidates = [
+                segment.strip()
+                for segment in re.split(r"\n{2,}", text)
+                if segment and segment.strip()
+            ]
+        ranked = sorted(
+            candidates,
+            key=lambda segment: (
+                self._excerpt_segment_score(segment, desired_tokens, brief),
+                len(segment),
+            ),
+            reverse=True,
+        )
+        chosen: list[str] = []
+        seen: set[str] = set()
+        for segment in ranked:
+            normalized = self._normalize_text(segment)
+            if not normalized or normalized in seen:
+                continue
+            score = self._excerpt_segment_score(segment, desired_tokens, brief)
+            if score < 0.08:
+                continue
+            seen.add(normalized)
+            chosen.append(" ".join(segment.split()))
+            if len(chosen) == 3:
+                break
+        return " ".join(chosen)[:900] if chosen else ""
+
+    def _excerpt_segment_score(
+        self,
+        segment: str,
+        desired_tokens: set[str],
+        brief: ResearchBrief,
+    ) -> float:
+        cleaned = " ".join(segment.split()).strip()
+        lower = cleaned.lower()
+        score = self._relevance_score(cleaned, desired_tokens)
+        if self._text_mentions_requested_time(cleaned, brief):
+            score += 0.28
+        if re.search(r"\b(19|20)\d{2}\b", cleaned):
+            score += 0.12
+        if self._has_specific_date_anchor(cleaned):
+            score += 0.12
+        if re.search(r"\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3}\b", cleaned):
+            score += 0.08
+        if re.search(r"\b\d+\b", cleaned):
+            score += 0.04
+        if len(cleaned.split()) >= 12:
+            score += 0.05
+        if any(pattern in lower for pattern in _LOW_VALUE_EXCERPT_PATTERNS):
+            score -= 0.45
+        if any(pattern in lower for pattern in _PROMO_TEXT_PATTERNS):
+            score -= 0.3
+        if any(pattern in lower for pattern in _VAGUE_STAGE_PATTERNS):
+            score -= 0.15
+        return score
 
     def _best_facet_for_text(
         self,
@@ -1477,21 +1903,44 @@ class ResearchService:
         penalty = _PENALIZED_CLASSES.get(source_type or "", 0.0)
         return boost - penalty, boost, penalty
 
-    def _era_score(self, published_at: str | None, brief: ResearchBrief) -> float:
+    def _era_score(
+        self,
+        published_at: str | None,
+        brief: ResearchBrief,
+        *,
+        title: str = "",
+        excerpt: str = "",
+    ) -> float:
         published_year = self._year_from_date(published_at)
-        if not published_year:
-            return 0.0
         target_year = self._target_year(brief)
         if target_year is None:
             return 0.0
-        delta = abs(int(published_year) - target_year)
-        if delta == 0:
-            return 0.12
-        if delta <= 1:
-            return 0.08
-        if delta <= 3:
-            return 0.04
-        return 0.0
+        score = 0.0
+        combined_text = " ".join(filter(None, [title, excerpt]))
+        has_time_anchor = self._text_mentions_requested_time(combined_text, brief)
+        if published_year:
+            delta = abs(int(published_year) - target_year)
+            if delta == 0:
+                score += 0.18
+            elif delta <= 1:
+                score += 0.12
+            elif delta <= 3:
+                score += 0.06
+            if int(published_year) > target_year + 10:
+                score -= 0.16
+            elif int(published_year) > target_year + 5:
+                score -= 0.1
+            elif int(published_year) > target_year + 3:
+                score -= 0.05
+            elif int(published_year) < target_year - 10:
+                score -= 0.06
+            if not has_time_anchor and int(published_year) > target_year + 10:
+                score -= 0.14
+            elif not has_time_anchor and int(published_year) > target_year + 5:
+                score -= 0.08
+        if has_time_anchor:
+            score += 0.14 if not published_year else 0.08
+        return score
 
     def _coverage_score(self, facet: ResearchFacet, brief: ResearchBrief) -> float:
         target = max(1, min(facet.target_count, brief.max_per_facet))
@@ -1500,6 +1949,49 @@ class ResearchService:
         if facet.accepted_count < target:
             return 0.04
         return 0.0
+
+    def _source_shape_score(
+        self,
+        url: str,
+        title: str,
+        snippet: str,
+        excerpt: str,
+        source_type: str | None,
+        brief: ResearchBrief,
+    ) -> float:
+        score = 0.0
+        path = self._path_for_url(url)
+        title_lower = title.lower()
+        combined_lower = " ".join(filter(None, [title, snippet, excerpt])).lower()
+        has_time_anchor = self._finding_text_has_time_anchor(title, snippet, excerpt, brief)
+        has_specific_date_anchor = self._has_specific_date_anchor(" ".join(filter(None, [url, title, snippet, excerpt])))
+        has_query_identity = self._url_has_strong_query_identity(url)
+
+        if path == "/":
+            score -= 0.12
+        elif self._has_weak_identity_path(path) and not has_query_identity:
+            score -= 0.08
+        if any(pattern in title_lower for pattern in _GUIDE_TITLE_PATTERNS):
+            score -= 0.18
+        if any(pattern in title_lower for pattern in _RETROSPECTIVE_TITLE_PATTERNS):
+            score -= 0.22
+        if any(pattern in combined_lower for pattern in _PROMO_TEXT_PATTERNS):
+            score -= 0.12
+        if any(pattern in combined_lower for pattern in _VAGUE_STAGE_PATTERNS):
+            score -= 0.08
+        if not has_time_anchor:
+            score -= 0.05
+        if has_specific_date_anchor:
+            score += 0.14
+        elif has_time_anchor and has_query_identity:
+            score += 0.08
+        if source_type in {"shopping", "social"}:
+            score -= 0.16
+        elif source_type == "archive" and path == "/" and not has_time_anchor:
+            score -= 0.1
+        elif source_type == "web" and any(pattern in title_lower for pattern in ("guide", "history", "top ")):
+            score -= 0.1
+        return score
 
     def _classify_source(self, url: str) -> str:
         host = self._host_for_url(url)
@@ -1510,9 +2002,33 @@ class ResearchService:
             return "educational"
         if any(part in lower for part in ("archive", "library", "museum")):
             return "archive"
-        if any(part in lower for part in ("news", "newspaper", "times", "post", "guardian", "bbc")):
+        if any(part in lower for part in ("wikipedia", "britannica", "encyclopedia")):
+            return "reference"
+        if any(
+            part in lower
+            for part in (
+                "news",
+                "newspaper",
+                "times",
+                "post",
+                "guardian",
+                "bbc",
+                "tribune",
+                "reader",
+                "journal",
+                "npr",
+                "fox",
+                "abc",
+                "cbs",
+                "nbc",
+                "wttw",
+                "kutx",
+            )
+        ):
             return "news"
-        if any(part in lower for part in ("magazine", "rollingstone", "billboard", "vice")):
+        if any(part in lower for part in ("youtube", "youtu.be", "vimeo", "soundcloud", "mixcloud")):
+            return "video"
+        if any(part in lower for part in ("magazine", "rollingstone", "billboard", "vice", "djmag", "5mag", "chicagomag")):
             return "magazine"
         if any(part in lower for part in ("forum", "board")):
             return "forum"
@@ -1636,6 +2152,65 @@ class ResearchService:
             return f"{brief.time_start} {brief.time_end}"
         return brief.time_start or brief.time_end or ""
 
+    def _query_time_phrase(self, brief: ResearchBrief) -> str:
+        if brief.focal_year:
+            return f"\"{brief.focal_year}\""
+        return self._time_hint(brief)
+
+    def _query_topic_phrase(self, brief: ResearchBrief) -> str:
+        return brief.topic.strip()
+
+    def _expanded_time_hint(self, brief: ResearchBrief) -> str:
+        years = [year for year in [brief.focal_year, self._year_from_date(brief.time_start), self._year_from_date(brief.time_end)] if year]
+        unique_years: list[str] = []
+        for year in years:
+            if year not in unique_years:
+                unique_years.append(year)
+        if len(unique_years) >= 2:
+            return " ".join(unique_years)
+        return self._time_hint(brief)
+
+    def _expanded_query_time_phrase(self, brief: ResearchBrief) -> str:
+        expanded = self._expanded_time_hint(brief)
+        if brief.focal_year and brief.focal_year in expanded:
+            return f"\"{brief.focal_year}\" {expanded}".strip()
+        return expanded
+
+    def _compact_query_phrase(self, value: str, *, max_words: int) -> str:
+        if not value:
+            return ""
+        words = [part.strip(" ,.;:()[]{}\"'") for part in value.split()]
+        compacted: list[str] = []
+        seen: set[str] = set()
+        for word in words:
+            if not word:
+                continue
+            lowered = word.lower()
+            if lowered in seen:
+                continue
+            seen.add(lowered)
+            compacted.append(word)
+            if len(compacted) >= max_words:
+                break
+        return " ".join(compacted)
+
+    def _quoted_domain_phrase(self, brief: ResearchBrief) -> str:
+        compacted = self._compact_query_phrase(" ".join(brief.domain_hints or []), max_words=2)
+        if not compacted:
+            return ""
+        if len(compacted.split()) >= 2:
+            return f"\"{compacted}\""
+        return compacted
+
+    def _domain_tail_phrase(self, brief: ResearchBrief) -> str:
+        raw = " ".join(brief.domain_hints or [])
+        if not raw:
+            return ""
+        words = [part.strip(" ,.;:()[]{}\"'") for part in raw.split() if part.strip(" ,.;:()[]{}\"'")]
+        if len(words) <= 2:
+            return ""
+        return self._compact_query_phrase(" ".join(words[2:]), max_words=4)
+
     def _year_from_date(self, value: str | None) -> str | None:
         if not value:
             return None
@@ -1644,6 +2219,114 @@ class ResearchService:
 
     def _year_from_brief(self, brief: ResearchBrief) -> str | None:
         return brief.focal_year or self._year_from_date(brief.time_start) or self._year_from_date(brief.time_end)
+
+    def _requested_year_tokens(self, brief: ResearchBrief) -> set[str]:
+        years = {
+            year
+            for year in [
+                brief.focal_year,
+                self._year_from_date(brief.time_start),
+                self._year_from_date(brief.time_end),
+            ]
+            if year
+        }
+        return years
+
+    def _text_mentions_requested_time(self, text: str, brief: ResearchBrief) -> bool:
+        if not text:
+            return False
+        return any(year in text for year in self._requested_year_tokens(brief))
+
+    def _has_specific_date_anchor(self, text: str) -> bool:
+        if not text:
+            return False
+        return bool(
+            re.search(r"\b(?:19|20)\d{2}[-/](?:0?[1-9]|1[0-2])[-/](?:0?[1-9]|[12]\d|3[01])\b", text)
+            or re.search(
+                r"\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\s+\d{1,2},?\s+(?:19|20)\d{2}\b",
+                text,
+                flags=re.IGNORECASE,
+            )
+        )
+
+    def _url_has_strong_query_identity(self, url: str) -> bool:
+        parsed = urlparse(self._canonical_url(url))
+        if not parsed.query:
+            return False
+        for key, value in parse_qsl(parsed.query, keep_blank_values=True):
+            lowered = key.lower()
+            if lowered in {"id", "item", "doc", "title", "set", "page"} and len(value) >= 12:
+                return True
+            if self._has_specific_date_anchor(value):
+                return True
+        return False
+
+    def _finding_text_has_time_anchor(
+        self,
+        title: str,
+        snippet: str,
+        excerpt: str,
+        brief: ResearchBrief,
+    ) -> bool:
+        return self._text_mentions_requested_time(" ".join(filter(None, [title, snippet, excerpt])), brief)
+
+    def _finding_has_requested_time_anchor(self, finding: ResearchFinding, brief: ResearchBrief) -> bool:
+        return self._finding_text_has_time_anchor(
+            finding.title,
+            finding.snippet_text,
+            finding.page_excerpt or "",
+            brief,
+        )
+
+    def _candidate_stage_sentences(self, text: str) -> list[str]:
+        if not text:
+            return []
+        candidates = [
+            fragment.strip()
+            for fragment in re.split(r"(?<=[.!?])\s+|\n+", text)
+            if fragment and fragment.strip()
+        ]
+        return [sentence for sentence in candidates if self._is_stage_sentence_usable(sentence)]
+
+    def _is_stage_sentence_usable(self, sentence: str) -> bool:
+        cleaned = " ".join(sentence.split()).strip(" -")
+        lower = cleaned.lower()
+        if len(cleaned) < 55 or len(cleaned.split()) < 8:
+            return False
+        if len(cleaned) > 320:
+            return False
+        if cleaned.endswith((":", "—", "-", "“", "\"")):
+            return False
+        if any(pattern in lower for pattern in _PROMO_TEXT_PATTERNS):
+            return False
+        if any(pattern in lower for pattern in _VAGUE_STAGE_PATTERNS):
+            return False
+        if cleaned.count('"') % 2 == 1 and not cleaned.endswith('"'):
+            return False
+        return True
+
+    def _stage_sentence_score(self, sentence: str, brief: ResearchBrief, finding: ResearchFinding) -> float:
+        cleaned = " ".join(sentence.split()).strip()
+        score = 0.0
+        if self._text_mentions_requested_time(cleaned, brief):
+            score += 0.25
+        if re.search(r"\b(19|20)\d{2}\b", cleaned):
+            score += 0.15
+        if re.search(r"\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3}\b", cleaned):
+            score += 0.12
+        if re.search(r"\b\d+\b", cleaned):
+            score += 0.08
+        if len(cleaned.split()) >= 12:
+            score += 0.08
+        if cleaned.endswith((".", "!", "?")):
+            score += 0.05
+        if finding.publisher and finding.publisher.lower() not in cleaned.lower():
+            score += 0.02
+        if any(pattern in cleaned.lower() for pattern in _PROMO_TEXT_PATTERNS):
+            score -= 0.25
+        if any(pattern in cleaned.lower() for pattern in _VAGUE_STAGE_PATTERNS):
+            score -= 0.15
+        return score
 
     def _deadline_exceeded(
         self,
