@@ -207,6 +207,7 @@ def seed_dev_data() -> None:
     )
     _write_json(data_dir / "review_events.json", review_events)
     _write_json(data_dir / "claims.json", [])
+    _write_json(data_dir / "claim_relationships.json", [])
     _write_json(data_dir / "source_documents.json", [])
 
     if settings.app_state_backend == "postgres":

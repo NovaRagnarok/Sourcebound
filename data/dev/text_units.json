@@ -5,7 +5,8 @@
     "locator": "folio 12r",
     "text": "Bread prices rose sharply during the winter shortage.",
     "ordinal": 1,
-    "checksum": "seed-1"
+    "checksum": "seed-1",
+    "notes": null
   },
   {
     "text_unit_id": "txt-2",
@@ -13,6 +14,7 @@
     "locator": "chapter 7",
     "text": "Townspeople whispered that merchants were withholding grain.",
     "ordinal": 1,
-    "checksum": "seed-2"
+    "checksum": "seed-2",
+    "notes": null
   }
 ]
