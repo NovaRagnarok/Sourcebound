@@ -39,6 +39,7 @@ from source_aware_worldbuilding.adapters.wikibase_adapter import WikibaseTruthSt
 from source_aware_worldbuilding.adapters.zotero_adapter import ZoteroCorpusAdapter
 from source_aware_worldbuilding.services.ingestion import IngestionService
 from source_aware_worldbuilding.services.intake import IntakeService
+from source_aware_worldbuilding.services.lore_packet import LorePacketService
 from source_aware_worldbuilding.services.normalization import NormalizationService
 from source_aware_worldbuilding.services.query import QueryService
 from source_aware_worldbuilding.services.review import ReviewService
@@ -188,4 +189,12 @@ def get_query_service() -> QueryService:
         evidence_store=get_evidence_store(),
         source_store=get_source_store(),
         projection=get_projection(),
+    )
+
+
+def get_lore_packet_service() -> LorePacketService:
+    return LorePacketService(
+        truth_store=get_truth_store(),
+        evidence_store=get_evidence_store(),
+        source_store=get_source_store(),
     )

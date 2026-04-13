@@ -2,17 +2,122 @@ from __future__ import annotations
 
 from fastapi.testclient import TestClient
 
-from source_aware_worldbuilding.api.dependencies import get_intake_service, get_review_service
+from source_aware_worldbuilding.api.dependencies import (
+    get_intake_service,
+    get_lore_packet_service,
+    get_review_service,
+)
 from source_aware_worldbuilding.api.main import app
 from source_aware_worldbuilding.cli import seed_dev_data
-from source_aware_worldbuilding.domain.errors import WikibaseSyncError, ZoteroWriteError
+from source_aware_worldbuilding.domain.errors import (
+    CanonUnavailableError,
+    WikibaseSyncError,
+    ZoteroWriteError,
+)
 from source_aware_worldbuilding.domain.models import (
     ExtractionRun,
     IntakeResult,
+    ApprovedClaim,
+    LorePacketRequest,
+    LorePacketResponse,
     SourceDocumentRecord,
+    EvidenceSnippet,
     SourceRecord,
     ZoteroCreatedItem,
 )
+from source_aware_worldbuilding.domain.enums import ClaimKind, ClaimStatus
+from source_aware_worldbuilding.storage.json_store import JsonListStore
+
+
+def populate_lore_packet_fixtures(data_dir) -> None:
+    JsonListStore(data_dir / "sources.json").write_models(
+        [
+            SourceRecord(source_id="src-1", title="Town Register", source_type="record"),
+            SourceRecord(source_id="src-2", title="Family Letters", source_type="letter"),
+            SourceRecord(source_id="src-3", title="War Chronicle", source_type="chronicle"),
+            SourceRecord(source_id="src-4", title="Tavern Rumors", source_type="oral_history"),
+        ]
+    )
+    JsonListStore(data_dir / "evidence.json").write_models(
+        [
+            EvidenceSnippet(
+                evidence_id="evi-1",
+                source_id="src-1",
+                locator="folio 2r",
+                text="Alys served as harbor master.",
+            ),
+            EvidenceSnippet(
+                evidence_id="evi-2",
+                source_id="src-2",
+                locator="letter 3",
+                text="Beren remained loyal to Alys.",
+            ),
+            EvidenceSnippet(
+                evidence_id="evi-3",
+                source_id="src-3",
+                locator="chapter 1",
+                text="The Ember War began in 1201.",
+            ),
+            EvidenceSnippet(
+                evidence_id="evi-4",
+                source_id="src-4",
+                locator="entry 9",
+                text="Patrons whispered that the moon well sings.",
+            ),
+        ]
+    )
+    JsonListStore(data_dir / "claims.json").write_models(
+        [
+            ApprovedClaim(
+                claim_id="claim-1",
+                subject="Alys",
+                predicate="serves_as",
+                value="harbor master",
+                claim_kind=ClaimKind.PERSON,
+                status=ClaimStatus.VERIFIED,
+                place="Greyport",
+                evidence_ids=["evi-1"],
+            ),
+            ApprovedClaim(
+                claim_id="claim-2",
+                subject="Beren",
+                predicate="is_allied_with",
+                value="Alys",
+                claim_kind=ClaimKind.RELATIONSHIP,
+                status=ClaimStatus.PROBABLE,
+                place="Greyport",
+                evidence_ids=["evi-2"],
+            ),
+            ApprovedClaim(
+                claim_id="claim-3",
+                subject="Ember War",
+                predicate="begins",
+                value="regional conflict",
+                claim_kind=ClaimKind.EVENT,
+                status=ClaimStatus.VERIFIED,
+                time_start="1201",
+                evidence_ids=["evi-3"],
+            ),
+            ApprovedClaim(
+                claim_id="claim-4",
+                subject="Moon well",
+                predicate="sings_to",
+                value="travelers at midnight",
+                claim_kind=ClaimKind.OBJECT,
+                status=ClaimStatus.RUMOR,
+                place="Greyport",
+                evidence_ids=["evi-4"],
+            ),
+            ApprovedClaim(
+                claim_id="claim-5",
+                subject="Greyport docks",
+                predicate="should_be_depicted_as",
+                value="crowded and wind-cut",
+                claim_kind=ClaimKind.PLACE,
+                status=ClaimStatus.AUTHOR_CHOICE,
+            ),
+        ]
+    )
 
 
 def test_openapi_includes_operator_mvp_routes() -> None:
@@ -35,6 +140,7 @@ def test_openapi_includes_operator_mvp_routes() -> None:
         "/v1/claims/{claim_id}",
         "/v1/claims/{claim_id}/relationships",
         "/v1/query",
+        "/v1/exports/lore-packet",
     } <= paths
 
 
@@ -126,6 +232,39 @@ def test_review_route_surfaces_wikibase_sync_failures(temp_data_dir) -> None:
 
     assert response.status_code == 502
     assert "Wikibase sync failed" in response.json()["detail"]
+
+
+def test_lore_packet_export_route_returns_markdown_packet(temp_data_dir) -> None:
+    populate_lore_packet_fixtures(temp_data_dir)
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1/exports/lore-packet",
+            json={"project_name": "greyport", "files": ["basic-lore.md", "timeline.md"]},
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["project_name"] == "greyport"
+    assert [item["filename"] for item in body["files"]] == ["basic-lore.md", "timeline.md"]
+    assert body["metadata"]["claim_count"] == 5
+    assert "Basic Lore" in body["files"][0]["content"]
+    assert "Timeline" in body["files"][1]["content"]
+
+
+def test_lore_packet_route_surfaces_canon_unavailable_errors(temp_data_dir) -> None:
+    class FailingLorePacketService:
+        def export(self, request: LorePacketRequest) -> LorePacketResponse:
+            _ = request
+            raise CanonUnavailableError("canon unavailable")
+
+    app.dependency_overrides[get_lore_packet_service] = lambda: FailingLorePacketService()
+
+    with TestClient(app) as client:
+        response = client.post("/v1/exports/lore-packet", json={"project_name": "greyport"})
+
+    assert response.status_code == 503
+    assert "canon unavailable" in response.json()["detail"]
 
 
 def test_intake_routes_return_shared_result_shapes(temp_data_dir) -> None:

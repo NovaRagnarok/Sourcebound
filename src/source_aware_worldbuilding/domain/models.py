@@ -206,6 +206,40 @@ class QueryRequest(BaseModel):
     filters: QueryFilter | None = None
 
 
+class LorePacketRequest(BaseModel):
+    project_name: str
+    focus: str | None = None
+    files: list[
+        Literal["basic-lore.md", "characters.md", "timeline.md", "notes.md"]
+    ] | None = None
+    filters: QueryFilter | None = None
+    include_statuses: list[ClaimStatus] | None = None
+    include_evidence_footnotes: bool = True
+
+
+class LorePacketFile(BaseModel):
+    filename: str
+    content: str
+    claim_ids: list[str] = Field(default_factory=list)
+    source_ids: list[str] = Field(default_factory=list)
+
+
+class LorePacketMetadata(BaseModel):
+    claim_count: int = 0
+    source_count: int = 0
+    evidence_count: int = 0
+
+
+class LorePacketResponse(BaseModel):
+    project_name: str
+    generated_at: str = Field(default_factory=utc_now)
+    focus: str | None = None
+    filters: QueryFilter | None = None
+    files: list[LorePacketFile] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    metadata: LorePacketMetadata = Field(default_factory=LorePacketMetadata)
+
+
 class QueryResultMetadata(BaseModel):
     retrieval_backend: Literal["memory", "qdrant"] = "memory"
     fallback_used: bool = False
