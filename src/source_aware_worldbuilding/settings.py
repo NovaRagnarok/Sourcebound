@@ -25,6 +25,38 @@ class Settings(BaseSettings):
     )
     app_postgres_schema: str = Field(default="sourcebound", alias="APP_POSTGRES_SCHEMA")
     app_ui_enabled: bool = Field(default=True, alias="APP_UI_ENABLED")
+    app_research_default_adapter_id: str = Field(
+        default="web_open",
+        alias="APP_RESEARCH_DEFAULT_ADAPTER_ID",
+    )
+    app_research_total_fetch_time_seconds: int = Field(
+        default=90,
+        alias="APP_RESEARCH_TOTAL_FETCH_TIME_SECONDS",
+    )
+    app_research_per_host_fetch_cap: int = Field(
+        default=3,
+        alias="APP_RESEARCH_PER_HOST_FETCH_CAP",
+    )
+    app_research_retry_attempts: int = Field(
+        default=3,
+        alias="APP_RESEARCH_RETRY_ATTEMPTS",
+    )
+    app_research_retry_backoff_base_ms: int = Field(
+        default=250,
+        alias="APP_RESEARCH_RETRY_BACKOFF_BASE_MS",
+    )
+    app_research_retry_backoff_max_ms: int = Field(
+        default=2000,
+        alias="APP_RESEARCH_RETRY_BACKOFF_MAX_MS",
+    )
+    app_research_respect_robots: bool = Field(
+        default=True,
+        alias="APP_RESEARCH_RESPECT_ROBOTS",
+    )
+    app_research_user_agent: str = Field(
+        default="SourceboundResearchScout/0.2 (+https://localhost/sourcebound)",
+        alias="APP_RESEARCH_USER_AGENT",
+    )
 
     zotero_library_type: str = Field(default="user", alias="ZOTERO_LIBRARY_TYPE")
     zotero_library_id: str | None = Field(default=None, alias="ZOTERO_LIBRARY_ID")
@@ -53,6 +85,26 @@ class Settings(BaseSettings):
     qdrant_url: str = Field(default="http://localhost:6333", alias="QDRANT_URL")
     qdrant_collection: str = Field(default="approved_claims", alias="QDRANT_COLLECTION")
     qdrant_enabled: bool = Field(default=True, alias="QDRANT_ENABLED")
+    research_semantic_enabled: bool = Field(
+        default=True,
+        alias="RESEARCH_SEMANTIC_ENABLED",
+    )
+    research_qdrant_collection: str = Field(
+        default="research_findings",
+        alias="RESEARCH_QDRANT_COLLECTION",
+    )
+    research_semantic_duplicate_threshold: float = Field(
+        default=0.9,
+        alias="RESEARCH_SEMANTIC_DUPLICATE_THRESHOLD",
+    )
+    research_semantic_novelty_floor: float = Field(
+        default=0.1,
+        alias="RESEARCH_SEMANTIC_NOVELTY_FLOOR",
+    )
+    research_semantic_rerank_weight: float = Field(
+        default=0.05,
+        alias="RESEARCH_SEMANTIC_RERANK_WEIGHT",
+    )
 
 
 settings = Settings()

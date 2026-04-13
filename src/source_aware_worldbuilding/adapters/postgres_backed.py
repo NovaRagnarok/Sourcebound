@@ -14,6 +14,9 @@ from source_aware_worldbuilding.domain.models import (
     ClaimRelationship,
     EvidenceSnippet,
     ExtractionRun,
+    ResearchFinding,
+    ResearchProgram,
+    ResearchRun,
     ReviewEvent,
     SourceDocumentRecord,
     SourceRecord,
@@ -191,6 +194,72 @@ class PostgresReviewStore(_PostgresAdapterBase):
             "review_id",
             [review],
             extra_columns={"candidate_id": "candidate_id", "reviewed_at": "reviewed_at"},
+        )
+
+
+class PostgresResearchRunStore(_PostgresAdapterBase):
+    def list_runs(self) -> list[ResearchRun]:
+        return self.store.list_models("research_runs", ResearchRun, order_by="started_at DESC")
+
+    def get_run(self, run_id: str) -> ResearchRun | None:
+        return self.store.get_model("research_runs", "run_id", run_id, ResearchRun)
+
+    def save_run(self, run: ResearchRun) -> None:
+        self.store.upsert_models(
+            "research_runs",
+            "run_id",
+            [run],
+            extra_columns={
+                "started_at": "started_at",
+                "status": "status",
+                "program_id": "program_id",
+            },
+        )
+
+    def update_run(self, run: ResearchRun) -> None:
+        self.save_run(run)
+
+
+class PostgresResearchFindingStore(_PostgresAdapterBase):
+    def list_findings(self, run_id: str | None = None) -> list[ResearchFinding]:
+        where = ("run_id", run_id) if run_id else None
+        return self.store.list_models(
+            "research_findings",
+            ResearchFinding,
+            order_by="run_id, facet_id, score DESC",
+            where=where,
+        )
+
+    def save_findings(self, findings: list[ResearchFinding]) -> None:
+        self.store.upsert_models(
+            "research_findings",
+            "finding_id",
+            findings,
+            extra_columns={
+                "run_id": "run_id",
+                "facet_id": "facet_id",
+                "decision": "decision",
+                "score": "score",
+            },
+        )
+
+    def update_finding(self, finding: ResearchFinding) -> None:
+        self.save_findings([finding])
+
+
+class PostgresResearchProgramStore(_PostgresAdapterBase):
+    def list_programs(self) -> list[ResearchProgram]:
+        return self.store.list_models("research_programs", ResearchProgram, order_by="updated_at DESC")
+
+    def get_program(self, program_id: str) -> ResearchProgram | None:
+        return self.store.get_model("research_programs", "program_id", program_id, ResearchProgram)
+
+    def save_program(self, program: ResearchProgram) -> None:
+        self.store.upsert_models(
+            "research_programs",
+            "program_id",
+            [program],
+            extra_columns={"updated_at": "updated_at", "built_in": "built_in"},
         )
 
 

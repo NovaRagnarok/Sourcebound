@@ -3,13 +3,18 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from source_aware_worldbuilding.domain.enums import (
     ClaimKind,
     ClaimStatus,
     ExtractionRunStatus,
     QueryMode,
+    ResearchCoverageStatus,
+    ResearchFindingDecision,
+    ResearchFindingReason,
+    ResearchFetchOutcome,
+    ResearchRunStatus,
     ReviewDecision,
     ReviewState,
 )
@@ -253,6 +258,30 @@ class ProjectionSearchResult(BaseModel):
     fallback_reason: str | None = None
 
 
+class ResearchSemanticMatch(BaseModel):
+    finding_id: str
+    similarity: float
+    title: str
+    canonical_url: str | None = None
+    decision: str | None = None
+
+
+class ResearchSemanticResult(BaseModel):
+    matches: list[ResearchSemanticMatch] = Field(default_factory=list)
+    retrieval_backend: Literal["qdrant"] = "qdrant"
+    fallback_used: bool = False
+    fallback_reason: str | None = None
+
+
+class ResearchSemanticTelemetry(BaseModel):
+    backend: str | None = None
+    fallback_used: bool = False
+    fallback_reason: str | None = None
+    vectors_upserted: int = 0
+    comparisons_performed: int = 0
+    duplicate_hints_emitted: int = 0
+
+
 class ClaimRelationship(BaseModel):
     relationship_id: str
     claim_id: str
@@ -299,6 +328,291 @@ class QueryResult(BaseModel):
     sources: list[SourceRecord] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
     metadata: QueryResultMetadata = Field(default_factory=QueryResultMetadata)
+
+
+class ResearchFacet(BaseModel):
+    facet_id: str
+    label: str
+    query_hint: str
+    target_count: int = 1
+    queries_attempted: int = 0
+    hits_seen: int = 0
+    accepted_count: int = 0
+    rejected_count: int = 0
+    skipped_count: int = 0
+
+
+class ResearchExecutionPolicy(BaseModel):
+    total_fetch_time_seconds: int = 90
+    per_host_fetch_cap: int = 3
+    retry_attempts: int = 3
+    retry_backoff_base_ms: int = 250
+    retry_backoff_max_ms: int = 2000
+    respect_robots: bool = True
+    allow_domains: list[str] = Field(default_factory=list)
+    deny_domains: list[str] = Field(default_factory=list)
+
+
+class ResearchCuratedInput(BaseModel):
+    input_type: Literal["url", "text"]
+    url: str | None = None
+    title: str | None = None
+    text: str | None = None
+    publisher: str | None = None
+    published_at: str | None = None
+    source_type: str | None = None
+    locator: str | None = None
+    notes: str | None = None
+
+    @model_validator(mode="after")
+    def validate_shape(self) -> "ResearchCuratedInput":
+        if self.input_type == "url" and not self.url:
+            raise ValueError("Curated URL inputs require a url.")
+        if self.input_type == "text":
+            if not self.title:
+                raise ValueError("Curated text inputs require a title.")
+            if not self.text:
+                raise ValueError("Curated text inputs require text.")
+        return self
+
+
+class ResearchScoutCapabilities(BaseModel):
+    supports_search: bool = False
+    supports_fetch: bool = False
+    supports_text_inputs: bool = False
+    supports_robots: bool = False
+    supports_domain_policy: bool = False
+
+
+class ResearchRunTelemetry(BaseModel):
+    total_queries: int = 0
+    queries_attempted: int = 0
+    fetch_attempts: int = 0
+    successful_fetches: int = 0
+    retries: int = 0
+    fetch_failures_by_category: dict[str, int] = Field(default_factory=dict)
+    blocked_by_robots_count: int = 0
+    blocked_by_policy_count: int = 0
+    dedupe_count: int = 0
+    per_host_fetch_counts: dict[str, int] = Field(default_factory=dict)
+    skipped_host_counts: dict[str, int] = Field(default_factory=dict)
+    elapsed_run_time_ms: int = 0
+    elapsed_fetch_time_ms: int = 0
+    fallback_flags: list[str] = Field(default_factory=list)
+    semantic: ResearchSemanticTelemetry = Field(default_factory=ResearchSemanticTelemetry)
+
+
+class ResearchFindingScoring(BaseModel):
+    overall_score: float = 0.0
+    relevance_score: float = 0.0
+    quality_score: float = 0.0
+    novelty_score: float = 0.0
+    structural_score: float = 0.0
+    source_class_score: float = 0.0
+    era_score: float = 0.0
+    coverage_score: float = 0.0
+    quality_threshold: float = 0.0
+    threshold_passed: bool = False
+    source_type: str | None = None
+    source_class_boost_applied: float = 0.0
+    source_class_penalty_applied: float = 0.0
+    near_era_bias_applied: bool = False
+    normalized_title: str | None = None
+    canonical_host: str | None = None
+    semantic_score: float = 0.0
+    semantic_novelty_score: float = 0.0
+    semantic_rerank_delta: float = 0.0
+    semantic_backend: str | None = None
+    semantic_fallback_used: bool = False
+    semantic_fallback_reason: str | None = None
+    semantic_duplicate_similarity: float | None = None
+    semantic_duplicate_candidate_id: str | None = None
+
+
+class ResearchFindingProvenance(BaseModel):
+    adapter_id: str | None = None
+    facet_id: str
+    facet_label: str | None = None
+    originating_query: str
+    search_rank: int | None = None
+    hit_url: str | None = None
+    canonical_url: str | None = None
+    fetch_outcome: ResearchFetchOutcome | None = None
+    fetch_final_url: str | None = None
+    fetch_status: str | None = None
+    fetch_error_category: str | None = None
+    dedupe_signature: str | None = None
+    duplicate_rule: str | None = None
+    acceptance_reason: ResearchFindingReason | None = None
+    rejection_reason: ResearchFindingReason | None = None
+    policy_flags: list[str] = Field(default_factory=list)
+    semantic_duplicate_hint: bool = False
+    semantic_matches: list[ResearchSemanticMatch] = Field(default_factory=list)
+    semantic_decision_notes: str | None = None
+    scoring: ResearchFindingScoring = Field(default_factory=ResearchFindingScoring)
+
+
+class ResearchBrief(BaseModel):
+    topic: str
+    time_start: str | None = None
+    time_end: str | None = None
+    focal_year: str | None = None
+    locale: str | None = None
+    audience: str | None = None
+    domain_hints: list[str] = Field(default_factory=list)
+    desired_facets: list[str] | None = None
+    preferred_source_types: list[str] = Field(default_factory=list)
+    excluded_source_types: list[str] = Field(default_factory=list)
+    coverage_targets: dict[str, int] = Field(default_factory=dict)
+    adapter_id: str | None = None
+    curated_inputs: list[ResearchCuratedInput] = Field(default_factory=list)
+    execution_policy: ResearchExecutionPolicy | None = None
+    max_queries: int = 12
+    max_results_per_query: int = 5
+    max_findings: int = 20
+    max_per_facet: int = 2
+
+
+class ResearchProgram(BaseModel):
+    program_id: str
+    name: str
+    description: str | None = None
+    markdown: str
+    built_in: bool = False
+    default_facets: list[str] = Field(default_factory=list)
+    default_adapter_id: str = "web_open"
+    default_execution_policy: ResearchExecutionPolicy = Field(
+        default_factory=ResearchExecutionPolicy
+    )
+    preferred_source_classes: list[str] = Field(default_factory=list)
+    excluded_source_classes: list[str] = Field(default_factory=list)
+    quality_threshold: float = 0.45
+    dedupe_similarity_threshold: float = 0.9
+    created_at: str = Field(default_factory=utc_now)
+    updated_at: str = Field(default_factory=utc_now)
+
+
+class ResearchRun(BaseModel):
+    run_id: str
+    status: ResearchRunStatus = ResearchRunStatus.PENDING
+    brief: ResearchBrief
+    program_id: str
+    facets: list[ResearchFacet] = Field(default_factory=list)
+    query_count: int = 0
+    finding_count: int = 0
+    accepted_count: int = 0
+    rejected_count: int = 0
+    staged_count: int = 0
+    extraction_run_id: str | None = None
+    telemetry: ResearchRunTelemetry = Field(default_factory=ResearchRunTelemetry)
+    warnings: list[str] = Field(default_factory=list)
+    logs: list[str] = Field(default_factory=list)
+    started_at: str = Field(default_factory=utc_now)
+    completed_at: str | None = None
+    error: str | None = None
+
+
+class ResearchFinding(BaseModel):
+    finding_id: str
+    run_id: str
+    facet_id: str
+    query: str
+    url: str
+    title: str
+    canonical_url: str | None = None
+    publisher: str | None = None
+    published_at: str | None = None
+    access_date: str = Field(default_factory=utc_now)
+    locator: str | None = None
+    snippet_text: str
+    page_excerpt: str | None = None
+    source_type: str | None = None
+    score: float
+    relevance_score: float
+    quality_score: float
+    novelty_score: float
+    decision: ResearchFindingDecision
+    rejection_reason: str | None = None
+    staged_source_id: str | None = None
+    staged_document_id: str | None = None
+    provenance: ResearchFindingProvenance | None = None
+
+
+class ResearchSearchHit(BaseModel):
+    query: str
+    url: str
+    title: str
+    snippet: str | None = None
+    rank: int = 0
+
+
+class ResearchFetchedPage(BaseModel):
+    url: str
+    final_url: str | None = None
+    title: str | None = None
+    publisher: str | None = None
+    published_at: str | None = None
+    locator: str | None = None
+    source_type: str | None = None
+    text: str = ""
+
+
+class ResearchRunRequest(BaseModel):
+    brief: ResearchBrief
+    program_id: str | None = None
+
+
+class ResearchProgramCreateRequest(BaseModel):
+    program_id: str | None = None
+    name: str
+    description: str | None = None
+    markdown: str
+    default_facets: list[str] = Field(default_factory=list)
+    default_adapter_id: str = "web_open"
+    default_execution_policy: ResearchExecutionPolicy | None = None
+    preferred_source_classes: list[str] = Field(default_factory=list)
+    excluded_source_classes: list[str] = Field(default_factory=list)
+    quality_threshold: float = 0.45
+    dedupe_similarity_threshold: float = 0.9
+
+
+class ResearchRunStageResult(BaseModel):
+    run: ResearchRun
+    staged_source_ids: list[str] = Field(default_factory=list)
+    staged_document_ids: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+
+
+class ResearchExtractResult(BaseModel):
+    stage_result: ResearchRunStageResult
+    normalization: dict[str, object]
+    extraction: ExtractionOutput
+
+
+class ResearchRunDetail(BaseModel):
+    run: ResearchRun
+    findings: list[ResearchFinding] = Field(default_factory=list)
+    program: ResearchProgram
+    facet_coverage: list["ResearchFacetCoverage"] = Field(default_factory=list)
+
+
+class ResearchFacetCoverage(BaseModel):
+    facet_id: str
+    label: str
+    target_count: int = 1
+    queries_attempted: int = 0
+    hits_seen: int = 0
+    accepted_count: int = 0
+    rejected_count: int = 0
+    skipped_count: int = 0
+    duplicate_rejections: int = 0
+    threshold_rejections: int = 0
+    excluded_source_rejections: int = 0
+    fetch_failures: int = 0
+    accepted_sources_by_type: dict[str, int] = Field(default_factory=dict)
+    diagnostic_summary: str | None = None
+    coverage_status: ResearchCoverageStatus = ResearchCoverageStatus.EMPTY
+    coverage_gap_reason: str | None = None
 
 
 class RuntimeDependencyStatus(BaseModel):

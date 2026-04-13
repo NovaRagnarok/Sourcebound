@@ -53,6 +53,27 @@ TABLE_DEFINITIONS = {
         reviewed_at TIMESTAMPTZ NOT NULL,
         payload JSONB NOT NULL
     """,
+    "research_runs": """
+        run_id TEXT PRIMARY KEY,
+        started_at TIMESTAMPTZ NOT NULL,
+        status TEXT NOT NULL,
+        program_id TEXT NOT NULL,
+        payload JSONB NOT NULL
+    """,
+    "research_findings": """
+        finding_id TEXT PRIMARY KEY,
+        run_id TEXT NOT NULL,
+        facet_id TEXT NOT NULL,
+        decision TEXT NOT NULL,
+        score DOUBLE PRECISION NOT NULL,
+        payload JSONB NOT NULL
+    """,
+    "research_programs": """
+        program_id TEXT PRIMARY KEY,
+        updated_at TIMESTAMPTZ NOT NULL,
+        built_in BOOLEAN NOT NULL,
+        payload JSONB NOT NULL
+    """,
     "source_documents": """
         id UUID PRIMARY KEY,
         source_id TEXT NOT NULL UNIQUE,
@@ -169,6 +190,9 @@ TABLE_ORDER = [
     "source_chunks",
     "source_documents",
     "review_events",
+    "research_findings",
+    "research_runs",
+    "research_programs",
     "evidence",
     "candidates",
     "extraction_runs",

@@ -14,6 +14,13 @@ from source_aware_worldbuilding.domain.models import (
     ProjectionSearchResult,
     QueryRequest,
     QueryResult,
+    ResearchFetchedPage,
+    ResearchFinding,
+    ResearchSemanticResult,
+    ResearchProgram,
+    ResearchRun,
+    ResearchScoutCapabilities,
+    ResearchSearchHit,
     ReviewEvent,
     SourceDocumentRecord,
     SourceRecord,
@@ -138,3 +145,46 @@ class ProjectionPort(Protocol):
 
 class QueryPort(Protocol):
     def answer(self, request: QueryRequest) -> QueryResult: ...
+
+
+class ResearchScoutAdapterPort(Protocol):
+    @property
+    def adapter_id(self) -> str: ...
+
+    @property
+    def capabilities(self) -> ResearchScoutCapabilities: ...
+
+    def search(self, query: str, *, limit: int = 5) -> list[ResearchSearchHit]: ...
+    def fetch_page(self, url: str) -> ResearchFetchedPage: ...
+    def allows_fetch(self, url: str, *, user_agent: str) -> bool | None: ...
+
+
+class ResearchSemanticPort(Protocol):
+    def upsert_findings(self, findings: list[ResearchFinding], *, run_id: str) -> int: ...
+    def search_similar_findings(
+        self,
+        finding: ResearchFinding,
+        allowed_finding_ids: list[str],
+        *,
+        run_id: str,
+        limit: int = 3,
+    ) -> ResearchSemanticResult: ...
+
+
+class ResearchRunStorePort(Protocol):
+    def list_runs(self) -> list[ResearchRun]: ...
+    def get_run(self, run_id: str) -> ResearchRun | None: ...
+    def save_run(self, run: ResearchRun) -> None: ...
+    def update_run(self, run: ResearchRun) -> None: ...
+
+
+class ResearchFindingStorePort(Protocol):
+    def list_findings(self, run_id: str | None = None) -> list[ResearchFinding]: ...
+    def save_findings(self, findings: list[ResearchFinding]) -> None: ...
+    def update_finding(self, finding: ResearchFinding) -> None: ...
+
+
+class ResearchProgramStorePort(Protocol):
+    def list_programs(self) -> list[ResearchProgram]: ...
+    def get_program(self, program_id: str) -> ResearchProgram | None: ...
+    def save_program(self, program: ResearchProgram) -> None: ...

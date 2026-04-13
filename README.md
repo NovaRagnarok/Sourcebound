@@ -30,7 +30,7 @@ The codebase starts as a **modular monolith** with explicit ports and adapters. 
 - JSON schemas for the most important records
 - architecture docs and ADRs so the shape does not drift
 - a Postgres-first app-state setup with SQLite and file-backed fallbacks
-- a shipped operator UI for sources, extraction runs, review, claims, and querying
+- a shipped operator UI for sources, research scouting, extraction runs, review, claims, and querying
 - live-capable Zotero, optional Wikibase, and Qdrant adapters with safe local fallbacks
 
 This seed intentionally keeps approved claims in Postgres by default for the normal stack. File-backed truth remains available for zero-infra development, and Wikibase remains an optional adapter behind a `TruthStorePort`.
@@ -42,6 +42,7 @@ This seed intentionally keeps approved claims in Postgres by default for the nor
 The project is currently between the architecture-seed phase and the first real integration phase:
 
 - the end-to-end ingest -> extract -> review -> claim -> query path is implemented and tested
+- the generic research scout can discover, score, and stage provenance-rich findings for any broad subject and era
 - the operator UI is already present at `/operator/`
 - Postgres-backed app state is implemented and covered by integration tests
 - live Zotero, Wikibase, and Qdrant integration tests exist, but they are opt-in and require local or remote services plus credentials
@@ -383,6 +384,24 @@ The default is `APP_TRUTH_BACKEND=postgres`. Use `APP_TRUTH_BACKEND=file` only w
 
 ---
 
+## Research scout workflow
+
+Use the research scout when you need to turn a broad topic and era into staged source material before normal extraction.
+
+1. Open `/operator/#research`.
+2. Start a run from a brief: topic, focal year or date range, optional locale, optional audience, and any domain hints.
+3. Inspect accepted and rejected findings, facet coverage, warnings, and run logs.
+4. Stage accepted findings into native text-backed `SourceRecord` and `SourceDocumentRecord` entries.
+5. Run `Stage + extract` to normalize only that run's staged documents and create candidate claims from them.
+6. Review those candidates in the normal review queue before anything becomes canonical.
+
+The built-in default program is generic. Custom research programs can still be created through the API and are listed in the operator UI:
+
+- `POST /v1/research/programs`
+- `GET /v1/research/programs`
+
+---
+
 ## API shape in the seed
 
 ### Health
@@ -392,6 +411,15 @@ The default is `APP_TRUTH_BACKEND=postgres`. Use `APP_TRUTH_BACKEND=file` only w
 ### Ingestion
 - `POST /v1/ingest/zotero/pull`
 - `POST /v1/ingest/extract-candidates`
+
+### Research
+- `POST /v1/research/runs`
+- `GET /v1/research/runs`
+- `GET /v1/research/runs/{run_id}`
+- `POST /v1/research/runs/{run_id}/stage`
+- `POST /v1/research/runs/{run_id}/extract`
+- `POST /v1/research/programs`
+- `GET /v1/research/programs`
 
 ### Sources
 - `GET /v1/sources`

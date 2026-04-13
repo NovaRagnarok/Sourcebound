@@ -59,11 +59,20 @@ class IngestionService:
     def list_runs(self) -> list[ExtractionRun]:
         return self.run_store.list_runs()
 
-    def extract_candidates(self) -> ExtractionOutput:
+    def extract_candidates(self, *, source_ids: list[str] | None = None) -> ExtractionOutput:
+        source_id_filter = set(source_ids or [])
         sources = self.source_store.list_sources()
-        if not sources:
+        if source_id_filter:
+            sources = [item for item in sources if item.source_id in source_id_filter]
+        elif not sources:
             sources = self.pull_sources()
-        text_units = self.text_unit_store.list_text_units()
+
+        if source_id_filter:
+            text_units: list[TextUnit] = []
+            for source_id in source_id_filter:
+                text_units.extend(self.text_unit_store.list_text_units(source_id=source_id))
+        else:
+            text_units = self.text_unit_store.list_text_units()
 
         run = ExtractionRun(run_id=f"run-{uuid4().hex[:12]}", status=ExtractionRunStatus.RUNNING)
         self.run_store.save_run(run)

@@ -114,6 +114,8 @@ window.SOURCEBOUND_SEED_DATA = {
       note: "Reserved for the next intake pass.",
     },
   ],
+  researchRuns: [],
+  researchPrograms: [],
   queryPresets: [
     "What does the record say about bread prices in Rouen?",
     "What claims are still contested or rumor?",

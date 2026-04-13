@@ -13,7 +13,10 @@ from source_aware_worldbuilding.adapters.graphrag_adapter import (
 from source_aware_worldbuilding.adapters.heuristic_extraction import (
     HeuristicExtractionAdapter,
 )
-from source_aware_worldbuilding.adapters.qdrant_adapter import QdrantProjectionAdapter
+from source_aware_worldbuilding.adapters.qdrant_adapter import (
+    QdrantProjectionAdapter,
+    QdrantResearchSemanticAdapter,
+)
 from source_aware_worldbuilding.adapters.wikibase_adapter import WikibaseTruthStore
 from source_aware_worldbuilding.adapters.zotero_adapter import ZoteroCorpusAdapter
 from source_aware_worldbuilding.api.dependencies import get_extractor
@@ -23,6 +26,9 @@ from source_aware_worldbuilding.domain.models import (
     EvidenceSnippet,
     ExtractionRun,
     IntakeTextRequest,
+    ResearchFinding,
+    ResearchFindingProvenance,
+    ResearchFindingScoring,
     SourceRecord,
     TextUnit,
 )
@@ -681,3 +687,73 @@ def test_qdrant_projection_upserts_idempotently_without_recreating(monkeypatch) 
     assert len(client.upserts) == 2
     assert client.upserts[0][0].id == adapter._point_id("claim-1")
     assert client.upserts[0][0].payload["claim_id"] == "claim-1"
+
+
+def test_qdrant_research_semantic_uses_separate_collection(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "research_semantic_enabled", True)
+    monkeypatch.setattr(settings, "research_qdrant_collection", "research_findings")
+
+    class FakeClient:
+        def __init__(self) -> None:
+            self.exists = False
+            self.created = []
+            self.upserts = []
+
+        def collection_exists(self, collection_name: str) -> bool:
+            _ = collection_name
+            return self.exists
+
+        def create_collection(self, collection_name: str, vectors_config) -> None:
+            _ = vectors_config
+            self.exists = True
+            self.created.append(collection_name)
+
+        def upsert(self, collection_name: str, points) -> None:
+            self.upserts.append((collection_name, points))
+
+    adapter = QdrantResearchSemanticAdapter()
+    client = FakeClient()
+    monkeypatch.setattr(adapter, "_client", lambda: client)
+
+    finding = ResearchFinding(
+        finding_id="finding-1",
+        run_id="research-1",
+        facet_id="people",
+        query="dj scene people 2003",
+        url="https://archive.example.org/people-profile",
+        canonical_url="https://archive.example.org/people-profile",
+        title="Scene Participants Oral History",
+        publisher="City Archive",
+        published_at="2003-05-12",
+        snippet_text="Participants described the scene, named venues, and documented the local habits.",
+        page_excerpt="Participants described the scene, named venues, and documented the local habits.",
+        source_type="archive",
+        score=0.72,
+        relevance_score=0.5,
+        quality_score=0.8,
+        novelty_score=1.0,
+        decision="accepted",
+        provenance=ResearchFindingProvenance(
+            facet_id="people",
+            originating_query="dj scene people 2003",
+            scoring=ResearchFindingScoring(
+                normalized_title="scene participants oral history",
+            ),
+        ),
+    )
+
+    upserted = adapter.upsert_findings([finding], run_id="research-1")
+
+    assert client.created == ["research_findings"]
+    assert client.upserts[0][0] == "research_findings"
+    assert client.upserts[0][1][0].payload["finding_id"] == "finding-1"
+    assert upserted == 1
+
+
+def test_qdrant_research_semantic_embedding_is_deterministic() -> None:
+    adapter = QdrantResearchSemanticAdapter()
+
+    first = adapter._embed("same text repeated")
+    second = adapter._embed("same text repeated")
+
+    assert first == second

@@ -3,6 +3,11 @@
     runtimeStatus: "/health/runtime",
     sources: "/v1/sources",
     runs: "/v1/extraction-runs",
+    researchRuns: "/v1/research/runs",
+    researchRun: (runId) => `/v1/research/runs/${runId}`,
+    stageResearchRun: (runId) => `/v1/research/runs/${runId}/stage`,
+    extractResearchRun: (runId) => `/v1/research/runs/${runId}/extract`,
+    researchPrograms: "/v1/research/programs",
     pullSources: "/v1/ingest/zotero/pull",
     extractCandidates: "/v1/ingest/extract-candidates",
     candidates: "/v1/candidates",
@@ -12,6 +17,7 @@
   };
 
   const seed = window.SOURCEBOUND_SEED_DATA;
+  const knownScreens = new Set(["sources", "research", "runs", "review", "claims", "ask"]);
   const state = {
     apiBase: normalizeBase(window.SOURCEBOUND_API_BASE || ""),
     activeScreen: currentScreen(),
@@ -25,14 +31,24 @@
     candidates: clone(seed.candidates),
     claims: clone(seed.claims),
     runs: clone(seed.extractionRuns),
+    researchRuns: clone(seed.researchRuns || []),
+    researchPrograms: clone(seed.researchPrograms || []),
     selectedSourceId: seed.sources[0]?.source_id ?? null,
     selectedRunId: seed.extractionRuns[0]?.run_id ?? null,
+    selectedResearchRunId: seed.researchRuns?.[0]?.run_id ?? null,
+    researchRunDetail: null,
     selectedCandidateId: seed.candidates.find((candidate) => candidate.review_state === "pending")
       ?.candidate_id ?? seed.candidates[0]?.candidate_id ?? null,
     selectedClaimId: seed.claims[0]?.claim_id ?? null,
     filters: {
       candidates: "pending",
       claims: "all",
+      researchDecision: "all",
+      researchReason: "all",
+      researchSourceType: "all",
+      researchFacet: "all",
+      researchSemantic: "all",
+      researchSort: "accepted_first",
     },
     query: {
       question: seed.queryPresets[0],
@@ -41,6 +57,36 @@
       claimKind: "",
       place: "",
       viewpoint: "",
+    },
+    researchDraft: {
+      topic: "",
+      focal_year: "",
+      time_start: "",
+      time_end: "",
+      locale: "",
+      audience: "",
+      adapter_id: "web_open",
+      domain_hints: "",
+      desired_facets: "",
+      preferred_source_types: "",
+      excluded_source_types: "",
+      coverage_targets: "",
+      curated_title: "",
+      curated_text: "",
+      curated_url: "",
+      max_queries: "12",
+      max_results_per_query: "5",
+      max_findings: "20",
+      max_per_facet: "2",
+      total_fetch_time_seconds: "90",
+      per_host_fetch_cap: "3",
+      retry_attempts: "3",
+      retry_backoff_base_ms: "250",
+      retry_backoff_max_ms: "2000",
+      allow_domains: "",
+      deny_domains: "",
+      respect_robots: true,
+      program_id: "default",
     },
     queryResult: null,
   };
@@ -74,6 +120,11 @@
       summary:
         "Track intake cycles, candidate yield, and backend-reported extraction history.",
     },
+    research: {
+      title: "Research",
+      summary:
+        "Scout broad subjects and eras into staged, provenance-rich excerpts before normalization and candidate extraction.",
+    },
     review: {
       title: "Review Queue",
       summary:
@@ -100,12 +151,24 @@
     bindGlobalEvents();
     hydrateFromStorage();
     await refreshLiveData({ quiet: true });
+    if (state.activeScreen === "research" && state.selectedResearchRunId) {
+      await refreshResearchDetail(state.selectedResearchRunId, { quiet: true });
+    }
     render();
   }
 
   function bindGlobalEvents() {
     window.addEventListener("hashchange", () => {
       state.activeScreen = currentScreen();
+      if (
+        state.activeScreen === "research" &&
+        state.selectedResearchRunId &&
+        state.researchRunDetail?.run?.run_id !== state.selectedResearchRunId
+      ) {
+        render();
+        refreshResearchDetail(state.selectedResearchRunId, { quiet: true });
+        return;
+      }
       render();
     });
 
@@ -114,6 +177,7 @@
     nodes.app.addEventListener("click", async (event) => {
       const sourceButton = event.target.closest("[data-select-source]");
       const runButton = event.target.closest("[data-select-run]");
+      const researchRunButton = event.target.closest("[data-select-research-run]");
       const candidateButton = event.target.closest("[data-select-candidate]");
       const claimButton = event.target.closest("[data-select-claim]");
       const actionButton = event.target.closest("[data-action]");
@@ -130,6 +194,14 @@
       if (runButton) {
         state.selectedRunId = runButton.dataset.selectRun;
         render();
+        return;
+      }
+
+      if (researchRunButton) {
+        state.selectedResearchRunId = researchRunButton.dataset.selectResearchRun;
+        state.researchRunDetail = null;
+        render();
+        await refreshResearchDetail(state.selectedResearchRunId, { quiet: true });
         return;
       }
 
@@ -182,6 +254,21 @@
         return;
       }
 
+      if (action === "refresh-research") {
+        await refreshResearchDetail(state.selectedResearchRunId);
+        return;
+      }
+
+      if (action === "stage-research") {
+        await stageResearchRun(state.selectedResearchRunId);
+        return;
+      }
+
+      if (action === "extract-research") {
+        await extractResearchRun(state.selectedResearchRunId);
+        return;
+      }
+
       // Submit actions are handled by the form submit listener to avoid duplicate posts.
     });
 
@@ -195,6 +282,21 @@
         event.preventDefault();
         await submitQuery(event.target);
       }
+
+      if (event.target.dataset.form === "research-run") {
+        event.preventDefault();
+        await submitResearchRun(event.target);
+      }
+    });
+
+    nodes.app.addEventListener("change", (event) => {
+      const researchFilter = event.target.closest("[data-research-filter]");
+      if (!researchFilter) {
+        return;
+      }
+      state.filters[researchFilter.dataset.researchFilter] = researchFilter.value;
+      persistState();
+      render();
     });
   }
 
@@ -214,6 +316,12 @@
       if (Array.isArray(saved.runs) && saved.runs.length) {
         state.runs = saved.runs;
       }
+      if (saved.researchDraft) {
+        state.researchDraft = { ...state.researchDraft, ...saved.researchDraft };
+      }
+      if (saved.selectedResearchRunId) {
+        state.selectedResearchRunId = saved.selectedResearchRunId;
+      }
     } catch (error) {
       console.warn("Could not hydrate operator state", error);
     }
@@ -227,6 +335,8 @@
           query: state.query,
           filters: state.filters,
           runs: state.runs,
+          researchDraft: state.researchDraft,
+          selectedResearchRunId: state.selectedResearchRunId,
         })
       );
     } catch (error) {
@@ -236,7 +346,7 @@
 
   function currentScreen() {
     const hash = window.location.hash.replace("#", "").trim();
-    return screenConfig[hash] ? hash : "sources";
+    return knownScreens.has(hash) ? hash : "sources";
   }
 
   function normalizeBase(base) {
@@ -331,13 +441,15 @@
   async function refreshLiveData({ quiet = false } = {}) {
     applyLoading(true);
     if (!quiet) {
-      setBanner("pending", "Refreshing", "Pulling live sources, runs, candidates, and claims from the API.");
+      setBanner("pending", "Refreshing", "Pulling live sources, research runs, extraction runs, candidates, and claims from the API.");
     }
 
     try {
-      const [sourcesResult, runsResult, candidatesResult, claimsResult, runtimeResult] =
+      const [sourcesResult, researchRunsResult, researchProgramsResult, runsResult, candidatesResult, claimsResult, runtimeResult] =
         await Promise.allSettled([
           fetchJson(API.sources),
+          fetchJson(API.researchRuns),
+          fetchJson(API.researchPrograms),
           fetchJson(API.runs),
           fetchJson(API.candidates),
           fetchJson(API.claims),
@@ -352,6 +464,14 @@
         state.runs = runsResult.value;
       }
 
+      if (researchRunsResult.status === "fulfilled") {
+        state.researchRuns = researchRunsResult.value;
+      }
+
+      if (researchProgramsResult.status === "fulfilled") {
+        state.researchPrograms = researchProgramsResult.value;
+      }
+
       if (candidatesResult.status === "fulfilled") {
         state.candidates = candidatesResult.value;
       }
@@ -364,14 +484,14 @@
         state.runtimeStatus = runtimeResult.value;
       }
 
-      const online = [sourcesResult, runsResult, candidatesResult, claimsResult, runtimeResult].some(
+      const online = [sourcesResult, researchRunsResult, researchProgramsResult, runsResult, candidatesResult, claimsResult, runtimeResult].some(
         (result) => result.status === "fulfilled"
       );
       const runtimeSummary = summarizeRuntime();
       setApiStatus(
         online,
         online
-          ? runtimeSummary || "Live sources, runs, candidates, claims, and runtime status loaded."
+          ? runtimeSummary || "Live sources, research runs, extraction runs, candidates, claims, and runtime status loaded."
           : "Using seed data until the API responds."
       );
       updateMetrics();
@@ -383,7 +503,7 @@
           online ? "live" : "queued",
           online ? "Live data synced" : "Seed data retained",
           online
-            ? "Sources, runs, candidates, and claims refreshed from the backend."
+            ? "Sources, research runs, extraction runs, candidates, and claims refreshed from the backend."
             : "The UI stayed operational with local seed records."
         );
       }
@@ -400,6 +520,18 @@
   function updateSelectionFallbacks() {
     if (!state.selectedSourceId && state.sources.length) {
       state.selectedSourceId = state.sources[0].source_id;
+    }
+
+    if (
+      state.selectedResearchRunId &&
+      !state.researchRuns.some((run) => run.run_id === state.selectedResearchRunId)
+    ) {
+      state.selectedResearchRunId = null;
+      state.researchRunDetail = null;
+    }
+
+    if (!state.selectedResearchRunId && state.researchRuns.length) {
+      state.selectedResearchRunId = state.researchRuns[0].run_id;
     }
 
     if (!state.selectedRunId && state.runs.length) {
@@ -534,6 +666,8 @@
 
   function renderScreen() {
     switch (state.activeScreen) {
+      case "research":
+        return renderResearchScreen();
       case "runs":
         return renderRunsScreen();
       case "review":
@@ -660,6 +794,468 @@
                   .join("")
               : "<div class='helper'>No candidates reference evidence from this source yet.</div>"}
           </div>
+        </div>
+      </div>
+    `;
+  }
+
+  function renderResearchScreen() {
+    const selectedRun = state.researchRuns.find((run) => run.run_id === state.selectedResearchRunId) ?? state.researchRuns[0];
+    const selectedDetail = state.researchRunDetail?.run?.run_id === selectedRun?.run_id ? state.researchRunDetail : null;
+    const availablePrograms = state.researchPrograms.length
+      ? state.researchPrograms
+      : [{ program_id: "default", name: "Generic Subject / Era Research", built_in: true }];
+    const selectedProgramId = state.researchDraft.program_id || "default";
+
+    return `
+      <article class="screen fade-in">
+        <div class="screen-head">
+          <div>
+            <h2 data-active-screen>Research</h2>
+            <p>Start a bounded scout run from a brief, then stage accepted findings as text-backed sources before normal extraction and review.</p>
+          </div>
+          <div class="screen-actions">
+            <button class="secondary-button" type="button" data-action="refresh-research">Refresh selected run</button>
+          </div>
+        </div>
+
+        <div class="split">
+          <div class="detail-stack">
+            <form class="detail" data-form="research-run">
+              <div class="detail-head">
+                <div>
+                  <h3>New research run</h3>
+                  <div class="detail-note">Generic by default: topic, era, optional locale, and a reusable program.</div>
+                </div>
+                <span class="pill queued">brief</span>
+              </div>
+              <div class="detail-grid">
+                <div class="field">
+                  <label for="research-topic">Topic</label>
+                  <input id="research-topic" name="topic" value="${escapeHtml(state.researchDraft.topic)}" placeholder="2003 DJ and music scene" required />
+                </div>
+                <div class="field">
+                  <label for="research-program">Research program</label>
+                  <select id="research-program" name="program_id">
+                    ${availablePrograms
+                      .map(
+                        (program) => `
+                          <option value="${escapeHtml(program.program_id)}" ${program.program_id === selectedProgramId ? "selected" : ""}>
+                            ${escapeHtml(program.name)}${program.built_in ? " (built-in)" : ""}
+                          </option>
+                        `
+                      )
+                      .join("")}
+                  </select>
+                </div>
+                <div class="field">
+                  <label for="research-adapter">Scout adapter</label>
+                  <select id="research-adapter" name="adapter_id">
+                    <option value="web_open" ${state.researchDraft.adapter_id === "web_open" ? "selected" : ""}>web_open</option>
+                    <option value="curated_inputs" ${state.researchDraft.adapter_id === "curated_inputs" ? "selected" : ""}>curated_inputs</option>
+                  </select>
+                </div>
+                <div class="field">
+                  <label for="research-focal-year">Focal year</label>
+                  <input id="research-focal-year" name="focal_year" value="${escapeHtml(state.researchDraft.focal_year)}" placeholder="2003" />
+                </div>
+                <div class="field">
+                  <label for="research-locale">Locale</label>
+                  <input id="research-locale" name="locale" value="${escapeHtml(state.researchDraft.locale)}" placeholder="Berlin, UK garage clubs, Bay Area" />
+                </div>
+                <div class="field">
+                  <label for="research-time-start">Time start</label>
+                  <input id="research-time-start" name="time_start" value="${escapeHtml(state.researchDraft.time_start)}" placeholder="2002-01-01" />
+                </div>
+                <div class="field">
+                  <label for="research-time-end">Time end</label>
+                  <input id="research-time-end" name="time_end" value="${escapeHtml(state.researchDraft.time_end)}" placeholder="2004-12-31" />
+                </div>
+                <div class="field">
+                  <label for="research-audience">Audience / lens</label>
+                  <input id="research-audience" name="audience" value="${escapeHtml(state.researchDraft.audience)}" placeholder="clubgoers, record collectors, city historians" />
+                </div>
+                <div class="field">
+                  <label for="research-domain-hints">Domain hints</label>
+                  <input id="research-domain-hints" name="domain_hints" value="${escapeHtml(state.researchDraft.domain_hints)}" placeholder="vinyl, mixtapes, nightlife" />
+                </div>
+                <div class="field">
+                  <label for="research-desired-facets">Desired facets</label>
+                  <input id="research-desired-facets" name="desired_facets" value="${escapeHtml(state.researchDraft.desired_facets)}" placeholder="people, practices, objects_technology, media_culture" />
+                </div>
+                <div class="field">
+                  <label for="research-preferred-source-types">Preferred source types</label>
+                  <input id="research-preferred-source-types" name="preferred_source_types" value="${escapeHtml(state.researchDraft.preferred_source_types)}" placeholder="news, archive, educational" />
+                </div>
+                <div class="field">
+                  <label for="research-excluded-source-types">Excluded source types</label>
+                  <input id="research-excluded-source-types" name="excluded_source_types" value="${escapeHtml(state.researchDraft.excluded_source_types)}" placeholder="social, forum" />
+                </div>
+                <div class="field">
+                  <label for="research-coverage-targets">Coverage targets</label>
+                  <input id="research-coverage-targets" name="coverage_targets" value="${escapeHtml(state.researchDraft.coverage_targets)}" placeholder="people:2, events:2, objects_technology:3" />
+                </div>
+                <div class="field">
+                  <label for="research-max-queries">Max queries</label>
+                  <input id="research-max-queries" name="max_queries" type="number" min="1" value="${escapeHtml(state.researchDraft.max_queries)}" />
+                </div>
+                <div class="field">
+                  <label for="research-max-results-per-query">Results / query</label>
+                  <input id="research-max-results-per-query" name="max_results_per_query" type="number" min="1" value="${escapeHtml(state.researchDraft.max_results_per_query)}" />
+                </div>
+                <div class="field">
+                  <label for="research-max-findings">Max findings</label>
+                  <input id="research-max-findings" name="max_findings" type="number" min="1" value="${escapeHtml(state.researchDraft.max_findings)}" />
+                </div>
+                <div class="field">
+                  <label for="research-max-per-facet">Max / facet</label>
+                  <input id="research-max-per-facet" name="max_per_facet" type="number" min="1" value="${escapeHtml(state.researchDraft.max_per_facet)}" />
+                </div>
+                <div class="field">
+                  <label for="research-total-fetch-time">Fetch budget (s)</label>
+                  <input id="research-total-fetch-time" name="total_fetch_time_seconds" type="number" min="1" value="${escapeHtml(state.researchDraft.total_fetch_time_seconds)}" />
+                </div>
+                <div class="field">
+                  <label for="research-per-host-fetch-cap">Per-host cap</label>
+                  <input id="research-per-host-fetch-cap" name="per_host_fetch_cap" type="number" min="1" value="${escapeHtml(state.researchDraft.per_host_fetch_cap)}" />
+                </div>
+                <div class="field">
+                  <label for="research-retry-attempts">Retry attempts</label>
+                  <input id="research-retry-attempts" name="retry_attempts" type="number" min="1" value="${escapeHtml(state.researchDraft.retry_attempts)}" />
+                </div>
+                <div class="field">
+                  <label for="research-retry-backoff-base-ms">Backoff base (ms)</label>
+                  <input id="research-retry-backoff-base-ms" name="retry_backoff_base_ms" type="number" min="1" value="${escapeHtml(state.researchDraft.retry_backoff_base_ms)}" />
+                </div>
+                <div class="field">
+                  <label for="research-retry-backoff-max-ms">Backoff max (ms)</label>
+                  <input id="research-retry-backoff-max-ms" name="retry_backoff_max_ms" type="number" min="1" value="${escapeHtml(state.researchDraft.retry_backoff_max_ms)}" />
+                </div>
+                <div class="field">
+                  <label for="research-allow-domains">Allow domains</label>
+                  <input id="research-allow-domains" name="allow_domains" value="${escapeHtml(state.researchDraft.allow_domains)}" placeholder="archive.example.org, bbc.co.uk" />
+                </div>
+                <div class="field">
+                  <label for="research-deny-domains">Deny domains</label>
+                  <input id="research-deny-domains" name="deny_domains" value="${escapeHtml(state.researchDraft.deny_domains)}" placeholder="social.example.org, blocked.example.org" />
+                </div>
+                <div class="field">
+                  <label for="research-curated-title">Curated title</label>
+                  <input id="research-curated-title" name="curated_title" value="${escapeHtml(state.researchDraft.curated_title)}" placeholder="Optional text input title" />
+                </div>
+              <div class="field">
+                <label for="research-curated-url">Curated URL</label>
+                <input id="research-curated-url" name="curated_url" value="${escapeHtml(state.researchDraft.curated_url)}" placeholder="Optional URL input for no-search curated mode" />
+              </div>
+            </div>
+              <div class="field">
+                <label for="research-curated-text">Curated text</label>
+                <textarea id="research-curated-text" name="curated_text" placeholder="Optional pasted evidence for curated_inputs. Text stays local evidence; curated URLs may still fetch if policy allows it.">${escapeHtml(state.researchDraft.curated_text)}</textarea>
+              </div>
+              <div class="toolbar">
+                <label class="chip">
+                  <input type="checkbox" name="respect_robots" ${state.researchDraft.respect_robots ? "checked" : ""} />
+                  <span style="margin-left:8px;">Respect robots</span>
+                </label>
+              </div>
+              <div class="toolbar">
+                <button class="primary-button" type="submit">Run research scout</button>
+                <span class="helper">Accepted findings stay provisional until you stage them, extract candidates, and review those candidates normally.</span>
+              </div>
+            </form>
+
+            <div class="detail">
+              <div class="detail-head">
+                <div>
+                  <h3>Programs</h3>
+                  <div class="detail-note">The runner uses these instruction sets to choose facets, source policy, and quality thresholds.</div>
+                </div>
+                <span class="pill probable">${escapeHtml(availablePrograms.length)}</span>
+              </div>
+              <div class="detail-list">
+                ${availablePrograms.length
+                  ? availablePrograms
+                      .map(
+                        (program) => `
+                          <div class="mini">
+                            <div class="toolbar">
+                              <strong>${escapeHtml(program.name)}</strong>
+                              <span class="pill ${program.built_in ? "verified" : "probable"}">${program.built_in ? "built-in" : "custom"}</span>
+                            </div>
+                            <div class="detail-note">${escapeHtml(program.program_id)}</div>
+                            <div>${escapeHtml(program.description || "No description supplied.")}</div>
+                            <div class="detail-note">
+                              facets: ${escapeHtml((program.default_facets || []).join(", ") || "none")}
+                              · adapter: ${escapeHtml(program.default_adapter_id || "web_open")}
+                            </div>
+                            <div class="detail-note">
+                              preferred: ${escapeHtml((program.preferred_source_classes || []).join(", ") || "none")}
+                              · robots: ${program.default_execution_policy?.respect_robots ? "on" : "off"}
+                            </div>
+                          </div>
+                        `
+                      )
+                      .join("")
+                  : "<div class='helper'>No research programs are loaded yet.</div>"}
+              </div>
+            </div>
+
+            <div class="surface list">
+              ${state.researchRuns.length
+                ? state.researchRuns
+                    .map(
+                      (run) => `
+                        <button class="list-row ${run.run_id === selectedRun?.run_id ? "is-selected" : ""}" type="button" data-select-research-run="${escapeHtml(run.run_id)}">
+                          <div>
+                            <div class="row-title">${escapeHtml(run.brief.topic)}</div>
+                            <div class="row-subtitle">${escapeHtml(run.run_id)}</div>
+                          </div>
+                          <div class="row-meta">
+                            <span class="pill ${escapeHtml(run.status)}">${escapeHtml(run.status)}</span>
+                            <span class="code">${escapeHtml(run.program_id)}</span>
+                          </div>
+                          <div class="row-meta">${escapeHtml(run.accepted_count)} accepted · ${escapeHtml(run.rejected_count)} rejected</div>
+                          <div class="row-meta">${escapeHtml(run.staged_count)} staged · ${escapeHtml(run.query_count)} queries</div>
+                        </button>
+                      `
+                    )
+                    .join("")
+                : "<div class='helper' style='padding:14px;'>No research runs yet. Start one from the brief form above.</div>"}
+            </div>
+          </div>
+
+          <aside class="detail">
+            ${selectedRun ? renderResearchRunDetail(selectedRun, selectedDetail) : "<div class='helper'>No research run selected.</div>"}
+          </aside>
+        </div>
+      </article>
+    `;
+  }
+
+  function renderResearchRunDetail(run, detail) {
+    const findings = detail?.findings || [];
+    const program = detail?.program || state.researchPrograms.find((item) => item.program_id === run.program_id);
+    const facetCoverage = detail?.facet_coverage || [];
+    const filteredFindings = filterAndSortResearchFindings(findings, state.filters);
+    const filterOptions = buildResearchFilterOptions(findings);
+
+    return `
+      <div class="detail-head">
+        <div>
+          <h3>${escapeHtml(run.brief.topic)}</h3>
+          <div class="detail-note">${escapeHtml(run.run_id)} · ${escapeHtml(program?.name || run.program_id)}</div>
+        </div>
+        <span class="pill ${escapeHtml(run.status)}">${escapeHtml(run.status)}</span>
+      </div>
+      <div class="inline-metrics">
+        <span>${escapeHtml(run.accepted_count)} accepted</span>
+        <span>${escapeHtml(run.rejected_count)} rejected</span>
+        <span>${escapeHtml(run.staged_count)} staged</span>
+        <span>${escapeHtml(run.finding_count)} findings</span>
+        <span>${escapeHtml(run.query_count)} queries</span>
+      </div>
+      <div class="toolbar">
+        <button class="secondary-button" type="button" data-action="refresh-research">Refresh detail</button>
+        <button class="secondary-button" type="button" data-action="stage-research">Stage accepted findings</button>
+        <button class="primary-button" type="button" data-action="extract-research">Stage + extract</button>
+      </div>
+      <div class="detail-grid">
+        <div class="field">
+          <label>Time window</label>
+          <div>${escapeHtml(renderTimeWindow(run.brief))}</div>
+        </div>
+        <div class="field">
+          <label>Locale</label>
+          <div>${escapeHtml(run.brief.locale || "n/a")}</div>
+        </div>
+        <div class="field">
+          <label>Audience</label>
+          <div>${escapeHtml(run.brief.audience || "n/a")}</div>
+        </div>
+        <div class="field">
+          <label>Extraction run</label>
+          <div class="code">${escapeHtml(run.extraction_run_id || "not yet extracted")}</div>
+        </div>
+      </div>
+      <div class="field">
+        <label>Facet coverage</label>
+        <div class="detail-list">
+          ${(facetCoverage.length ? facetCoverage : run.facets).length
+            ? (facetCoverage.length ? facetCoverage : run.facets)
+                .map(
+                  (facet) => `
+                    <div class="mini">
+                      <div class="toolbar">
+                        <strong>${escapeHtml(facet.label)}</strong>
+                        <span class="pill ${escapeHtml(facet.coverage_status || "probable")}">${escapeHtml(facet.accepted_count)}/${escapeHtml(facet.target_count)} target</span>
+                      </div>
+                      <div class="detail-note">
+                        ${escapeHtml(facet.facet_id)}
+                        · queries ${escapeHtml(facet.queries_attempted ?? 0)}
+                        · hits ${escapeHtml(facet.hits_seen ?? 0)}
+                        · rejected ${escapeHtml(facet.rejected_count)}
+                        · skipped ${escapeHtml(facet.skipped_count ?? 0)}
+                      </div>
+                      <div>
+                        ${escapeHtml(facet.coverage_status ? `coverage ${facet.coverage_status}` : facet.query_hint)}
+                        ${facet.coverage_gap_reason ? ` · gap ${escapeHtml(facet.coverage_gap_reason)}` : ""}
+                      </div>
+                      ${facet.diagnostic_summary
+                        ? `<div class="detail-note">diagnostics ${escapeHtml(facet.diagnostic_summary)} · duplicates ${escapeHtml(facet.duplicate_rejections ?? 0)} · threshold ${escapeHtml(facet.threshold_rejections ?? 0)} · excluded ${escapeHtml(facet.excluded_source_rejections ?? 0)} · fetch ${escapeHtml(facet.fetch_failures ?? 0)}</div>`
+                        : ""}
+                      ${facet.accepted_sources_by_type
+                        ? `<div class="detail-note">accepted sources ${escapeHtml(renderKeyValueMap(facet.accepted_sources_by_type))}</div>`
+                        : ""}
+                    </div>
+                  `
+                )
+                .join("")
+            : "<div class='helper'>No facets were recorded for this run.</div>"}
+        </div>
+      </div>
+      <div class="field">
+        <label>Warnings</label>
+        <div class="warning-list">
+          ${run.warnings.length
+            ? run.warnings.map((warning) => `<div class="warning">${escapeHtml(warning)}</div>`).join("")
+            : "<div class='helper'>No warnings recorded.</div>"}
+        </div>
+      </div>
+      <div class="field">
+        <label>Telemetry</label>
+        <div class="detail-list">
+          <div class="mini">
+            <div class="detail-note">queries ${escapeHtml(run.telemetry?.queries_attempted ?? 0)} / ${escapeHtml(run.telemetry?.total_queries ?? 0)}</div>
+            <div>fetches ${escapeHtml(run.telemetry?.successful_fetches ?? 0)} successful / ${escapeHtml(run.telemetry?.fetch_attempts ?? 0)} attempts</div>
+            <div class="detail-note">retries ${escapeHtml(run.telemetry?.retries ?? 0)} · dedupe ${escapeHtml(run.telemetry?.dedupe_count ?? 0)}</div>
+          </div>
+          <div class="mini">
+            <div>robots blocks ${escapeHtml(run.telemetry?.blocked_by_robots_count ?? 0)} · policy blocks ${escapeHtml(run.telemetry?.blocked_by_policy_count ?? 0)}</div>
+            <div class="detail-note">run ${escapeHtml(run.telemetry?.elapsed_run_time_ms ?? 0)}ms · fetch ${escapeHtml(run.telemetry?.elapsed_fetch_time_ms ?? 0)}ms</div>
+          </div>
+          <div class="mini">
+            <div class="detail-note">per-host fetch counts</div>
+            <div>${escapeHtml(renderKeyValueMap(run.telemetry?.per_host_fetch_counts || {}))}</div>
+          </div>
+          <div class="mini">
+            <div class="detail-note">skipped hosts</div>
+            <div>${escapeHtml(renderKeyValueMap(run.telemetry?.skipped_host_counts || {}))}</div>
+          </div>
+          <div class="mini">
+            <div class="detail-note">failure categories</div>
+            <div>${escapeHtml(renderKeyValueMap(run.telemetry?.fetch_failures_by_category || {}))}</div>
+          </div>
+          <div class="mini">
+            <div class="detail-note">fallback flags</div>
+            <div>${escapeHtml((run.telemetry?.fallback_flags || []).join(", ") || "none")}</div>
+          </div>
+          <div class="mini">
+            <div class="detail-note">semantic backend</div>
+            <div>
+              ${escapeHtml(run.telemetry?.semantic?.backend || "n/a")}
+              ${run.telemetry?.semantic?.fallback_used ? ` · fallback ${escapeHtml(run.telemetry?.semantic?.fallback_reason || "used")}` : ""}
+            </div>
+            <div class="detail-note">
+              vectors ${escapeHtml(run.telemetry?.semantic?.vectors_upserted ?? 0)}
+              · comparisons ${escapeHtml(run.telemetry?.semantic?.comparisons_performed ?? 0)}
+              · duplicate hints ${escapeHtml(run.telemetry?.semantic?.duplicate_hints_emitted ?? 0)}
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="field">
+        <label>Findings</label>
+        <div class="detail-grid">
+          <div class="field">
+            <label for="research-filter-decision">Decision</label>
+            <select id="research-filter-decision" data-research-filter="researchDecision">
+              ${renderSelectOptions([
+                ["all", "all"],
+                ...filterOptions.decisions.map((value) => [value, value]),
+              ], state.filters.researchDecision)}
+            </select>
+          </div>
+          <div class="field">
+            <label for="research-filter-reason">Reason</label>
+            <select id="research-filter-reason" data-research-filter="researchReason">
+              ${renderSelectOptions([
+                ["all", "all"],
+                ...filterOptions.reasons.map((value) => [value, value]),
+              ], state.filters.researchReason)}
+            </select>
+          </div>
+          <div class="field">
+            <label for="research-filter-source-type">Source type</label>
+            <select id="research-filter-source-type" data-research-filter="researchSourceType">
+              ${renderSelectOptions([
+                ["all", "all"],
+                ...filterOptions.sourceTypes.map((value) => [value, value]),
+              ], state.filters.researchSourceType)}
+            </select>
+          </div>
+          <div class="field">
+            <label for="research-filter-facet">Facet</label>
+            <select id="research-filter-facet" data-research-filter="researchFacet">
+              ${renderSelectOptions([
+                ["all", "all"],
+                ...filterOptions.facets.map((value) => [value, value]),
+              ], state.filters.researchFacet)}
+            </select>
+          </div>
+          <div class="field">
+            <label for="research-filter-sort">Sort</label>
+            <select id="research-filter-sort" data-research-filter="researchSort">
+              ${renderSelectOptions([
+                ["accepted_first", "accepted first"],
+                ["weakest_first", "weakest first"],
+              ], state.filters.researchSort)}
+            </select>
+          </div>
+          <div class="field">
+            <label for="research-filter-semantic">Semantic</label>
+            <select id="research-filter-semantic" data-research-filter="researchSemantic">
+              ${renderSelectOptions([
+                ["all", "all"],
+                ["duplicate_hint", "duplicate hint"],
+                ["fallback_only", "fallback only"],
+              ], state.filters.researchSemantic)}
+            </select>
+          </div>
+        </div>
+        <div class="detail-list">
+          ${filteredFindings.length
+            ? filteredFindings
+                .map(
+                  (finding) => `
+                    <div class="mini">
+                      <div class="toolbar">
+                        <strong>${escapeHtml(finding.title)}</strong>
+                        <span class="pill ${escapeHtml(finding.decision)}">${escapeHtml(finding.decision)}</span>
+                      </div>
+                      <div class="detail-note">${escapeHtml(renderResearchWhySummary(finding))}</div>
+                      <div>${escapeHtml(finding.snippet_text)}</div>
+                      <div class="detail-note">
+                        ${escapeHtml(finding.publisher || "unknown publisher")}
+                        ${finding.published_at ? ` · ${escapeHtml(formatDate(finding.published_at))}` : ""}
+                        ${finding.rejection_reason ? ` · ${escapeHtml(finding.rejection_reason)}` : ""}
+                      </div>
+                      <details class="detail-note" style="margin-top:8px;">
+                        <summary>Why this finding</summary>
+                        <div style="margin-top:8px;">${renderResearchFindingProvenance(finding)}</div>
+                      </details>
+                    </div>
+                  `
+                )
+                .join("")
+            : "<div class='helper'>No findings matched the current filters for this run.</div>"}
+        </div>
+      </div>
+      <div class="field">
+        <label>Run log</label>
+        <div class="detail-list">
+          ${run.logs.length
+            ? run.logs.map((line) => `<div class="mini"><div>${escapeHtml(line)}</div></div>`).join("")
+            : "<div class='helper'>No run log entries were recorded.</div>"}
         </div>
       </div>
     `;
@@ -1400,6 +1996,420 @@
     } finally {
       applyLoading(false);
     }
+  }
+
+  async function submitResearchRun(form) {
+    const formData = new FormData(form);
+    const draft = {
+      topic: String(formData.get("topic") || "").trim(),
+      focal_year: String(formData.get("focal_year") || "").trim(),
+      time_start: String(formData.get("time_start") || "").trim(),
+      time_end: String(formData.get("time_end") || "").trim(),
+      locale: String(formData.get("locale") || "").trim(),
+      audience: String(formData.get("audience") || "").trim(),
+      adapter_id: String(formData.get("adapter_id") || "web_open").trim() || "web_open",
+      domain_hints: String(formData.get("domain_hints") || "").trim(),
+      desired_facets: String(formData.get("desired_facets") || "").trim(),
+      preferred_source_types: String(formData.get("preferred_source_types") || "").trim(),
+      excluded_source_types: String(formData.get("excluded_source_types") || "").trim(),
+      coverage_targets: String(formData.get("coverage_targets") || "").trim(),
+      curated_title: String(formData.get("curated_title") || "").trim(),
+      curated_text: String(formData.get("curated_text") || "").trim(),
+      curated_url: String(formData.get("curated_url") || "").trim(),
+      max_queries: String(formData.get("max_queries") || "").trim(),
+      max_results_per_query: String(formData.get("max_results_per_query") || "").trim(),
+      max_findings: String(formData.get("max_findings") || "").trim(),
+      max_per_facet: String(formData.get("max_per_facet") || "").trim(),
+      total_fetch_time_seconds: String(formData.get("total_fetch_time_seconds") || "").trim(),
+      per_host_fetch_cap: String(formData.get("per_host_fetch_cap") || "").trim(),
+      retry_attempts: String(formData.get("retry_attempts") || "").trim(),
+      retry_backoff_base_ms: String(formData.get("retry_backoff_base_ms") || "").trim(),
+      retry_backoff_max_ms: String(formData.get("retry_backoff_max_ms") || "").trim(),
+      allow_domains: String(formData.get("allow_domains") || "").trim(),
+      deny_domains: String(formData.get("deny_domains") || "").trim(),
+      respect_robots: formData.get("respect_robots") === "on",
+      program_id: String(formData.get("program_id") || "default").trim() || "default",
+    };
+    state.researchDraft = draft;
+    persistState();
+
+    const request = {
+      brief: {
+        topic: draft.topic,
+        focal_year: nullableString(draft.focal_year),
+        time_start: nullableString(draft.time_start),
+        time_end: nullableString(draft.time_end),
+        locale: nullableString(draft.locale),
+        audience: nullableString(draft.audience),
+        adapter_id: nullableString(draft.adapter_id),
+        domain_hints: splitList(draft.domain_hints),
+        desired_facets: splitList(draft.desired_facets).length ? splitList(draft.desired_facets) : null,
+        preferred_source_types: splitList(draft.preferred_source_types),
+        excluded_source_types: splitList(draft.excluded_source_types),
+        coverage_targets: parseCoverageTargets(draft.coverage_targets),
+        curated_inputs: buildCuratedInputs(draft),
+        execution_policy: {
+          total_fetch_time_seconds: parsePositiveInteger(draft.total_fetch_time_seconds, 90),
+          per_host_fetch_cap: parsePositiveInteger(draft.per_host_fetch_cap, 3),
+          retry_attempts: parsePositiveInteger(draft.retry_attempts, 3),
+          retry_backoff_base_ms: parsePositiveInteger(draft.retry_backoff_base_ms, 250),
+          retry_backoff_max_ms: parsePositiveInteger(draft.retry_backoff_max_ms, 2000),
+          respect_robots: draft.respect_robots,
+          allow_domains: splitList(draft.allow_domains),
+          deny_domains: splitList(draft.deny_domains),
+        },
+        max_queries: parsePositiveInteger(draft.max_queries, 12),
+        max_results_per_query: parsePositiveInteger(draft.max_results_per_query, 5),
+        max_findings: parsePositiveInteger(draft.max_findings, 20),
+        max_per_facet: parsePositiveInteger(draft.max_per_facet, 2),
+      },
+      program_id: draft.program_id === "default" ? null : draft.program_id,
+    };
+
+    applyLoading(true);
+    try {
+      const payload = await fetchJson(API.researchRuns, {
+        method: "POST",
+        body: request,
+      });
+      state.researchRuns = [payload.run, ...state.researchRuns.filter((run) => run.run_id !== payload.run.run_id)];
+      state.selectedResearchRunId = payload.run.run_id;
+      state.researchRunDetail = payload;
+      state.activeScreen = "research";
+      location.hash = "#research";
+      await refreshRuntimeStatus();
+      setApiStatus(true, `Research run ${payload.run.run_id} completed and is ready for staging.`);
+      setBanner("live", "Research run created", `Collected ${payload.run.accepted_count} accepted findings across ${payload.run.facets.length} facets.`);
+      render();
+    } catch (error) {
+      setBanner("failed", "Research run failed", error.message || "The research run could not be created.");
+      render();
+    } finally {
+      applyLoading(false);
+      persistState();
+    }
+  }
+
+  async function refreshResearchDetail(runId, { quiet = false } = {}) {
+    if (!runId) {
+      if (!quiet) {
+        setBanner("failed", "No research run selected", "Pick a research run before requesting its detail.");
+      }
+      return;
+    }
+
+    applyLoading(true);
+    try {
+      const payload = await fetchJson(API.researchRun(runId));
+      state.researchRunDetail = payload;
+      state.researchRuns = [
+        payload.run,
+        ...state.researchRuns.filter((run) => run.run_id !== payload.run.run_id),
+      ];
+      state.selectedResearchRunId = payload.run.run_id;
+      await refreshRuntimeStatus();
+      if (!quiet) {
+        setBanner("live", "Research detail refreshed", `Loaded ${payload.findings.length} findings for ${payload.run.run_id}.`);
+      }
+      render();
+    } catch (error) {
+      if (!quiet) {
+        setBanner("failed", "Research detail failed", error.message || "Could not load the selected research run.");
+        render();
+      }
+    } finally {
+      applyLoading(false);
+      persistState();
+    }
+  }
+
+  async function stageResearchRun(runId) {
+    if (!runId) {
+      setBanner("failed", "No research run selected", "Pick a research run before staging findings.");
+      return;
+    }
+
+    applyLoading(true);
+    try {
+      const payload = await fetchJson(API.stageResearchRun(runId), { method: "POST" });
+      state.researchRuns = [
+        payload.run,
+        ...state.researchRuns.filter((run) => run.run_id !== payload.run.run_id),
+      ];
+      await refreshLiveData({ quiet: true });
+      await refreshResearchDetail(runId, { quiet: true });
+      setApiStatus(true, `Staged ${payload.staged_source_ids.length} research findings into source records.`);
+      setBanner(
+        "live",
+        "Research staged",
+        payload.staged_source_ids.length
+          ? `Created ${payload.staged_source_ids.length} staged sources and ${payload.staged_document_ids.length} text documents.`
+          : payload.warnings[0] || "No additional accepted findings needed staging."
+      );
+      render();
+    } catch (error) {
+      setBanner("failed", "Staging failed", error.message || "Could not stage the selected research run.");
+      render();
+    } finally {
+      applyLoading(false);
+      persistState();
+    }
+  }
+
+  async function extractResearchRun(runId) {
+    if (!runId) {
+      setBanner("failed", "No research run selected", "Pick a research run before extracting staged findings.");
+      return;
+    }
+
+    applyLoading(true);
+    try {
+      const payload = await fetchJson(API.extractResearchRun(runId), { method: "POST" });
+      const researchRun = payload.stage_result?.run;
+      if (researchRun) {
+        state.researchRuns = [
+          researchRun,
+          ...state.researchRuns.filter((run) => run.run_id !== researchRun.run_id),
+        ];
+      }
+      if (payload.extraction?.candidates) {
+        state.candidates = payload.extraction.candidates;
+      }
+      if (payload.extraction?.evidence) {
+        state.evidence = payload.extraction.evidence;
+      }
+      if (payload.extraction?.run) {
+        state.runs = [
+          payload.extraction.run,
+          ...state.runs.filter((run) => run.run_id !== payload.extraction.run.run_id),
+        ];
+        state.selectedRunId = payload.extraction.run.run_id;
+      }
+      await refreshLiveData({ quiet: true });
+      await refreshResearchDetail(runId, { quiet: true });
+      state.selectedCandidateId =
+        state.candidates.find((candidate) => candidate.review_state === "pending")?.candidate_id ??
+        state.candidates[0]?.candidate_id ??
+        null;
+      setApiStatus(true, `Research extraction created ${payload.extraction?.candidates?.length || 0} candidates.`);
+      setBanner(
+        "live",
+        "Research extracted",
+        `Normalized ${payload.normalization?.document_count ?? 0} documents into ${payload.normalization?.text_unit_count ?? 0} text units and produced ${payload.extraction?.candidates?.length || 0} candidates.`
+      );
+      render();
+    } catch (error) {
+      setBanner("failed", "Research extraction failed", error.message || "Could not stage and extract the selected research run.");
+      render();
+    } finally {
+      applyLoading(false);
+      persistState();
+    }
+  }
+
+  function nullableString(value) {
+    const normalized = String(value || "").trim();
+    return normalized || null;
+  }
+
+  function splitList(value) {
+    return String(value || "")
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
+
+  function parseCoverageTargets(value) {
+    return splitList(value).reduce((accumulator, item) => {
+      const [key, rawCount] = item.split(":").map((part) => part.trim());
+      const count = Number.parseInt(rawCount || "", 10);
+      if (key && Number.isFinite(count) && count > 0) {
+        accumulator[key] = count;
+      }
+      return accumulator;
+    }, {});
+  }
+
+  function parsePositiveInteger(value, fallback) {
+    const parsed = Number.parseInt(String(value || "").trim(), 10);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+  }
+
+  function buildCuratedInputs(draft) {
+    const inputs = [];
+    if (draft.curated_text) {
+      inputs.push({
+        input_type: "text",
+        title: draft.curated_title || "Curated Text Input",
+        text: draft.curated_text,
+      });
+    }
+    if (draft.curated_url) {
+      inputs.push({
+        input_type: "url",
+        url: draft.curated_url,
+        title: draft.curated_title || null,
+      });
+    }
+    return inputs;
+  }
+
+  function renderResearchWhySummary(finding) {
+    const provenance = finding.provenance || null;
+    const host = provenance?.canonical_url
+      ? safeHostFromUrl(provenance.canonical_url)
+      : safeHostFromUrl(finding.canonical_url || finding.url || "");
+    const reason =
+      provenance?.acceptance_reason ||
+      provenance?.rejection_reason ||
+      finding.rejection_reason ||
+      "provenance_unavailable";
+    const threshold = provenance?.scoring?.quality_threshold;
+    const scoreSummary =
+      typeof threshold === "number" && Number.isFinite(threshold)
+        ? `score ${finding.score} / threshold ${threshold}`
+        : `score ${finding.score}`;
+    const semantic =
+      provenance?.semantic_duplicate_hint
+        ? `semantic duplicate ${provenance.scoring?.semantic_duplicate_similarity ?? "n/a"}`
+        : provenance?.scoring?.semantic_fallback_used
+          ? `semantic fallback`
+          : null;
+    return [
+      provenance?.facet_label || finding.facet_id,
+      `query ${provenance?.originating_query || finding.query}`,
+      host ? `host ${host}` : null,
+      provenance?.fetch_outcome ? `fetch ${provenance.fetch_outcome}` : null,
+      scoreSummary,
+      semantic,
+      `why ${reason}`,
+    ]
+      .filter(Boolean)
+      .join(" · ");
+  }
+
+  function renderResearchFindingProvenance(finding) {
+    const provenance = finding.provenance || null;
+    if (!provenance) {
+      return `<div>Structured provenance is unavailable for this older finding.</div>`;
+    }
+    const lines = [
+      `adapter: ${provenance.adapter_id || "n/a"}`,
+      `facet: ${provenance.facet_label || finding.facet_id} (${provenance.facet_id})`,
+      `query: ${provenance.originating_query || finding.query}`,
+      `search rank: ${provenance.search_rank ?? "n/a"}`,
+      `canonical url: ${provenance.canonical_url || finding.canonical_url || finding.url}`,
+      `fetch outcome: ${provenance.fetch_outcome || "n/a"}`,
+      `fetch status: ${provenance.fetch_status || "n/a"}`,
+      `fetch error: ${provenance.fetch_error_category || "none"}`,
+      `decision reason: ${provenance.acceptance_reason || provenance.rejection_reason || "n/a"}`,
+      `duplicate rule: ${provenance.duplicate_rule || "none"}`,
+      `policy flags: ${(provenance.policy_flags || []).join(", ") || "none"}`,
+      `semantic duplicate hint: ${provenance.semantic_duplicate_hint ? "yes" : "no"}`,
+      `semantic notes: ${provenance.semantic_decision_notes || "none"}`,
+      `normalized title: ${provenance.scoring?.normalized_title || "n/a"}`,
+      `canonical host: ${provenance.scoring?.canonical_host || "n/a"}`,
+      `scores: overall ${provenance.scoring?.overall_score ?? finding.score}, relevance ${provenance.scoring?.relevance_score ?? finding.relevance_score}, quality ${provenance.scoring?.quality_score ?? finding.quality_score}, novelty ${provenance.scoring?.novelty_score ?? finding.novelty_score}`,
+      `components: structural ${provenance.scoring?.structural_score ?? 0}, source class ${provenance.scoring?.source_class_score ?? 0}, era ${provenance.scoring?.era_score ?? 0}, coverage ${provenance.scoring?.coverage_score ?? 0}`,
+      `semantic: score ${provenance.scoring?.semantic_score ?? 0}, novelty ${provenance.scoring?.semantic_novelty_score ?? 0}, rerank ${provenance.scoring?.semantic_rerank_delta ?? 0}`,
+      `semantic top match: ${provenance.scoring?.semantic_duplicate_candidate_id || "none"} (${provenance.scoring?.semantic_duplicate_similarity ?? "n/a"})`,
+      `semantic fallback: ${provenance.scoring?.semantic_fallback_used ? provenance.scoring?.semantic_fallback_reason || "used" : "no"}`,
+      `threshold: ${provenance.scoring?.quality_threshold ?? "n/a"} (${provenance.scoring?.threshold_passed ? "passed" : "not passed"})`,
+    ];
+    for (const match of provenance.semantic_matches || []) {
+      lines.push(`semantic match: ${match.finding_id} · ${match.similarity} · ${match.title}`);
+    }
+    return lines.map((line) => `<div>${escapeHtml(line)}</div>`).join("");
+  }
+
+  function buildResearchFilterOptions(findings) {
+    return {
+      decisions: uniqueSorted(findings.map((item) => item.decision).filter(Boolean)),
+      reasons: uniqueSorted(
+        findings
+          .map((item) => item.provenance?.acceptance_reason || item.provenance?.rejection_reason || item.rejection_reason)
+          .filter(Boolean)
+      ),
+      sourceTypes: uniqueSorted(findings.map((item) => item.source_type || "unknown").filter(Boolean)),
+      facets: uniqueSorted(findings.map((item) => item.facet_id).filter(Boolean)),
+    };
+  }
+
+  function filterAndSortResearchFindings(findings, filters) {
+    const filtered = findings.filter((finding) => {
+      const reason = finding.provenance?.acceptance_reason || finding.provenance?.rejection_reason || finding.rejection_reason || "";
+      const sourceType = finding.source_type || "unknown";
+      if (filters.researchDecision !== "all" && finding.decision !== filters.researchDecision) {
+        return false;
+      }
+      if (filters.researchReason !== "all" && reason !== filters.researchReason) {
+        return false;
+      }
+      if (filters.researchSourceType !== "all" && sourceType !== filters.researchSourceType) {
+        return false;
+      }
+      if (filters.researchFacet !== "all" && finding.facet_id !== filters.researchFacet) {
+        return false;
+      }
+      if (filters.researchSemantic === "duplicate_hint" && !finding.provenance?.semantic_duplicate_hint) {
+        return false;
+      }
+      if (filters.researchSemantic === "fallback_only" && !finding.provenance?.scoring?.semantic_fallback_used) {
+        return false;
+      }
+      return true;
+    });
+
+    return filtered.sort((left, right) => {
+      if (filters.researchSort === "weakest_first") {
+        return (left.score - right.score) || left.title.localeCompare(right.title);
+      }
+      const decisionOrder = (left.decision === "accepted" ? 0 : 1) - (right.decision === "accepted" ? 0 : 1);
+      if (decisionOrder !== 0) {
+        return decisionOrder;
+      }
+      return (right.score - left.score) || left.title.localeCompare(right.title);
+    });
+  }
+
+  function renderSelectOptions(options, selectedValue) {
+    return options
+      .map(
+        ([value, label]) => `
+          <option value="${escapeHtml(value)}" ${value === selectedValue ? "selected" : ""}>${escapeHtml(label)}</option>
+        `
+      )
+      .join("");
+  }
+
+  function uniqueSorted(values) {
+    return [...new Set(values)].sort((left, right) => String(left).localeCompare(String(right)));
+  }
+
+  function safeHostFromUrl(value) {
+    try {
+      if (!value) {
+        return "";
+      }
+      return new URL(value).hostname.replace(/^www\./, "");
+    } catch {
+      return "";
+    }
+  }
+
+  function renderKeyValueMap(values) {
+    const entries = Object.entries(values || {});
+    if (!entries.length) {
+      return "none";
+    }
+    return entries.map(([key, value]) => `${key}: ${value}`).join(", ");
+  }
+
+  function renderTimeWindow(brief) {
+    if (brief.time_start || brief.time_end) {
+      return [brief.time_start || "?", brief.time_end || "?"].join(" -> ");
+    }
+    return brief.focal_year || "n/a";
   }
 
   async function fetchJson(path, options = {}) {
