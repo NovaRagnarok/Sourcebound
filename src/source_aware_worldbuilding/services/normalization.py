@@ -15,8 +15,19 @@ class NormalizationService:
         self.source_document_store = source_document_store
         self.text_unit_store = text_unit_store
 
-    def normalize_documents(self) -> dict[str, object]:
+    def normalize_documents(
+        self,
+        *,
+        document_ids: list[str] | None = None,
+        source_ids: list[str] | None = None,
+    ) -> dict[str, object]:
         documents = self.source_document_store.list_source_documents(raw_text_status="ready")
+        document_id_filter = set(document_ids or [])
+        source_id_filter = set(source_ids or [])
+        if document_id_filter:
+            documents = [item for item in documents if item.document_id in document_id_filter]
+        if source_id_filter:
+            documents = [item for item in documents if item.source_id in source_id_filter]
         normalized: list[TextUnit] = []
         updated_documents: list[SourceDocumentRecord] = []
         warnings: list[str] = []

@@ -8,6 +8,9 @@ from source_aware_worldbuilding.domain.models import (
     ClaimRelationship,
     EvidenceSnippet,
     ExtractionRun,
+    ResearchFinding,
+    ResearchProgram,
+    ResearchRun,
     ReviewEvent,
     SourceDocumentRecord,
     SourceRecord,
@@ -27,7 +30,10 @@ class FileSourceStore:
         return next((item for item in self.list_sources() if item.source_id == source_id), None)
 
     def save_sources(self, sources: list[SourceRecord]) -> None:
-        self.store.write_models(sources)
+        existing = {item.source_id: item for item in self.store.read_models(SourceRecord)}
+        for item in sources:
+            existing[item.source_id] = item
+        self.store.write_models(existing.values())
 
 
 class FileTextUnitStore:
@@ -181,6 +187,64 @@ class FileReviewStore:
     def save_review(self, review: ReviewEvent) -> None:
         existing = {item.review_id: item for item in self.store.read_models(ReviewEvent)}
         existing[review.review_id] = review
+        self.store.write_models(existing.values())
+
+
+class FileResearchRunStore:
+    def __init__(self, data_dir: Path):
+        self.store = JsonListStore(data_dir / "research_runs.json")
+
+    def list_runs(self) -> list[ResearchRun]:
+        return list(reversed(self.store.read_models(ResearchRun)))
+
+    def get_run(self, run_id: str) -> ResearchRun | None:
+        return next((item for item in self.store.read_models(ResearchRun) if item.run_id == run_id), None)
+
+    def save_run(self, run: ResearchRun) -> None:
+        self.update_run(run)
+
+    def update_run(self, run: ResearchRun) -> None:
+        existing = {item.run_id: item for item in self.store.read_models(ResearchRun)}
+        existing[run.run_id] = run
+        self.store.write_models(existing.values())
+
+
+class FileResearchFindingStore:
+    def __init__(self, data_dir: Path):
+        self.store = JsonListStore(data_dir / "research_findings.json")
+
+    def list_findings(self, run_id: str | None = None) -> list[ResearchFinding]:
+        findings = self.store.read_models(ResearchFinding)
+        if run_id is None:
+            return findings
+        return [item for item in findings if item.run_id == run_id]
+
+    def save_findings(self, findings: list[ResearchFinding]) -> None:
+        existing = {item.finding_id: item for item in self.store.read_models(ResearchFinding)}
+        for item in findings:
+            existing[item.finding_id] = item
+        self.store.write_models(existing.values())
+
+    def update_finding(self, finding: ResearchFinding) -> None:
+        self.save_findings([finding])
+
+
+class FileResearchProgramStore:
+    def __init__(self, data_dir: Path):
+        self.store = JsonListStore(data_dir / "research_programs.json")
+
+    def list_programs(self) -> list[ResearchProgram]:
+        return self.store.read_models(ResearchProgram)
+
+    def get_program(self, program_id: str) -> ResearchProgram | None:
+        return next(
+            (item for item in self.store.read_models(ResearchProgram) if item.program_id == program_id),
+            None,
+        )
+
+    def save_program(self, program: ResearchProgram) -> None:
+        existing = {item.program_id: item for item in self.store.read_models(ResearchProgram)}
+        existing[program.program_id] = program
         self.store.write_models(existing.values())
 
 

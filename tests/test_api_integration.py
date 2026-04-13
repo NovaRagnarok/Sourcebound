@@ -141,6 +141,11 @@ def test_openapi_includes_operator_mvp_routes() -> None:
         "/v1/claims/{claim_id}/relationships",
         "/v1/query",
         "/v1/exports/lore-packet",
+        "/v1/research/runs",
+        "/v1/research/runs/{run_id}",
+        "/v1/research/runs/{run_id}/stage",
+        "/v1/research/runs/{run_id}/extract",
+        "/v1/research/programs",
     } <= paths
 
 
@@ -265,6 +270,52 @@ def test_lore_packet_route_surfaces_canon_unavailable_errors(temp_data_dir) -> N
 
     assert response.status_code == 503
     assert "canon unavailable" in response.json()["detail"]
+
+
+def test_research_routes_accept_nested_execution_policy_and_curated_inputs(temp_data_dir) -> None:
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1/research/runs",
+            json={
+                "brief": {
+                    "topic": "2003 DJ scene",
+                    "focal_year": "2003",
+                    "adapter_id": "curated_inputs",
+                    "execution_policy": {
+                        "total_fetch_time_seconds": 30,
+                        "per_host_fetch_cap": 2,
+                        "retry_attempts": 2,
+                        "retry_backoff_base_ms": 100,
+                        "retry_backoff_max_ms": 500,
+                        "respect_robots": True,
+                        "allow_domains": [],
+                        "deny_domains": [],
+                    },
+                    "curated_inputs": [
+                            {
+                                "input_type": "text",
+                                "title": "Flyer archive note",
+                                "text": "Promoters in the local DJ scene described weekly residencies, vinyl crates, and local venue habits.",
+                                "source_type": "archive",
+                                "published_at": "2003-08-01",
+                            }
+                    ],
+                }
+            },
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["run"]["status"] == "completed"
+    assert body["run"]["brief"]["adapter_id"] == "curated_inputs"
+    assert body["run"]["telemetry"]["total_queries"] == 0
+    assert body["findings"]
+    assert body["findings"][0]["provenance"]["fetch_outcome"] == "curated_text"
+    assert "normalized_title" in body["findings"][0]["provenance"]["scoring"]
+    assert "semantic_novelty_score" in body["findings"][0]["provenance"]["scoring"]
+    assert body["facet_coverage"]
+    assert "diagnostic_summary" in body["facet_coverage"][0]
+    assert "semantic" in body["run"]["telemetry"]
 
 
 def test_intake_routes_return_shared_result_shapes(temp_data_dir) -> None:

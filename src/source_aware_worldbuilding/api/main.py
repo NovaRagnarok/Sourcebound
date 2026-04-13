@@ -13,6 +13,7 @@ from source_aware_worldbuilding.api.routes.health import router as health_router
 from source_aware_worldbuilding.api.routes.ingest import router as ingest_router
 from source_aware_worldbuilding.api.routes.intake import router as intake_router
 from source_aware_worldbuilding.api.routes.query import router as query_router
+from source_aware_worldbuilding.api.routes.research import router as research_router
 from source_aware_worldbuilding.api.routes.runs import router as runs_router
 from source_aware_worldbuilding.api.routes.sources import router as sources_router
 from source_aware_worldbuilding.settings import settings
@@ -24,6 +25,7 @@ app.include_router(ingest_router)
 app.include_router(intake_router)
 app.include_router(sources_router)
 app.include_router(runs_router)
+app.include_router(research_router)
 app.include_router(candidates_router)
 app.include_router(claims_router)
 app.include_router(query_router)

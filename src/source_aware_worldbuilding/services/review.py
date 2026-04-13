@@ -14,6 +14,15 @@ from source_aware_worldbuilding.ports import (
 
 
 class ReviewService:
+    _CERTAINTY_RANK = {
+        "verified": 5,
+        "author_choice": 4,
+        "probable": 3,
+        "contested": 2,
+        "rumor": 1,
+        "legend": 0,
+    }
+
     def __init__(
         self,
         candidate_store: CandidateStorePort,
@@ -29,7 +38,15 @@ class ReviewService:
         self.projection = projection
 
     def list_candidates(self, review_state: str | None = None):
-        return self.candidate_store.list_candidates(review_state=review_state)
+        candidates = self.candidate_store.list_candidates(review_state=review_state)
+        return sorted(
+            candidates,
+            key=lambda item: (
+                len(item.evidence_ids),
+                -self._CERTAINTY_RANK.get(item.status_suggestion.value, -1),
+                item.candidate_id,
+            ),
+        )
 
     def list_reviews(self, candidate_id: str | None = None):
         return self.review_store.list_reviews(candidate_id=candidate_id)

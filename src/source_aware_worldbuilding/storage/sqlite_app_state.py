@@ -66,6 +66,27 @@ class SqliteAppStateStore:
                     reviewed_at TEXT NOT NULL,
                     payload TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS research_runs (
+                    run_id TEXT PRIMARY KEY,
+                    started_at TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    program_id TEXT NOT NULL,
+                    payload TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS research_findings (
+                    finding_id TEXT PRIMARY KEY,
+                    run_id TEXT NOT NULL,
+                    facet_id TEXT NOT NULL,
+                    decision TEXT NOT NULL,
+                    score REAL NOT NULL,
+                    payload TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS research_programs (
+                    program_id TEXT PRIMARY KEY,
+                    updated_at TEXT NOT NULL,
+                    built_in INTEGER NOT NULL,
+                    payload TEXT NOT NULL
+                );
                 """
             )
 
