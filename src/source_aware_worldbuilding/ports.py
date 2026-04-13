@@ -9,18 +9,37 @@ from source_aware_worldbuilding.domain.models import (
     EvidenceSnippet,
     ExtractionOutput,
     ExtractionRun,
+    IntakeTextRequest,
+    IntakeUrlRequest,
     ProjectionSearchResult,
     QueryRequest,
     QueryResult,
     ReviewEvent,
+    SourceDocumentRecord,
     SourceRecord,
     TextUnit,
+    ZoteroCreatedItem,
 )
 
 
 class CorpusPort(Protocol):
     def pull_sources(self) -> list[SourceRecord]: ...
+    def discover_source_documents(self, sources: list[SourceRecord]) -> list[SourceDocumentRecord]: ...
     def pull_text_units(self, sources: list[SourceRecord]) -> list[TextUnit]: ...
+    def pull_sources_by_item_keys(self, item_keys: list[str]) -> list[SourceRecord]: ...
+    def create_text_source(self, request: IntakeTextRequest) -> ZoteroCreatedItem: ...
+    def create_url_source(self, request: IntakeUrlRequest) -> ZoteroCreatedItem: ...
+    def create_file_source(
+        self,
+        *,
+        filename: str,
+        content_type: str | None,
+        content: bytes,
+        title: str | None = None,
+        source_type: str = "document",
+        notes: str | None = None,
+        collection_key: str | None = None,
+    ) -> tuple[ZoteroCreatedItem, list[str]]: ...
 
 
 class ExtractionPort(Protocol):
@@ -41,6 +60,19 @@ class SourceStorePort(Protocol):
 class TextUnitStorePort(Protocol):
     def list_text_units(self, source_id: str | None = None) -> list[TextUnit]: ...
     def save_text_units(self, text_units: list[TextUnit]) -> None: ...
+
+
+class SourceDocumentStorePort(Protocol):
+    def list_source_documents(
+        self,
+        source_id: str | None = None,
+        *,
+        ingest_status: str | None = None,
+        raw_text_status: str | None = None,
+        claim_extraction_status: str | None = None,
+    ) -> list[SourceDocumentRecord]: ...
+    def save_source_documents(self, source_documents: list[SourceDocumentRecord]) -> None: ...
+    def update_source_document(self, source_document: SourceDocumentRecord) -> None: ...
 
 
 class ExtractionRunStorePort(Protocol):

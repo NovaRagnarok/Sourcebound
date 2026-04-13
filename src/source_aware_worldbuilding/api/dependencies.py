@@ -7,6 +7,7 @@ from source_aware_worldbuilding.adapters.file_backed import (
     FileEvidenceStore,
     FileExtractionRunStore,
     FileReviewStore,
+    FileSourceDocumentStore,
     FileSourceStore,
     FileTextUnitStore,
     FileTruthStore,
@@ -19,6 +20,7 @@ from source_aware_worldbuilding.adapters.postgres_backed import (
     PostgresEvidenceStore,
     PostgresExtractionRunStore,
     PostgresReviewStore,
+    PostgresSourceDocumentStore,
     PostgresSourceStore,
     PostgresTextUnitStore,
     PostgresTruthStore,
@@ -29,12 +31,15 @@ from source_aware_worldbuilding.adapters.sqlite_backed import (
     SqliteEvidenceStore,
     SqliteExtractionRunStore,
     SqliteReviewStore,
+    SqliteSourceDocumentStore,
     SqliteSourceStore,
     SqliteTextUnitStore,
 )
 from source_aware_worldbuilding.adapters.wikibase_adapter import WikibaseTruthStore
 from source_aware_worldbuilding.adapters.zotero_adapter import ZoteroCorpusAdapter
 from source_aware_worldbuilding.services.ingestion import IngestionService
+from source_aware_worldbuilding.services.intake import IntakeService
+from source_aware_worldbuilding.services.normalization import NormalizationService
 from source_aware_worldbuilding.services.query import QueryService
 from source_aware_worldbuilding.services.review import ReviewService
 from source_aware_worldbuilding.settings import settings
@@ -62,6 +67,14 @@ def get_text_unit_store():
     if settings.app_state_backend == "sqlite":
         return SqliteTextUnitStore(_sqlite_path())
     return FileTextUnitStore(settings.app_data_dir)
+
+
+def get_source_document_store():
+    if settings.app_state_backend == "postgres":
+        return PostgresSourceDocumentStore(*_postgres_args())
+    if settings.app_state_backend == "sqlite":
+        return SqliteSourceDocumentStore(_sqlite_path())
+    return FileSourceDocumentStore(settings.app_data_dir)
 
 
 def get_run_store():
@@ -127,15 +140,35 @@ def get_extractor():
     return HeuristicExtractionAdapter()
 
 
+def get_corpus():
+    return ZoteroCorpusAdapter()
+
+
 def get_ingestion_service() -> IngestionService:
     return IngestionService(
-        corpus=ZoteroCorpusAdapter(),
+        corpus=get_corpus(),
         extractor=get_extractor(),
         source_store=get_source_store(),
         text_unit_store=get_text_unit_store(),
+        source_document_store=get_source_document_store(),
         run_store=get_run_store(),
         candidate_store=get_candidate_store(),
         evidence_store=get_evidence_store(),
+    )
+
+
+def get_intake_service() -> IntakeService:
+    return IntakeService(
+        corpus=get_corpus(),
+        source_store=get_source_store(),
+        source_document_store=get_source_document_store(),
+    )
+
+
+def get_normalization_service() -> NormalizationService:
+    return NormalizationService(
+        source_document_store=get_source_document_store(),
+        text_unit_store=get_text_unit_store(),
     )
 
 

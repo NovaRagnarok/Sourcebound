@@ -1,7 +1,11 @@
 from fastapi import APIRouter, Depends
 
-from source_aware_worldbuilding.api.dependencies import get_ingestion_service
+from source_aware_worldbuilding.api.dependencies import (
+    get_ingestion_service,
+    get_normalization_service,
+)
 from source_aware_worldbuilding.services.ingestion import IngestionService
+from source_aware_worldbuilding.services.normalization import NormalizationService
 
 router = APIRouter(prefix="/v1/ingest", tags=["ingest"])
 
@@ -13,6 +17,13 @@ def pull_sources(service: IngestionService = Depends(get_ingestion_service)) -> 
         "count": len(sources),
         "sources": [source.model_dump(mode="json") for source in sources],
     }
+
+
+@router.post("/normalize-documents")
+def normalize_documents(
+    service: NormalizationService = Depends(get_normalization_service),
+) -> dict:
+    return service.normalize_documents()
 
 
 @router.post("/extract-candidates")

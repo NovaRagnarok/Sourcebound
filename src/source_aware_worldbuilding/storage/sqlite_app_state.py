@@ -36,6 +36,14 @@ class SqliteAppStateStore:
                     ordinal INTEGER NOT NULL,
                     payload TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS source_documents_state (
+                    document_id TEXT PRIMARY KEY,
+                    source_id TEXT NOT NULL,
+                    ingest_status TEXT NOT NULL,
+                    raw_text_status TEXT NOT NULL,
+                    claim_extraction_status TEXT NOT NULL,
+                    payload TEXT NOT NULL
+                );
                 CREATE TABLE IF NOT EXISTS extraction_runs (
                     run_id TEXT PRIMARY KEY,
                     started_at TEXT NOT NULL,

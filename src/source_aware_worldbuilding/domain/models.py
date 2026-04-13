@@ -21,6 +21,8 @@ def utc_now() -> str:
 
 class SourceRecord(BaseModel):
     source_id: str
+    external_source: str = "zotero"
+    external_id: str | None = None
     title: str
     author: str | None = None
     year: str | None = None
@@ -29,6 +31,47 @@ class SourceRecord(BaseModel):
     zotero_item_key: str | None = None
     collection_key: str | None = None
     abstract: str | None = None
+    url: str | None = None
+    sync_status: Literal[
+        "imported",
+        "attachments_missing",
+        "awaiting_text_extraction",
+        "ready_for_extraction",
+        "extraction_failed",
+    ] = "imported"
+    raw_metadata_json: dict | None = None
+
+
+class SourceDocumentRecord(BaseModel):
+    document_id: str
+    source_id: str
+    document_kind: Literal["attachment", "note", "snapshot", "manual_text"]
+    external_id: str | None = None
+    filename: str | None = None
+    mime_type: str | None = None
+    storage_path: str | None = None
+    ingest_status: Literal[
+        "imported",
+        "attachments_missing",
+        "awaiting_text_extraction",
+        "ready_for_extraction",
+        "extraction_failed",
+    ] = "imported"
+    raw_text_status: Literal["missing", "queued", "ready", "failed"] = "missing"
+    claim_extraction_status: Literal["queued", "ready", "running", "completed", "failed"] = (
+        "queued"
+    )
+    locator: str | None = None
+    raw_text: str | None = None
+    raw_metadata_json: dict | None = None
+
+
+class ZoteroCreatedItem(BaseModel):
+    zotero_item_key: str
+    parent_item_key: str | None = None
+    title: str
+    item_type: str
+    collection_key: str | None = None
     url: str | None = None
 
 
@@ -114,6 +157,34 @@ class ExtractionOutput(BaseModel):
     run: ExtractionRun
     candidates: list[CandidateClaim] = Field(default_factory=list)
     evidence: list[EvidenceSnippet] = Field(default_factory=list)
+
+
+class IntakeTextRequest(BaseModel):
+    title: str
+    text: str
+    author: str | None = None
+    year: str | None = None
+    source_type: str = "document"
+    notes: str | None = None
+    collection_key: str | None = None
+
+
+class IntakeUrlRequest(BaseModel):
+    url: str
+    title: str | None = None
+    notes: str | None = None
+    collection_key: str | None = None
+
+
+class IntakeResult(BaseModel):
+    created_item: ZoteroCreatedItem
+    pulled_sources: list[SourceRecord] = Field(default_factory=list)
+    source_documents: list[SourceDocumentRecord] = Field(default_factory=list)
+    pulled_text_units: list[TextUnit] = Field(default_factory=list)
+    extraction_run: ExtractionRun | None = None
+    candidate_count: int = 0
+    evidence_count: int = 0
+    warnings: list[str] = Field(default_factory=list)
 
 
 class ReviewRequest(BaseModel):

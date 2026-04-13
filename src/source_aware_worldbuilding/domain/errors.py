@@ -4,3 +4,7 @@ class CanonUnavailableError(RuntimeError):
 
 class WikibaseSyncError(RuntimeError):
     """Raised when canonical Wikibase sync cannot complete."""
+
+
+class ZoteroWriteError(RuntimeError):
+    """Raised when Zotero write operations cannot complete."""

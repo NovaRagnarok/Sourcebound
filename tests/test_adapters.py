@@ -22,6 +22,7 @@ from source_aware_worldbuilding.domain.models import (
     ApprovedClaim,
     EvidenceSnippet,
     ExtractionRun,
+    IntakeTextRequest,
     SourceRecord,
     TextUnit,
 )
@@ -149,6 +150,106 @@ def test_zotero_adapter_retries_transient_failures(monkeypatch) -> None:
 
     assert len(sources) == 1
     assert call_count["top"] == 2
+
+
+def test_zotero_adapter_can_create_text_source_and_pull_by_item_key(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "zotero_library_id", "12345")
+    monkeypatch.setattr(settings, "zotero_collection_key", "COLL-1")
+    monkeypatch.setattr(settings, "zotero_library_type", "user")
+    monkeypatch.setattr(settings, "zotero_base_url", "https://example.test/api")
+    requests: list[tuple[str, str, object]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append((request.method, request.url.path, request.content.decode() if request.content else ""))
+        if request.method == "POST" and request.url.path.endswith("/users/12345/items"):
+            payload = json.loads(request.content.decode())
+            item = payload[0]
+            if item["itemType"] == "document":
+                assert item["title"] == "Created source"
+                assert item["collections"] == ["COLL-1"]
+                return httpx.Response(200, json={"successful": {"0": {"key": "ITEM-1"}}})
+            assert item["itemType"] == "note"
+            assert item["parentItem"] == "ITEM-1"
+            assert "hello world" in item["note"]
+            return httpx.Response(200, json={"successful": {"0": {"key": "NOTE-1"}}})
+        if request.method == "GET" and request.url.path.endswith("/users/12345/items"):
+            return httpx.Response(
+                200,
+                json=[
+                    {
+                        "key": "ITEM-1",
+                        "data": {
+                            "title": "Created source",
+                            "itemType": "document",
+                            "collections": ["COLL-1"],
+                        },
+                    }
+                ],
+            )
+        return httpx.Response(200, json=[])
+
+    adapter = ZoteroCorpusAdapter()
+    monkeypatch.setattr(
+        adapter,
+        "_client",
+        lambda: httpx.Client(
+            base_url="https://example.test/api/",
+            transport=httpx.MockTransport(handler),
+        ),
+    )
+
+    created = adapter.create_text_source(
+        IntakeTextRequest(
+            title="Created source",
+            text="hello world",
+            source_type="document",
+            collection_key="COLL-1",
+        )
+    )
+    pulled = adapter.pull_sources_by_item_keys(["ITEM-1"])
+
+    assert created.zotero_item_key == "ITEM-1"
+    assert len(pulled) == 1
+    assert pulled[0].source_id == "zotero-ITEM-1"
+    assert any(method == "POST" for method, _, _ in requests)
+
+
+def test_zotero_adapter_file_intake_returns_warning_for_binary_file(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "zotero_library_id", "12345")
+    monkeypatch.setattr(settings, "zotero_collection_key", None)
+    monkeypatch.setattr(settings, "zotero_library_type", "user")
+    monkeypatch.setattr(settings, "zotero_base_url", "https://example.test/api")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "POST" and request.url.path.endswith("/users/12345/items"):
+            payload = json.loads(request.content.decode())
+            item = payload[0]
+            if item["itemType"] == "document":
+                return httpx.Response(200, json={"successful": {"0": {"key": "ITEM-1"}}})
+            assert "Full binary attachment upload is not enabled yet." in item["note"]
+            return httpx.Response(200, json={"successful": {"0": {"key": "NOTE-1"}}})
+        return httpx.Response(200, json=[])
+
+    adapter = ZoteroCorpusAdapter()
+    monkeypatch.setattr(
+        adapter,
+        "_client",
+        lambda: httpx.Client(
+            base_url="https://example.test/api/",
+            transport=httpx.MockTransport(handler),
+        ),
+    )
+
+    created, warnings = adapter.create_file_source(
+        filename="scan.pdf",
+        content_type="application/pdf",
+        content=b"%PDF-1.7",
+        title="Scanned source",
+        notes="Imported by test",
+    )
+
+    assert created.zotero_item_key == "ITEM-1"
+    assert warnings
 
 
 def test_extraction_adapter_dedupes_candidates_and_infers_place_and_time() -> None:

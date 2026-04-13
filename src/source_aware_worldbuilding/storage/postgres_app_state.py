@@ -23,6 +23,14 @@ TABLE_DEFINITIONS = {
         ordinal INTEGER NOT NULL,
         payload JSONB NOT NULL
     """,
+    "source_documents_state": """
+        document_id TEXT PRIMARY KEY,
+        source_id TEXT NOT NULL,
+        ingest_status TEXT NOT NULL,
+        raw_text_status TEXT NOT NULL,
+        claim_extraction_status TEXT NOT NULL,
+        payload JSONB NOT NULL
+    """,
     "extraction_runs": """
         run_id TEXT PRIMARY KEY,
         started_at TIMESTAMPTZ NOT NULL,
@@ -165,6 +173,7 @@ TABLE_ORDER = [
     "candidates",
     "extraction_runs",
     "text_units",
+    "source_documents_state",
     "sources",
 ]
 

@@ -13,6 +13,7 @@ from source_aware_worldbuilding.adapters.postgres_backed import (
     PostgresEvidenceStore,
     PostgresExtractionRunStore,
     PostgresReviewStore,
+    PostgresSourceDocumentStore,
     PostgresSourceStore,
     PostgresTextUnitStore,
 )
@@ -21,10 +22,15 @@ from source_aware_worldbuilding.adapters.sqlite_backed import (
     SqliteEvidenceStore,
     SqliteExtractionRunStore,
     SqliteReviewStore,
+    SqliteSourceDocumentStore,
     SqliteSourceStore,
     SqliteTextUnitStore,
 )
 from source_aware_worldbuilding.adapters.zotero_adapter import ZoteroCorpusAdapter
+from source_aware_worldbuilding.api.dependencies import (
+    get_intake_service,
+    get_normalization_service,
+)
 from source_aware_worldbuilding.domain.enums import (
     ClaimKind,
     ClaimStatus,
@@ -35,6 +41,8 @@ from source_aware_worldbuilding.domain.models import (
     CandidateClaim,
     EvidenceSnippet,
     ExtractionRun,
+    IntakeTextRequest,
+    IntakeUrlRequest,
     RuntimeStatus,
     SourceRecord,
     TextUnit,
@@ -199,6 +207,7 @@ def seed_dev_data() -> None:
     )
     _write_json(data_dir / "review_events.json", review_events)
     _write_json(data_dir / "claims.json", [])
+    _write_json(data_dir / "source_documents.json", [])
 
     if settings.app_state_backend == "postgres":
         source_store = PostgresSourceStore(
@@ -207,6 +216,10 @@ def seed_dev_data() -> None:
         )
         source_store.store.clear_all()
         source_store.save_sources(sources)
+        PostgresSourceDocumentStore(
+            settings.app_postgres_dsn,
+            settings.app_postgres_schema,
+        ).save_source_documents([])
         PostgresTextUnitStore(
             settings.app_postgres_dsn,
             settings.app_postgres_schema,
@@ -229,6 +242,7 @@ def seed_dev_data() -> None:
         if settings.app_sqlite_path.exists():
             settings.app_sqlite_path.unlink()
         SqliteSourceStore(settings.app_sqlite_path).save_sources(sources)
+        SqliteSourceDocumentStore(settings.app_sqlite_path).save_source_documents([])
         SqliteTextUnitStore(settings.app_sqlite_path).save_text_units(text_units)
         SqliteEvidenceStore(settings.app_sqlite_path).save_evidence(evidence)
         SqliteCandidateStore(settings.app_sqlite_path).save_candidates(candidates)
@@ -380,6 +394,113 @@ def _print_zotero_report(report: dict) -> None:
                 source.get("year") or "n/a",
             )
         print(preview_table)
+
+
+@app.command("intake-text")
+def intake_text(
+    title: str,
+    text: str,
+    author: str | None = None,
+    year: str | None = None,
+    source_type: str = "document",
+    notes: str | None = None,
+    collection_key: str | None = None,
+    json_output: bool = False,
+) -> None:
+    result = get_intake_service().intake_text(
+        IntakeTextRequest(
+            title=title,
+            text=text,
+            author=author,
+            year=year,
+            source_type=source_type,
+            notes=notes,
+            collection_key=collection_key,
+        )
+    )
+    if json_output:
+        typer.echo(json.dumps(result.model_dump(mode="json"), indent=2))
+        return
+    print(
+        f"[green]Created Zotero item {result.created_item.zotero_item_key}[/green] | "
+        f"Sources: {len(result.pulled_sources)} | "
+        f"Documents queued: {len(result.source_documents)}"
+    )
+    for warning in result.warnings:
+        print(f"[yellow]{warning}[/yellow]")
+
+
+@app.command("intake-url")
+def intake_url(
+    url: str,
+    title: str | None = None,
+    notes: str | None = None,
+    collection_key: str | None = None,
+    json_output: bool = False,
+) -> None:
+    result = get_intake_service().intake_url(
+        IntakeUrlRequest(
+            url=url,
+            title=title,
+            notes=notes,
+            collection_key=collection_key,
+        )
+    )
+    if json_output:
+        typer.echo(json.dumps(result.model_dump(mode="json"), indent=2))
+        return
+    print(
+        f"[green]Created Zotero item {result.created_item.zotero_item_key}[/green] | "
+        f"Sources: {len(result.pulled_sources)} | "
+        f"Documents queued: {len(result.source_documents)}"
+    )
+    for warning in result.warnings:
+        print(f"[yellow]{warning}[/yellow]")
+
+
+@app.command("intake-file")
+def intake_file(
+    path: Path,
+    title: str | None = None,
+    notes: str | None = None,
+    source_type: str = "document",
+    collection_key: str | None = None,
+    json_output: bool = False,
+) -> None:
+    result = get_intake_service().intake_file(
+        filename=path.name,
+        content_type=None,
+        content=path.read_bytes(),
+        title=title,
+        source_type=source_type,
+        notes=notes,
+        collection_key=collection_key,
+    )
+    if json_output:
+        typer.echo(json.dumps(result.model_dump(mode="json"), indent=2))
+        return
+    print(
+        f"[green]Created Zotero item {result.created_item.zotero_item_key}[/green] | "
+        f"Sources: {len(result.pulled_sources)} | "
+        f"Documents queued: {len(result.source_documents)}"
+    )
+    for warning in result.warnings:
+        print(f"[yellow]{warning}[/yellow]")
+
+
+@app.command("normalize-documents")
+def normalize_documents(json_output: bool = False) -> None:
+    result = get_normalization_service().normalize_documents()
+    if json_output:
+        typer.echo(json.dumps(result, indent=2))
+        return
+    print(
+        f"[green]Normalized documents[/green] | "
+        f"Documents touched: {result['document_count']} | "
+        f"Text units created: {result['text_unit_count']}"
+    )
+    for warning in result["warnings"]:
+        print(f"[yellow]{warning}[/yellow]")
 
 
 if __name__ == "__main__":

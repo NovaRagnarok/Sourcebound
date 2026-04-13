@@ -32,6 +32,11 @@ def restore_api_dependency_overrides() -> None:
     original_graph_rag_mode = settings.graph_rag_mode
     original_graph_rag_root = settings.graph_rag_root
     original_graph_rag_artifacts_dir = settings.graph_rag_artifacts_dir
+    original_zotero_library_type = settings.zotero_library_type
+    original_zotero_library_id = settings.zotero_library_id
+    original_zotero_collection_key = settings.zotero_collection_key
+    original_zotero_api_key = settings.zotero_api_key
+    original_zotero_base_url = settings.zotero_base_url
     try:
         yield
     finally:
@@ -54,6 +59,11 @@ def restore_api_dependency_overrides() -> None:
         settings.graph_rag_mode = original_graph_rag_mode
         settings.graph_rag_root = original_graph_rag_root
         settings.graph_rag_artifacts_dir = original_graph_rag_artifacts_dir
+        settings.zotero_library_type = original_zotero_library_type
+        settings.zotero_library_id = original_zotero_library_id
+        settings.zotero_collection_key = original_zotero_collection_key
+        settings.zotero_api_key = original_zotero_api_key
+        settings.zotero_base_url = original_zotero_base_url
 
 
 @pytest.fixture
@@ -69,6 +79,9 @@ def temp_data_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setattr(settings, "wikibase_property_map", None)
     monkeypatch.setattr(settings, "qdrant_enabled", False)
     monkeypatch.setattr(settings, "graph_rag_enabled", False)
+    monkeypatch.setattr(settings, "zotero_library_id", None)
+    monkeypatch.setattr(settings, "zotero_collection_key", None)
+    monkeypatch.setattr(settings, "zotero_api_key", None)
     return tmp_path
 
 
@@ -100,6 +113,9 @@ def postgres_app_state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[
     monkeypatch.setattr(settings, "wikibase_property_map", None)
     monkeypatch.setattr(settings, "qdrant_enabled", False)
     monkeypatch.setattr(settings, "graph_rag_enabled", False)
+    monkeypatch.setattr(settings, "zotero_library_id", None)
+    monkeypatch.setattr(settings, "zotero_collection_key", None)
+    monkeypatch.setattr(settings, "zotero_api_key", None)
 
     try:
         yield {"dsn": dsn, "schema": schema, "data_dir": tmp_path}
