@@ -17,6 +17,7 @@ from source_aware_worldbuilding.domain.models import (
     ResearchFetchedPage,
     ResearchFinding,
     ResearchSemanticResult,
+    ResearchSearchProviderResult,
     ResearchProgram,
     ResearchRun,
     ResearchScoutCapabilities,
@@ -155,8 +156,16 @@ class ResearchScoutAdapterPort(Protocol):
     def capabilities(self) -> ResearchScoutCapabilities: ...
 
     def search(self, query: str, *, limit: int = 5) -> list[ResearchSearchHit]: ...
+    def get_last_search_metadata(self) -> dict[str, object] | None: ...
     def fetch_page(self, url: str) -> ResearchFetchedPage: ...
     def allows_fetch(self, url: str, *, user_agent: str) -> bool | None: ...
+
+
+class ResearchSearchProviderPort(Protocol):
+    @property
+    def provider_id(self) -> str: ...
+
+    def search(self, query: str, *, limit: int = 5) -> ResearchSearchProviderResult: ...
 
 
 class ResearchSemanticPort(Protocol):

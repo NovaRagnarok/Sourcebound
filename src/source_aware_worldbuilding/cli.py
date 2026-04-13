@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import statistics
 from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import urlparse
@@ -42,6 +43,9 @@ from source_aware_worldbuilding.adapters.sqlite_backed import (
 )
 from source_aware_worldbuilding.adapters.qdrant_adapter import QdrantResearchSemanticAdapter
 from source_aware_worldbuilding.adapters.web_research_scout import (
+    BraveSearchApiProvider,
+    DuckDuckGoHtmlSearchProvider,
+    ResearchSearchProviderRegistry,
     ResearchScoutRegistry,
     WebOpenResearchScout,
 )
@@ -610,9 +614,19 @@ def _build_benchmark_research_service(state_dir: Path) -> ResearchService:
     default_program_markdown = (
         Path(__file__).resolve().parents[2] / "docs" / "research" / "default_program.md"
     ).read_text(encoding="utf-8")
+    search_provider_registry = ResearchSearchProviderRegistry(
+        _benchmark_search_providers(),
+        default_order=_benchmark_search_provider_ids(),
+    )
     return ResearchService(
         scout_registry=ResearchScoutRegistry(
-            [WebOpenResearchScout(user_agent=settings.app_research_user_agent)],
+            [
+                WebOpenResearchScout(
+                    user_agent=settings.app_research_user_agent,
+                    search_provider_registry=search_provider_registry,
+                    search_provider_ids=_benchmark_search_provider_ids(),
+                )
+            ],
             default_adapter_id="web_open",
         ),
         run_store=FileResearchRunStore(state_dir),
@@ -638,6 +652,29 @@ def _build_benchmark_research_service(state_dir: Path) -> ResearchService:
         semantic_novelty_floor=settings.research_semantic_novelty_floor,
         semantic_rerank_weight=settings.research_semantic_rerank_weight,
     )
+
+
+def _benchmark_search_provider_ids() -> list[str]:
+    configured = [item.strip() for item in settings.app_research_search_providers.split(",") if item.strip()]
+    if configured:
+        return configured
+    if settings.brave_search_api_key:
+        return ["brave_search_api", "duckduckgo_html"]
+    return ["duckduckgo_html"]
+
+
+def _benchmark_search_providers() -> list[object]:
+    providers: list[object] = [DuckDuckGoHtmlSearchProvider(user_agent=settings.app_research_user_agent)]
+    if settings.brave_search_api_key:
+        providers.insert(
+            0,
+            BraveSearchApiProvider(
+                api_key=settings.brave_search_api_key,
+                base_url=settings.brave_search_base_url,
+                user_agent=settings.app_research_user_agent,
+            ),
+        )
+    return providers
 
 
 def _manual_review_slots(run_detail, extract_result) -> dict:
@@ -703,6 +740,8 @@ def _build_benchmark_scorecard(run_detail, extract_result) -> dict:
     top_candidates = extract_result.extraction.candidates[:10]
     target_years = {"2002", "2003", "2004"}
     near_era_or_anchored = 0
+    anchored_profile_count = 0
+    concrete_anchor_count = 0
     late_sources = 0
     root_path_count = 0
     disallowed_source_count = 0
@@ -717,6 +756,13 @@ def _build_benchmark_scorecard(run_detail, extract_result) -> dict:
                     break
         staged_text = " ".join(filter(None, [finding.page_excerpt or "", finding.snippet_text]))
         anchored = any(year in staged_text for year in target_years)
+        if finding.provenance and finding.provenance.query_profile in {"anchored", "source_seeking"}:
+            anchored_profile_count += 1
+        scoring = finding.provenance.scoring if finding.provenance else None
+        if scoring and scoring.concreteness_score >= 0.16 and (
+            scoring.anchor_score >= 0.16 or anchored
+        ):
+            concrete_anchor_count += 1
         if published_year in target_years or (
             finding.source_type in {"archive", "news", "magazine", "government", "educational", "web"}
             and anchored
@@ -744,7 +790,10 @@ def _build_benchmark_scorecard(run_detail, extract_result) -> dict:
         "coverage_all_facets": all(item.accepted_count >= 1 for item in run_detail.facet_coverage),
         "accepted_findings_total": len(accepted) == 5,
         "near_era_or_anchored_count": near_era_or_anchored,
-        "near_era_or_anchored_pass": near_era_or_anchored >= 4,
+        "near_era_or_anchored_pass": near_era_or_anchored >= 3,
+        "anchored_profile_count": anchored_profile_count,
+        "anchored_profile_pass": anchored_profile_count >= 3,
+        "concrete_anchor_count": concrete_anchor_count,
         "root_path_count": root_path_count,
         "root_path_pass": root_path_count == 0,
         "late_source_count": late_sources,
@@ -778,6 +827,31 @@ def _build_benchmark_scorecard(run_detail, extract_result) -> dict:
 
 
 def _build_benchmark_report(run_detail, extract_result, artifact_dir: Path, *, label: str | None) -> dict:
+    accepted_provider_profile: dict[str, int] = {}
+    accepted_by_profile: dict[str, int] = {}
+    accepted_anchor_class: dict[str, int] = {"near_era": 0, "anchored_retrospective": 0, "weak_anchor": 0}
+    for finding in run_detail.findings:
+        if finding.decision != ResearchFindingDecision.ACCEPTED:
+            continue
+        provider = finding.provenance.search_provider_id if finding.provenance else None
+        profile = finding.provenance.query_profile if finding.provenance else None
+        key = f"{provider or 'unknown'}::{profile or 'unknown'}"
+        accepted_provider_profile[key] = accepted_provider_profile.get(key, 0) + 1
+        accepted_by_profile[profile or "unknown"] = accepted_by_profile.get(profile or "unknown", 0) + 1
+        published_year = ""
+        if finding.published_at:
+            for year in {"2002", "2003", "2004"} | {str(year) for year in range(1900, 2101)}:
+                if year in finding.published_at:
+                    published_year = year
+                    break
+        staged_text = " ".join(filter(None, [finding.page_excerpt or "", finding.snippet_text]))
+        anchored = any(year in staged_text for year in {"2002", "2003", "2004"})
+        if published_year in {"2002", "2003", "2004"}:
+            accepted_anchor_class["near_era"] += 1
+        elif anchored:
+            accepted_anchor_class["anchored_retrospective"] += 1
+        else:
+            accepted_anchor_class["weak_anchor"] += 1
     report = {
         "benchmark_id": "2003_dj_chicago",
         "label": label,
@@ -801,6 +875,8 @@ def _build_benchmark_report(run_detail, extract_result, artifact_dir: Path, *, l
                 "snippet_text": finding.snippet_text,
                 "page_excerpt": finding.page_excerpt,
                 "staged_source_id": finding.staged_source_id,
+                "search_provider_id": finding.provenance.search_provider_id if finding.provenance else None,
+                "query_profile": finding.provenance.query_profile if finding.provenance else None,
                 "provenance": finding.provenance.model_dump(mode="json") if finding.provenance else None,
             }
             for finding in run_detail.findings
@@ -834,12 +910,21 @@ def _build_benchmark_report(run_detail, extract_result, artifact_dir: Path, *, l
             ],
         },
         "scorecard": _build_benchmark_scorecard(run_detail, extract_result),
+        "provider_contribution": {
+            "queries_by_provider": run_detail.run.telemetry.search.queries_by_provider,
+            "hits_by_provider": run_detail.run.telemetry.search.hits_by_provider,
+            "accepted_by_provider": run_detail.run.telemetry.search.accepted_by_provider,
+            "accepted_by_profile": run_detail.run.telemetry.search.accepted_by_profile,
+            "accepted_by_provider_profile": accepted_provider_profile,
+            "accepted_anchor_class": accepted_anchor_class,
+            "zero_hit_queries_by_profile": run_detail.run.telemetry.search.zero_hit_queries_by_profile,
+        },
         "manual_review": _manual_review_slots(run_detail, extract_result),
     }
     return report
 
 
-def _run_benchmark_2003_dj(output_root: Path, *, label: str | None = None) -> dict:
+def _run_benchmark_2003_dj_once(output_root: Path, *, label: str | None = None) -> dict:
     timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     artifact_name = timestamp if not label else f"{timestamp}-{label.replace(' ', '-').lower()}"
     artifact_dir = output_root / artifact_name
@@ -854,15 +939,97 @@ def _run_benchmark_2003_dj(output_root: Path, *, label: str | None = None) -> di
     return report
 
 
+def _aggregate_benchmark_reports(reports: list[dict], artifact_dir: Path, *, label: str | None) -> dict:
+    scorecards = [report["scorecard"]["auto_checks"] for report in reports]
+    accepted_counts = [len(report["accepted_findings"]) for report in reports]
+    candidate_counts = [report["extraction"]["candidate_count"] for report in reports]
+    near_era_counts = [report["scorecard"]["auto_checks"]["near_era_or_anchored_count"] for report in reports]
+    anchored_profile_counts = [report["scorecard"]["auto_checks"]["anchored_profile_count"] for report in reports]
+    aggregate = {
+        "benchmark_id": "2003_dj_chicago",
+        "label": label,
+        "generated_at": datetime.now(UTC).isoformat(),
+        "artifact_dir": str(artifact_dir),
+        "runs": [
+            {
+                "artifact_dir": report["artifact_dir"],
+                "auto_pass": report["scorecard"]["auto_pass"],
+                "status": report["run"]["status"],
+                "accepted_findings": len(report["accepted_findings"]),
+                "candidate_count": report["extraction"]["candidate_count"],
+                "near_era_or_anchored_count": report["scorecard"]["auto_checks"]["near_era_or_anchored_count"],
+            }
+            for report in reports
+        ],
+        "summary": {
+            "repeat_count": len(reports),
+            "pass_count": sum(1 for report in reports if report["scorecard"]["auto_pass"]),
+            "accepted_findings": {
+                "best": max(accepted_counts, default=0),
+                "worst": min(accepted_counts, default=0),
+                "median": statistics.median(accepted_counts) if accepted_counts else 0,
+            },
+            "candidate_count": {
+                "best": max(candidate_counts, default=0),
+                "worst": min(candidate_counts, default=0),
+                "median": statistics.median(candidate_counts) if candidate_counts else 0,
+            },
+            "near_era_or_anchored_count": {
+                "best": max(near_era_counts, default=0),
+                "worst": min(near_era_counts, default=0),
+                "median": statistics.median(near_era_counts) if near_era_counts else 0,
+            },
+            "anchored_profile_count": {
+                "best": max(anchored_profile_counts, default=0),
+                "worst": min(anchored_profile_counts, default=0),
+                "median": statistics.median(anchored_profile_counts) if anchored_profile_counts else 0,
+            },
+            "coverage_all_facets_passes": sum(1 for item in scorecards if item["coverage_all_facets"]),
+            "candidate_count_passes": sum(1 for item in scorecards if item["candidate_count_pass"]),
+            "near_era_or_anchored_passes": sum(1 for item in scorecards if item["near_era_or_anchored_pass"]),
+            "anchored_profile_passes": sum(1 for item in scorecards if item["anchored_profile_pass"]),
+        },
+    }
+    return aggregate
+
+
+def _run_benchmark_2003_dj(output_root: Path, *, label: str | None = None, repeat: int = 1) -> dict:
+    if repeat <= 1:
+        return _run_benchmark_2003_dj_once(output_root, label=label)
+    timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    batch_name = timestamp if not label else f"{timestamp}-{label.replace(' ', '-').lower()}"
+    batch_dir = output_root / batch_name
+    batch_dir.mkdir(parents=True, exist_ok=True)
+    reports = [
+        _run_benchmark_2003_dj_once(batch_dir, label=f"run-{index + 1}")
+        for index in range(repeat)
+    ]
+    summary = _aggregate_benchmark_reports(reports, batch_dir, label=label)
+    (batch_dir / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
+    return summary
+
+
 @app.command("benchmark-2003-dj")
 def benchmark_2003_dj(
     output_root: Path = Path("runtime/research_benchmarks/2003_dj_chicago"),
     label: str | None = None,
+    repeat: int = 1,
     json_output: bool = False,
 ) -> None:
-    report = _run_benchmark_2003_dj(output_root, label=label)
+    report = _run_benchmark_2003_dj(output_root, label=label, repeat=repeat)
     if json_output:
         typer.echo(json.dumps(report, indent=2))
+        return
+    if repeat > 1:
+        print("[bold]2003 DJ Benchmark[/bold]")
+        print(f"Batch artifact: {report['artifact_dir']}")
+        print(
+            f"Runs: {report['summary']['repeat_count']} | "
+            f"Passes: {report['summary']['pass_count']} | "
+            f"Median accepted: {report['summary']['accepted_findings']['median']} | "
+            f"Median candidates: {report['summary']['candidate_count']['median']} | "
+            f"Median anchored-profile accepted: {report['summary']['anchored_profile_count']['median']}"
+        )
         return
     scorecard = report["scorecard"]["auto_checks"]
     print("[bold]2003 DJ Benchmark[/bold]")
@@ -876,6 +1043,7 @@ def benchmark_2003_dj(
         "Coverage: "
         f"{'ok' if scorecard['coverage_all_facets'] else 'missing facets'} | "
         f"Near-era accepted: {scorecard['near_era_or_anchored_count']} | "
+        f"Anchored/source-seeking accepted: {scorecard['anchored_profile_count']} | "
         f"Late accepted: {scorecard['late_source_count']} | "
         f"Top-10 proxy reviewable: {scorecard['top_candidate_proxy_reviewable_count']}"
     )

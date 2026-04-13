@@ -8,6 +8,7 @@ from typer.testing import CliRunner
 from source_aware_worldbuilding.cli import (
     _benchmark_brief_2003_dj,
     _run_benchmark_2003_dj,
+    _run_benchmark_2003_dj_once,
     app as cli_app,
 )
 from source_aware_worldbuilding.domain.enums import (
@@ -161,12 +162,14 @@ def test_benchmark_runner_writes_complete_report_artifact(tmp_path: Path, monkey
     assert "extraction" in payload
     assert "scorecard" in payload
     assert "manual_review" in payload
+    assert "provider_contribution" in payload
+    assert "anchored_profile_count" in payload["scorecard"]["auto_checks"]
 
 
 def test_cli_benchmark_command_emits_json(monkeypatch) -> None:
     monkeypatch.setattr(
         "source_aware_worldbuilding.cli._run_benchmark_2003_dj",
-        lambda output_root, label=None: {
+        lambda output_root, label=None, repeat=1: {
             "artifact_dir": str(output_root / "artifact"),
             "accepted_findings": [],
             "extraction": {"candidate_count": 0},
@@ -178,3 +181,96 @@ def test_cli_benchmark_command_emits_json(monkeypatch) -> None:
 
     assert result.exit_code == 0
     assert '"artifact_dir"' in result.stdout
+
+
+def test_benchmark_repeat_writes_summary_artifact(tmp_path: Path, monkeypatch) -> None:
+    class FakeResearchService:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def run_research(self, request):
+            _ = request
+            self.calls += 1
+            run = ResearchRun(
+                run_id=f"research-test-{self.calls}",
+                status=ResearchRunStatus.COMPLETED,
+                brief=_benchmark_brief_2003_dj(),
+                program_id="default-generic",
+                facets=[ResearchFacet(facet_id="people", label="People", query_hint="participants", target_count=1)],
+                accepted_count=1,
+                rejected_count=0,
+            )
+            finding = ResearchFinding(
+                finding_id=f"finding-{self.calls}",
+                run_id=run.run_id,
+                facet_id="people",
+                query="test",
+                url="https://archive.example.org/2003-scene-report",
+                canonical_url="https://archive.example.org/2003-scene-report",
+                title="Chicago DJ scene report from 2003",
+                publisher="Scene Archive",
+                published_at="2003-08-10",
+                snippet_text="In 2003, DJs rotated between loft parties and club residencies.",
+                page_excerpt="In 2003, DJs rotated between loft parties and club residencies.",
+                source_type="archive",
+                score=0.8,
+                relevance_score=0.7,
+                quality_score=0.9,
+                novelty_score=1.0,
+                decision=ResearchFindingDecision.ACCEPTED,
+            )
+            return ResearchRunDetail(
+                run=run,
+                findings=[finding],
+                program=ResearchProgram(program_id="default-generic", name="Default", markdown="# Default", built_in=True),
+                facet_coverage=[
+                    ResearchFacetCoverage(
+                        facet_id="people",
+                        label="People",
+                        target_count=1,
+                        accepted_count=1,
+                        coverage_status=ResearchCoverageStatus.MET,
+                        diagnostic_summary="target_met",
+                    )
+                ],
+            )
+
+        def extract_run(self, run_id: str):
+            _ = run_id
+            extraction_run = ExtractionRun(
+                run_id=f"extract-{self.calls}",
+                status=ExtractionRunStatus.COMPLETED,
+                source_count=1,
+                text_unit_count=1,
+                candidate_count=1,
+            )
+            candidate = CandidateClaim(
+                candidate_id=f"cand-{self.calls}",
+                subject="Chicago DJ scene",
+                predicate="occurred_during",
+                value="2003 loft parties and club residencies",
+                claim_kind=ClaimKind.EVENT,
+                status_suggestion=ClaimStatus.PROBABLE,
+            )
+            return ResearchExtractResult(
+                stage_result=ResearchRunStageResult(
+                    run=ResearchRun(run_id=f"research-test-{self.calls}", status=ResearchRunStatus.COMPLETED, brief=_benchmark_brief_2003_dj(), program_id="default-generic"),
+                    staged_source_ids=["research-source-1"],
+                    staged_document_ids=["research-doc-1"],
+                ),
+                normalization={"document_count": 1, "text_unit_count": 1, "warnings": []},
+                extraction=ExtractionOutput(run=extraction_run, candidates=[candidate], evidence=[]),
+            )
+
+    service = FakeResearchService()
+    monkeypatch.setattr(
+        "source_aware_worldbuilding.cli._build_benchmark_research_service",
+        lambda state_dir: service,
+    )
+
+    summary = _run_benchmark_2003_dj(tmp_path, label="repeat", repeat=2)
+
+    assert summary["summary"]["repeat_count"] == 2
+    assert len(summary["runs"]) == 2
+    assert (Path(summary["artifact_dir"]) / "summary.json").exists()
+    assert "anchored_profile_count" in summary["summary"]

@@ -47,6 +47,8 @@
       researchReason: "all",
       researchSourceType: "all",
       researchFacet: "all",
+      researchProvider: "all",
+      researchQueryProfile: "all",
       researchSemantic: "all",
       researchSort: "accepted_first",
     },
@@ -1150,6 +1152,21 @@
             <div>${escapeHtml((run.telemetry?.fallback_flags || []).join(", ") || "none")}</div>
           </div>
           <div class="mini">
+            <div class="detail-note">search providers</div>
+            <div>${escapeHtml((run.telemetry?.search?.providers_used || []).join(", ") || "none")}</div>
+            <div class="detail-note">
+              queries ${escapeHtml(renderKeyValueMap(run.telemetry?.search?.queries_by_provider || {}))}
+              · hits ${escapeHtml(renderKeyValueMap(run.telemetry?.search?.hits_by_provider || {}))}
+            </div>
+            <div class="detail-note">
+              accepted ${escapeHtml(renderKeyValueMap(run.telemetry?.search?.accepted_by_provider || {}))}
+              · zero-hit profiles ${escapeHtml(renderKeyValueMap(run.telemetry?.search?.zero_hit_queries_by_profile || {}))}
+            </div>
+            <div class="detail-note">
+              ${run.telemetry?.search?.fallback_used ? `provider fallback ${escapeHtml(run.telemetry?.search?.fallback_reason || "used")}` : "provider fallback none"}
+            </div>
+          </div>
+          <div class="mini">
             <div class="detail-note">semantic backend</div>
             <div>
               ${escapeHtml(run.telemetry?.semantic?.backend || "n/a")}
@@ -1200,6 +1217,24 @@
                 ["all", "all"],
                 ...filterOptions.facets.map((value) => [value, value]),
               ], state.filters.researchFacet)}
+            </select>
+          </div>
+          <div class="field">
+            <label for="research-filter-provider">Provider</label>
+            <select id="research-filter-provider" data-research-filter="researchProvider">
+              ${renderSelectOptions([
+                ["all", "all"],
+                ...filterOptions.providers.map((value) => [value, value]),
+              ], state.filters.researchProvider)}
+            </select>
+          </div>
+          <div class="field">
+            <label for="research-filter-profile">Query profile</label>
+            <select id="research-filter-profile" data-research-filter="researchQueryProfile">
+              ${renderSelectOptions([
+                ["all", "all"],
+                ...filterOptions.queryProfiles.map((value) => [value, value]),
+              ], state.filters.researchQueryProfile)}
             </select>
           </div>
           <div class="field">
@@ -2277,6 +2312,8 @@
           : null;
     return [
       provenance?.facet_label || finding.facet_id,
+      provenance?.search_provider_id ? `provider ${provenance.search_provider_id}` : null,
+      provenance?.query_profile ? `profile ${provenance.query_profile}` : null,
       `query ${provenance?.originating_query || finding.query}`,
       host ? `host ${host}` : null,
       provenance?.fetch_outcome ? `fetch ${provenance.fetch_outcome}` : null,
@@ -2296,6 +2333,8 @@
     const lines = [
       `adapter: ${provenance.adapter_id || "n/a"}`,
       `facet: ${provenance.facet_label || finding.facet_id} (${provenance.facet_id})`,
+      `provider: ${provenance.search_provider_id || "n/a"} rank ${provenance.provider_rank ?? "n/a"} matched ${(provenance.matched_providers || []).join(", ") || "none"}`,
+      `query profile: ${provenance.query_profile || "n/a"}${provenance.fusion_score != null ? ` · fusion ${provenance.fusion_score}` : ""}`,
       `query: ${provenance.originating_query || finding.query}`,
       `search rank: ${provenance.search_rank ?? "n/a"}`,
       `canonical url: ${provenance.canonical_url || finding.canonical_url || finding.url}`,
@@ -2332,6 +2371,8 @@
       ),
       sourceTypes: uniqueSorted(findings.map((item) => item.source_type || "unknown").filter(Boolean)),
       facets: uniqueSorted(findings.map((item) => item.facet_id).filter(Boolean)),
+      providers: uniqueSorted(findings.map((item) => item.provenance?.search_provider_id || "unknown").filter(Boolean)),
+      queryProfiles: uniqueSorted(findings.map((item) => item.provenance?.query_profile || "unknown").filter(Boolean)),
     };
   }
 
@@ -2349,6 +2390,12 @@
         return false;
       }
       if (filters.researchFacet !== "all" && finding.facet_id !== filters.researchFacet) {
+        return false;
+      }
+      if (filters.researchProvider !== "all" && (finding.provenance?.search_provider_id || "unknown") !== filters.researchProvider) {
+        return false;
+      }
+      if (filters.researchQueryProfile !== "all" && (finding.provenance?.query_profile || "unknown") !== filters.researchQueryProfile) {
         return false;
       }
       if (filters.researchSemantic === "duplicate_hint" && !finding.provenance?.semantic_duplicate_hint) {

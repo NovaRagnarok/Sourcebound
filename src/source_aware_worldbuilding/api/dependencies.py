@@ -48,7 +48,10 @@ from source_aware_worldbuilding.adapters.sqlite_backed import (
     SqliteTextUnitStore,
 )
 from source_aware_worldbuilding.adapters.web_research_scout import (
+    BraveSearchApiProvider,
     CuratedInputsResearchScout,
+    DuckDuckGoHtmlSearchProvider,
+    ResearchSearchProviderRegistry,
     ResearchScoutRegistry,
     WebOpenResearchScout,
 )
@@ -209,12 +212,43 @@ def get_corpus():
 
 
 def get_research_scout_registry() -> ResearchScoutRegistry:
+    search_providers = _build_research_search_provider_registry()
     return ResearchScoutRegistry(
         [
-            WebOpenResearchScout(user_agent=settings.app_research_user_agent),
+            WebOpenResearchScout(
+                user_agent=settings.app_research_user_agent,
+                search_provider_registry=search_providers,
+                search_provider_ids=_resolve_research_search_provider_ids(),
+            ),
             CuratedInputsResearchScout(user_agent=settings.app_research_user_agent),
         ],
         default_adapter_id=settings.app_research_default_adapter_id,
+    )
+
+
+def _resolve_research_search_provider_ids() -> list[str]:
+    configured = [item.strip() for item in settings.app_research_search_providers.split(",") if item.strip()]
+    if configured:
+        return configured
+    if settings.brave_search_api_key:
+        return ["brave_search_api", "duckduckgo_html"]
+    return ["duckduckgo_html"]
+
+
+def _build_research_search_provider_registry() -> ResearchSearchProviderRegistry:
+    providers = [DuckDuckGoHtmlSearchProvider(user_agent=settings.app_research_user_agent)]
+    if settings.brave_search_api_key:
+        providers.insert(
+            0,
+            BraveSearchApiProvider(
+                api_key=settings.brave_search_api_key,
+                base_url=settings.brave_search_base_url,
+                user_agent=settings.app_research_user_agent,
+            ),
+        )
+    return ResearchSearchProviderRegistry(
+        providers,
+        default_order=_resolve_research_search_provider_ids(),
     )
 
 

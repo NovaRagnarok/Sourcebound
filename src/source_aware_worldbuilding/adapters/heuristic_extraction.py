@@ -28,6 +28,12 @@ NOISY_TEXT_PATTERNS = (
     "shop ",
     "buy ",
 )
+BROKEN_TEXT_PATTERNS = (
+    "after defining",
+    "this paper will",
+    "this article will",
+    "in this paper",
+)
 
 
 class HeuristicExtractionAdapter:
@@ -124,6 +130,8 @@ class HeuristicExtractionAdapter:
             return False
         if "…" in normalized or normalized.endswith("..."):
             return False
+        if lower.startswith(BROKEN_TEXT_PATTERNS):
+            return False
         if any(pattern in lower for pattern in NOISY_TEXT_PATTERNS):
             return False
         if normalized.count('"') % 2 == 1 and not normalized.endswith('"'):
@@ -136,6 +144,12 @@ class HeuristicExtractionAdapter:
 
         if " whispered that " in lower:
             return [("rumored_that", self._after_phrase(normalized, "whispered that"))]
+        if " at " in lower and re.search(r"\b(?:club|venue|warehouse|radio|residency|record pool|label)\b", lower):
+            return [("occurred_at", normalized)]
+        if " hosted " in lower or " host " in lower:
+            return [("hosted", normalized)]
+        if " featured " in lower or " features " in lower:
+            return [("featured", normalized)]
         if " withholding " in lower or " withheld " in lower:
             return [("withheld", normalized)]
         if " rose " in f" {lower} ":
@@ -185,6 +199,8 @@ class HeuristicExtractionAdapter:
         if len(cleaned) < 24 or len(cleaned.split()) < 4:
             return False
         if cleaned.endswith((":", "—", "-", "“", "\"")):
+            return False
+        if cleaned.startswith(("After defining", "This paper", "This article", "In this paper")):
             return False
         if any(pattern in lower for pattern in NOISY_TEXT_PATTERNS):
             return False

@@ -57,6 +57,18 @@ class Settings(BaseSettings):
         default="SourceboundResearchScout/0.2 (+https://localhost/sourcebound)",
         alias="APP_RESEARCH_USER_AGENT",
     )
+    app_research_search_providers: str = Field(
+        default="",
+        alias="APP_RESEARCH_SEARCH_PROVIDERS",
+    )
+    brave_search_api_key: str | None = Field(
+        default=None,
+        alias="BRAVE_SEARCH_API_KEY",
+    )
+    brave_search_base_url: str = Field(
+        default="https://api.search.brave.com",
+        alias="BRAVE_SEARCH_BASE_URL",
+    )
 
     zotero_library_type: str = Field(default="user", alias="ZOTERO_LIBRARY_TYPE")
     zotero_library_id: str | None = Field(default=None, alias="ZOTERO_LIBRARY_ID")

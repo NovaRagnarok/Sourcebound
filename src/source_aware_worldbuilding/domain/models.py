@@ -384,6 +384,17 @@ class ResearchScoutCapabilities(BaseModel):
     supports_domain_policy: bool = False
 
 
+class ResearchSearchTelemetry(BaseModel):
+    providers_used: list[str] = Field(default_factory=list)
+    queries_by_provider: dict[str, int] = Field(default_factory=dict)
+    hits_by_provider: dict[str, int] = Field(default_factory=dict)
+    accepted_by_provider: dict[str, int] = Field(default_factory=dict)
+    accepted_by_profile: dict[str, int] = Field(default_factory=dict)
+    zero_hit_queries_by_profile: dict[str, int] = Field(default_factory=dict)
+    fallback_used: bool = False
+    fallback_reason: str | None = None
+
+
 class ResearchRunTelemetry(BaseModel):
     total_queries: int = 0
     queries_attempted: int = 0
@@ -399,6 +410,7 @@ class ResearchRunTelemetry(BaseModel):
     elapsed_run_time_ms: int = 0
     elapsed_fetch_time_ms: int = 0
     fallback_flags: list[str] = Field(default_factory=list)
+    search: ResearchSearchTelemetry = Field(default_factory=ResearchSearchTelemetry)
     semantic: ResearchSemanticTelemetry = Field(default_factory=ResearchSemanticTelemetry)
 
 
@@ -410,6 +422,9 @@ class ResearchFindingScoring(BaseModel):
     structural_score: float = 0.0
     source_class_score: float = 0.0
     era_score: float = 0.0
+    anchor_score: float = 0.0
+    concreteness_score: float = 0.0
+    shape_score: float = 0.0
     coverage_score: float = 0.0
     quality_threshold: float = 0.0
     threshold_passed: bool = False
@@ -434,6 +449,11 @@ class ResearchFindingProvenance(BaseModel):
     facet_id: str
     facet_label: str | None = None
     originating_query: str
+    query_profile: str | None = None
+    search_provider_id: str | None = None
+    matched_providers: list[str] = Field(default_factory=list)
+    provider_rank: int | None = None
+    fusion_score: float | None = None
     search_rank: int | None = None
     hit_url: str | None = None
     canonical_url: str | None = None
@@ -544,6 +564,25 @@ class ResearchSearchHit(BaseModel):
     title: str
     snippet: str | None = None
     rank: int = 0
+    search_provider_id: str | None = None
+    provider_rank: int | None = None
+    provider_hit_count: int = 1
+    matched_providers: list[str] = Field(default_factory=list)
+    query_profile: str | None = None
+    fusion_score: float | None = None
+
+
+class ResearchSearchProviderResult(BaseModel):
+    provider_id: str
+    hits: list[ResearchSearchHit] = Field(default_factory=list)
+    fallback_used: bool = False
+    fallback_reason: str | None = None
+
+
+class ResearchQueryPlan(BaseModel):
+    facet_id: str
+    query: str
+    profile: str
 
 
 class ResearchFetchedPage(BaseModel):

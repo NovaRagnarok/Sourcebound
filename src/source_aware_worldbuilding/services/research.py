@@ -31,6 +31,7 @@ from source_aware_worldbuilding.domain.models import (
     ResearchFindingScoring,
     ResearchProgram,
     ResearchProgramCreateRequest,
+    ResearchQueryPlan,
     ResearchRun,
     ResearchRunDetail,
     ResearchRunRequest,
@@ -163,6 +164,21 @@ _GUIDE_TITLE_PATTERNS = (
     "explores",
     "archive of",
 )
+_WEAK_SOURCE_SHAPE_PATTERNS = (
+    "abstract",
+    "introduction",
+    "overview",
+    "about this project",
+    "about the archive",
+    "visitor guide",
+    "travel guide",
+    "things to do",
+    "nightlife guide",
+    "documentaries",
+    "documentary",
+    "playlist",
+    "glossary",
+)
 _RETROSPECTIVE_TITLE_PATTERNS = (
     "timeline",
     "legacy lives",
@@ -209,6 +225,45 @@ _LOW_VALUE_RESULT_PATTERNS = (
     "archive of electronic music",
     "top 20",
     "top 10",
+)
+_SOURCE_SEEKING_TERMS = "interview review listing flyer playlist radio residency archive"
+_ANCHOR_TERMS = (
+    "2002",
+    "2003",
+    "2004",
+    "vinyl",
+    "cdj",
+    "mixtape",
+    "record pool",
+    "residency",
+    "warehouse",
+    "club",
+    "radio",
+    "label",
+    "promoter",
+    "flyer",
+    "neighborhood",
+    "chicago",
+)
+_CONCRETENESS_TERMS = (
+    "vinyl",
+    "cdj",
+    "turntable",
+    "mixtape",
+    "record pool",
+    "radio show",
+    "radio",
+    "label",
+    "promoter",
+    "flyer",
+    "residency",
+    "club",
+    "venue",
+    "warehouse",
+    "nightclub",
+    "dj booth",
+    "neighborhood",
+    "street",
 )
 
 
@@ -611,12 +666,12 @@ class ResearchService:
         failed_fetch_cache: dict[str, tuple[str, str]],
         run: ResearchRun,
         policy: ResearchExecutionPolicy,
-        queries: list[tuple[str, str]],
+        queries: list[ResearchQueryPlan],
         started_monotonic: float,
     ) -> str | None:
-        queries_by_facet: dict[str, list[str]] = {}
-        for facet_id, query in queries:
-            queries_by_facet.setdefault(facet_id, []).append(query)
+        queries_by_facet: dict[str, list[ResearchQueryPlan]] = {}
+        for plan in queries:
+            queries_by_facet.setdefault(plan.facet_id, []).append(plan)
 
         pending_by_facet: dict[str, list[ResearchFinding]] = {facet.facet_id: [] for facet in facets}
         max_rounds = max((len(items) for items in queries_by_facet.values()), default=0)
@@ -646,22 +701,31 @@ class ResearchService:
                 facet_queries = queries_by_facet.get(facet.facet_id, [])
                 if round_index >= len(facet_queries):
                     continue
-                query = facet_queries[round_index]
+                query_plan = facet_queries[round_index]
+                query = query_plan.query
                 facet.queries_attempted += 1
                 run.telemetry.queries_attempted += 1
                 try:
+                    raw_hits = self._run_retrying_search(adapter, query, brief.max_results_per_query, run, policy)
+                    self._update_search_telemetry(run, adapter.get_last_search_metadata(), query_plan.profile)
                     hits = self._rank_search_hits_for_fetch(
                         brief,
                         facet,
-                        self._run_retrying_search(adapter, query, brief.max_results_per_query, run, policy),
+                        raw_hits,
                     )
                 except Exception as exc:
                     run.logs.append(f"Query [{facet.facet_id}] failed: {exc}")
                     run.warnings.append(f"Query [{facet.facet_id}] failed and was skipped: {exc}")
                     self._sync_run_progress(run, facets, findings, started_monotonic)
                     continue
+                if not hits:
+                    run.telemetry.search.zero_hit_queries_by_profile[query_plan.profile] = (
+                        run.telemetry.search.zero_hit_queries_by_profile.get(query_plan.profile, 0) + 1
+                    )
                 facet.hits_seen += len(hits)
-                run.logs.append(f"Query [{facet.facet_id}] returned {len(hits)} candidate hits.")
+                run.logs.append(
+                    f"Query [{facet.facet_id}/{query_plan.profile}] returned {len(hits)} candidate hits."
+                )
                 for hit in hits:
                     if len(findings) + _pending_count() >= brief.max_findings:
                         return _stop("Stopped early because max_findings was reached.")
@@ -673,7 +737,7 @@ class ResearchService:
                         brief=brief,
                         program=program,
                         facet=facet,
-                        query=query,
+                        query_plan=query_plan,
                         hit=hit,
                         page_cache=page_cache,
                         failed_fetch_cache=failed_fetch_cache,
@@ -736,6 +800,7 @@ class ResearchService:
                     brief=brief,
                     facet=facet,
                     query="curated_input",
+                    query_profile="curated_input",
                     hit=ResearchSearchHit(
                         query="curated_input",
                         url=item.url or f"curated://{sha1((item.title or 'text').encode()).hexdigest()[:12]}",
@@ -775,7 +840,11 @@ class ResearchService:
                 brief=brief,
                 program=program,
                 facet=facet,
-                query="curated_input",
+                query_plan=ResearchQueryPlan(
+                    facet_id=facet.facet_id,
+                    query="curated_input",
+                    profile="curated_input",
+                ),
                 hit=hit,
                 page_cache=page_cache,
                 failed_fetch_cache=failed_fetch_cache,
@@ -835,7 +904,7 @@ class ResearchService:
         brief: ResearchBrief,
         program: ResearchProgram,
         facet: ResearchFacet,
-        query: str,
+        query_plan: ResearchQueryPlan,
         hit: ResearchSearchHit,
         page_cache: dict[str, ResearchFetchedPage],
         failed_fetch_cache: dict[str, tuple[str, str]],
@@ -844,6 +913,7 @@ class ResearchService:
         findings: list[ResearchFinding],
         started_monotonic: float,
     ) -> ResearchFinding | None:
+        query = query_plan.query
         canonical_url = self._canonical_url(hit.url)
         host = self._host_for_url(canonical_url)
         if self._is_blocked_by_domain_policy(canonical_url, policy):
@@ -860,6 +930,7 @@ class ResearchService:
                 brief=brief,
                 facet=facet,
                 query=query,
+                query_profile=query_plan.profile,
                 hit=hit,
                 page=page,
                 fetch_outcome=ResearchFetchOutcome.FETCHED,
@@ -912,6 +983,7 @@ class ResearchService:
                 brief=brief,
                 facet=facet,
                 query=query,
+                query_profile=query_plan.profile,
                 hit=hit,
                 page=page,
                 fetch_outcome=ResearchFetchOutcome.FETCHED,
@@ -946,6 +1018,7 @@ class ResearchService:
                     adapter_id=adapter_id,
                     facet=facet,
                     query=query,
+                    query_profile=query_plan.profile,
                     hit=hit,
                     canonical_url=canonical_url,
                     category=category,
@@ -968,6 +1041,7 @@ class ResearchService:
             hits,
             key=lambda item: (
                 self._prefetch_hit_score(brief, facet, item),
+                item.provider_hit_count or 1,
                 -(item.rank or 9999),
             ),
             reverse=True,
@@ -988,12 +1062,41 @@ class ResearchService:
             self._scoring_tokens(brief.topic, facet.label, brief.locale, self._time_hint(brief), *(brief.domain_hints or [])),
         )
         score = relevance
+        score += (hit.fusion_score or 0.0) * 0.35
+        score += max((hit.provider_hit_count or 1) - 1, 0) * 0.12
         score += self._source_class_score(source_type)[0]
         score += self._source_shape_score(url, title, snippet, "", source_type, brief)
         score += self._prefetch_era_score(url, title, snippet, brief)
         if source_type in {"shopping", "social"}:
             score -= 0.25
         return round(score, 4)
+
+    def _update_search_telemetry(
+        self,
+        run: ResearchRun,
+        metadata: dict[str, object] | None,
+        query_profile: str,
+    ) -> None:
+        if not metadata:
+            run.telemetry.search.zero_hit_queries_by_profile[query_profile] = (
+                run.telemetry.search.zero_hit_queries_by_profile.get(query_profile, 0) + 1
+            )
+            return
+        providers_used = metadata.get("providers_used") or []
+        for provider_id in providers_used:
+            if provider_id not in run.telemetry.search.providers_used:
+                run.telemetry.search.providers_used.append(provider_id)
+        for provider_id, count in (metadata.get("queries_by_provider") or {}).items():
+            run.telemetry.search.queries_by_provider[provider_id] = (
+                run.telemetry.search.queries_by_provider.get(provider_id, 0) + int(count)
+            )
+        for provider_id, count in (metadata.get("hits_by_provider") or {}).items():
+            run.telemetry.search.hits_by_provider[provider_id] = (
+                run.telemetry.search.hits_by_provider.get(provider_id, 0) + int(count)
+            )
+        if metadata.get("fallback_used"):
+            run.telemetry.search.fallback_used = True
+            run.telemetry.search.fallback_reason = metadata.get("fallback_reason") or "provider fallback used"
 
     def _should_skip_hit_before_fetch(
         self,
@@ -1061,6 +1164,9 @@ class ResearchService:
             facet_candidates,
             key=lambda item: (
                 item.score,
+                item.provenance.scoring.anchor_score if item.provenance else 0.0,
+                item.provenance.scoring.concreteness_score if item.provenance else 0.0,
+                item.provenance.query_profile in {"anchored", "source_seeking"} if item.provenance else False,
                 item.relevance_score,
                 item.quality_score,
                 self._finding_has_requested_time_anchor(item, brief),
@@ -1150,6 +1256,14 @@ class ResearchService:
                 }
                 facet.accepted_count += 1
                 provenance.acceptance_reason = ResearchFindingReason.ACCEPTED_QUALITY_THRESHOLD
+                provider_id = provenance.search_provider_id or "unknown"
+                run.telemetry.search.accepted_by_provider[provider_id] = (
+                    run.telemetry.search.accepted_by_provider.get(provider_id, 0) + 1
+                )
+                profile_id = provenance.query_profile or "unknown"
+                run.telemetry.search.accepted_by_profile[profile_id] = (
+                    run.telemetry.search.accepted_by_profile.get(profile_id, 0) + 1
+                )
                 self._index_research_findings(run, [finding])
 
         if finding.decision == ResearchFindingDecision.REJECTED:
@@ -1244,9 +1358,10 @@ class ResearchService:
         brief: ResearchBrief,
         facets: list[ResearchFacet],
         program: ResearchProgram,
-    ) -> list[tuple[str, str]]:
-        primary_queries: list[tuple[str, str]] = []
-        tightened_queries: list[tuple[str, str]] = []
+    ) -> list[ResearchQueryPlan]:
+        broad_queries: list[ResearchQueryPlan] = []
+        anchored_queries: list[ResearchQueryPlan] = []
+        source_queries: list[ResearchQueryPlan] = []
         topic_phrase = self._compact_query_phrase(self._query_topic_phrase(brief), max_words=6)
         locale_phrase = self._compact_query_phrase(brief.locale or "", max_words=3)
         audience_phrase = self._compact_query_phrase(brief.audience or "", max_words=3)
@@ -1255,7 +1370,7 @@ class ResearchService:
         for facet in facets:
             facet_phrase = self._compact_query_phrase(facet.query_hint, max_words=4)
             primary_parts = [
-                self._query_time_phrase(brief),
+                self._time_hint(brief),
                 topic_phrase,
                 facet_phrase,
                 locale_phrase,
@@ -1264,25 +1379,56 @@ class ResearchService:
             if domain_phrase:
                 primary_parts.append(domain_phrase)
             primary_query = " ".join(part.strip() for part in primary_parts if part and part.strip())
-            primary_queries.append((facet.facet_id, primary_query))
+            broad_queries.append(
+                ResearchQueryPlan(
+                    facet_id=facet.facet_id,
+                    query=primary_query,
+                    profile="broad",
+                )
+            )
 
-            tightened_parts = [
+            anchored_parts = [
                 self._expanded_query_time_phrase(brief),
                 topic_phrase,
                 facet_phrase,
                 locale_phrase,
-                "archive interview report listing review primary source",
             ]
             if domain_phrase:
-                tightened_parts.append(domain_phrase)
-            if domain_tail:
-                tightened_parts.append(domain_tail)
-            tightened_query = " ".join(
-                part.strip() for part in tightened_parts if part and part.strip()
+                anchored_parts.append(domain_phrase)
+            anchored_query = " ".join(
+                part.strip() for part in anchored_parts if part and part.strip()
             )
-            if tightened_query and tightened_query != primary_query:
-                tightened_queries.append((facet.facet_id, tightened_query))
-        return (primary_queries + tightened_queries)[: brief.max_queries]
+            if anchored_query and anchored_query != primary_query:
+                anchored_queries.append(
+                    ResearchQueryPlan(
+                        facet_id=facet.facet_id,
+                        query=anchored_query,
+                        profile="anchored",
+                    )
+                )
+
+            source_parts = [
+                self._query_time_phrase(brief),
+                topic_phrase,
+                locale_phrase,
+                _SOURCE_SEEKING_TERMS,
+            ]
+            if facet_phrase:
+                source_parts.append(facet_phrase)
+            if domain_tail:
+                source_parts.append(domain_tail)
+            source_query = " ".join(
+                part.strip() for part in source_parts if part and part.strip()
+            )
+            if source_query and source_query not in {primary_query, anchored_query}:
+                source_queries.append(
+                    ResearchQueryPlan(
+                        facet_id=facet.facet_id,
+                        query=source_query,
+                        profile="source_seeking",
+                    )
+                )
+        return (broad_queries + anchored_queries + source_queries)[: brief.max_queries]
 
     def _build_finding(
         self,
@@ -1291,6 +1437,7 @@ class ResearchService:
         brief: ResearchBrief,
         facet: ResearchFacet,
         query: str,
+        query_profile: str | None,
         hit: ResearchSearchHit,
         page: ResearchFetchedPage,
         *,
@@ -1315,7 +1462,10 @@ class ResearchService:
         )
         structural_score = self._structural_score(title, snippet, page.published_at)
         source_class_score, boost, penalty = self._source_class_score(source_type)
-        era_score = self._era_score(page.published_at, brief, title=title, excerpt=" ".join(filter(None, [snippet, excerpt])))
+        combined_excerpt = " ".join(filter(None, [snippet, excerpt]))
+        era_score = self._era_score(page.published_at, brief)
+        anchor_score = self._anchor_score(title=title, excerpt=combined_excerpt, brief=brief)
+        concreteness_score = self._concreteness_score(title=title, snippet=snippet, excerpt=excerpt, brief=brief)
         coverage_score = self._coverage_score(facet, brief)
         shape_score = self._source_shape_score(
             canonical_url,
@@ -1325,9 +1475,26 @@ class ResearchService:
             source_type,
             brief,
         )
+        shape_score += self._facet_specificity_score(
+            facet,
+            title=title,
+            snippet=snippet,
+            excerpt=excerpt,
+        )
+        profile_score = self._query_profile_score(query_profile)
         quality = max(
             0.0,
-            min(structural_score + source_class_score + era_score + coverage_score + shape_score, 1.0),
+            min(
+                structural_score
+                + source_class_score
+                + era_score
+                + anchor_score
+                + concreteness_score
+                + coverage_score
+                + shape_score
+                + profile_score,
+                1.0,
+            ),
         )
         novelty = 1.0
         score = round((0.50 * relevance) + (0.50 * quality), 4)
@@ -1356,6 +1523,11 @@ class ResearchService:
                 facet_id=facet.facet_id,
                 facet_label=facet.label,
                 originating_query=query,
+                query_profile=query_profile,
+                search_provider_id=hit.search_provider_id,
+                matched_providers=hit.matched_providers,
+                provider_rank=hit.provider_rank,
+                fusion_score=hit.fusion_score,
                 search_rank=hit.rank,
                 hit_url=hit.url,
                 canonical_url=canonical_url,
@@ -1370,11 +1542,14 @@ class ResearchService:
                     structural_score=round(structural_score, 4),
                     source_class_score=round(source_class_score, 4),
                     era_score=round(era_score, 4),
+                    anchor_score=round(anchor_score, 4),
+                    concreteness_score=round(concreteness_score, 4),
+                    shape_score=round(shape_score + profile_score, 4),
                     coverage_score=round(coverage_score, 4),
                     source_type=source_type,
                     source_class_boost_applied=boost,
                     source_class_penalty_applied=penalty,
-                    near_era_bias_applied=era_score > 0.0,
+                    near_era_bias_applied=(era_score + anchor_score) > 0.0,
                     normalized_title=normalized_title,
                     canonical_host=canonical_host or None,
                     semantic_score=0.0,
@@ -1395,6 +1570,7 @@ class ResearchService:
         adapter_id: str,
         facet: ResearchFacet,
         query: str,
+        query_profile: str | None,
         hit: ResearchSearchHit,
         canonical_url: str,
         category: str,
@@ -1404,6 +1580,11 @@ class ResearchService:
             facet_id=facet.facet_id,
             facet_label=facet.label,
             originating_query=query,
+            query_profile=query_profile,
+            search_provider_id=hit.search_provider_id,
+            matched_providers=hit.matched_providers,
+            provider_rank=hit.provider_rank,
+            fusion_score=hit.fusion_score,
             search_rank=hit.rank,
             hit_url=hit.url,
             canonical_url=canonical_url,
@@ -1768,6 +1949,11 @@ class ResearchService:
             if part and part.strip()
         ).strip()
         sentences = self._candidate_stage_sentences(combined)
+        high_anchor_sentences = [
+            sentence
+            for sentence in sentences
+            if self._stage_sentence_anchor_score(sentence, run.brief) >= 0.28
+        ]
         ranked = sorted(
             sentences,
             key=lambda sentence: (
@@ -1786,6 +1972,20 @@ class ResearchService:
             chosen.append(sentence)
             if len(chosen) == 3:
                 break
+        if high_anchor_sentences and not any(sentence in chosen for sentence in high_anchor_sentences):
+            anchor_sentence = max(
+                high_anchor_sentences,
+                key=lambda sentence: self._stage_sentence_score(sentence, run.brief, finding),
+            )
+            if chosen:
+                chosen[-1] = anchor_sentence
+            else:
+                chosen.append(anchor_sentence)
+        if finding.provenance:
+            flags = [flag for flag in finding.provenance.policy_flags if flag != "weak_anchor"]
+            if not high_anchor_sentences:
+                flags.append("weak_anchor")
+            finding.provenance.policy_flags = flags
         if chosen:
             return "\n\n".join(chosen)
         return combined
@@ -1842,6 +2042,8 @@ class ResearchService:
         if re.search(r"\b(19|20)\d{2}\b", cleaned):
             score += 0.12
         if self._has_specific_date_anchor(cleaned):
+            score += 0.12
+        if self._concreteness_score(title="", snippet=cleaned, excerpt="", brief=brief) >= 0.16:
             score += 0.12
         if re.search(r"\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3}\b", cleaned):
             score += 0.08
@@ -1907,40 +2109,89 @@ class ResearchService:
         self,
         published_at: str | None,
         brief: ResearchBrief,
-        *,
-        title: str = "",
-        excerpt: str = "",
     ) -> float:
         published_year = self._year_from_date(published_at)
         target_year = self._target_year(brief)
-        if target_year is None:
+        start_year, end_year = self._target_year_range(brief)
+        if target_year is None and start_year is None and end_year is None:
             return 0.0
         score = 0.0
-        combined_text = " ".join(filter(None, [title, excerpt]))
-        has_time_anchor = self._text_mentions_requested_time(combined_text, brief)
-        if published_year:
-            delta = abs(int(published_year) - target_year)
-            if delta == 0:
-                score += 0.18
-            elif delta <= 1:
-                score += 0.12
-            elif delta <= 3:
-                score += 0.06
-            if int(published_year) > target_year + 10:
-                score -= 0.16
-            elif int(published_year) > target_year + 5:
-                score -= 0.1
-            elif int(published_year) > target_year + 3:
-                score -= 0.05
-            elif int(published_year) < target_year - 10:
-                score -= 0.06
-            if not has_time_anchor and int(published_year) > target_year + 10:
-                score -= 0.14
-            elif not has_time_anchor and int(published_year) > target_year + 5:
-                score -= 0.08
-        if has_time_anchor:
-            score += 0.14 if not published_year else 0.08
+        if published_year and published_year.isdigit():
+            year = int(published_year)
+            if start_year is not None and end_year is not None and start_year <= year <= end_year:
+                score += 0.34
+            elif target_year is not None:
+                delta = abs(year - target_year)
+                if delta <= 1:
+                    score += 0.18
+                elif delta <= 3:
+                    score += 0.1
+                elif delta <= 5:
+                    score += 0.04
+                if year > target_year + 15:
+                    score -= 0.28
+                elif year > target_year + 10:
+                    score -= 0.22
+                elif year > target_year + 5:
+                    score -= 0.12
+                elif year > target_year + 3:
+                    score -= 0.06
+                elif year < target_year - 10:
+                    score -= 0.08
         return score
+
+    def _anchor_score(
+        self,
+        *,
+        title: str,
+        excerpt: str,
+        brief: ResearchBrief,
+    ) -> float:
+        combined = " ".join(filter(None, [title, excerpt]))
+        lower = combined.lower()
+        score = 0.0
+        if self._text_mentions_requested_time(combined, brief):
+            score += 0.2
+        explicit_years = self._years_mentioned(combined)
+        requested_years = self._requested_year_tokens(brief)
+        if requested_years.intersection(explicit_years):
+            score += 0.16
+        elif explicit_years:
+            score += 0.05
+        if self._has_specific_date_anchor(combined):
+            score += 0.08
+        if any(term in lower for term in _ANCHOR_TERMS):
+            score += 0.08
+        return score
+
+    def _concreteness_score(
+        self,
+        *,
+        title: str,
+        snippet: str,
+        excerpt: str,
+        brief: ResearchBrief,
+    ) -> float:
+        combined = " ".join(filter(None, [title, snippet, excerpt]))
+        lower = combined.lower()
+        score = 0.0
+        if self._years_mentioned(combined):
+            score += 0.08
+        if re.search(r"\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3}\b", combined):
+            score += 0.08
+        if self._has_specific_date_anchor(combined):
+            score += 0.08
+        if brief.locale and brief.locale.lower() in lower:
+            score += 0.05
+        score += min(sum(lower.count(term) for term in _CONCRETENESS_TERMS) * 0.035, 0.18)
+        return score
+
+    def _query_profile_score(self, query_profile: str | None) -> float:
+        if query_profile == "anchored":
+            return 0.06
+        if query_profile == "source_seeking":
+            return 0.05
+        return 0.0
 
     def _coverage_score(self, facet: ResearchFacet, brief: ResearchBrief) -> float:
         target = max(1, min(facet.target_count, brief.max_per_facet))
@@ -1966,31 +2217,86 @@ class ResearchService:
         has_time_anchor = self._finding_text_has_time_anchor(title, snippet, excerpt, brief)
         has_specific_date_anchor = self._has_specific_date_anchor(" ".join(filter(None, [url, title, snippet, excerpt])))
         has_query_identity = self._url_has_strong_query_identity(url)
+        has_concrete_anchor = self._concreteness_score(
+            title=title,
+            snippet=snippet,
+            excerpt=excerpt,
+            brief=brief,
+        ) >= 0.16
 
         if path == "/":
-            score -= 0.12
+            score -= 0.2
         elif self._has_weak_identity_path(path) and not has_query_identity:
-            score -= 0.08
+            score -= 0.1
         if any(pattern in title_lower for pattern in _GUIDE_TITLE_PATTERNS):
-            score -= 0.18
-        if any(pattern in title_lower for pattern in _RETROSPECTIVE_TITLE_PATTERNS):
             score -= 0.22
+        if any(pattern in title_lower for pattern in _WEAK_SOURCE_SHAPE_PATTERNS):
+            score -= 0.16
+        if any(pattern in title_lower for pattern in _RETROSPECTIVE_TITLE_PATTERNS):
+            score -= 0.26
         if any(pattern in combined_lower for pattern in _PROMO_TEXT_PATTERNS):
             score -= 0.12
         if any(pattern in combined_lower for pattern in _VAGUE_STAGE_PATTERNS):
-            score -= 0.08
+            score -= 0.12
+        if any(pattern in combined_lower for pattern in _LOW_VALUE_RESULT_PATTERNS):
+            score -= 0.14
         if not has_time_anchor:
-            score -= 0.05
+            score -= 0.08
         if has_specific_date_anchor:
             score += 0.14
         elif has_time_anchor and has_query_identity:
             score += 0.08
+        if has_concrete_anchor:
+            score += 0.12
         if source_type in {"shopping", "social"}:
             score -= 0.16
         elif source_type == "archive" and path == "/" and not has_time_anchor:
             score -= 0.1
-        elif source_type == "web" and any(pattern in title_lower for pattern in ("guide", "history", "top ")):
-            score -= 0.1
+        elif source_type == "web" and any(pattern in title_lower for pattern in ("guide", "history", "top ", "about ")):
+            score -= 0.14
+        elif source_type == "educational" and any(pattern in title_lower for pattern in ("abstract", "introduction", "paper", "thesis")):
+            score -= 0.14
+        if any(pattern in combined_lower for pattern in ("interview", "review", "residency", "flyer", "radio show", "track listing", "event listing")):
+            score += 0.1
+        return score
+
+    def _facet_specificity_score(
+        self,
+        facet: ResearchFacet,
+        *,
+        title: str,
+        snippet: str,
+        excerpt: str,
+    ) -> float:
+        combined = " ".join(filter(None, [title, snippet, excerpt]))
+        lower = combined.lower()
+        facet_tokens = self._scoring_tokens(facet.query_hint, facet.label)
+        matches = sum(1 for token in facet_tokens if token in lower)
+        score = min(matches * 0.03, 0.12)
+        if facet.facet_id == "people":
+            if re.search(r"\bDJ\b", combined) or re.search(r"\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,2}\b", combined):
+                score += 0.05
+            return score
+        if matches == 0:
+            score -= 0.12
+        elif matches == 1:
+            score -= 0.02
+        if facet.facet_id == "objects_technology" and not any(
+            term in lower for term in ("vinyl", "cdj", "turntable", "mixtape", "record pool", "gear", "format")
+        ):
+            score -= 0.08
+        if facet.facet_id == "media_culture" and not any(
+            term in lower for term in ("radio", "press", "magazine", "coverage", "media", "television", "feature")
+        ):
+            score -= 0.08
+        if facet.facet_id == "regional_context" and not any(
+            term in lower for term in ("chicago", "neighborhood", "south side", "north side", "wicker park", "local", "regional")
+        ):
+            score -= 0.08
+        if facet.facet_id == "practices" and not any(
+            term in lower for term in ("routine", "workflow", "habit", "practice", "residency", "flyer", "record pool", "door policy")
+        ):
+            score -= 0.08
         return score
 
     def _classify_source(self, url: str) -> str:
@@ -2171,10 +2477,13 @@ class ResearchService:
         return self._time_hint(brief)
 
     def _expanded_query_time_phrase(self, brief: ResearchBrief) -> str:
-        expanded = self._expanded_time_hint(brief)
-        if brief.focal_year and brief.focal_year in expanded:
-            return f"\"{brief.focal_year}\" {expanded}".strip()
-        return expanded
+        if brief.focal_year:
+            return f"\"{brief.focal_year}\""
+        start_year = self._year_from_date(brief.time_start)
+        end_year = self._year_from_date(brief.time_end)
+        if start_year and end_year and start_year != end_year:
+            return f"\"{start_year}\" \"{end_year}\""
+        return self._query_time_phrase(brief)
 
     def _compact_query_phrase(self, value: str, *, max_words: int) -> str:
         if not value:
@@ -2216,6 +2525,35 @@ class ResearchService:
             return None
         match = re.search(r"\b(\d{4})\b", value)
         return match.group(1) if match else None
+
+    def _target_year_range(self, brief: ResearchBrief) -> tuple[int | None, int | None]:
+        start = self._year_from_date(brief.time_start)
+        end = self._year_from_date(brief.time_end)
+        if start and end:
+            return int(start), int(end)
+        if brief.focal_year and brief.focal_year.isdigit():
+            year = int(brief.focal_year)
+            return year, year
+        return (int(start), int(start)) if start and start.isdigit() else (None, None)
+
+    def _requested_year_tokens(self, brief: ResearchBrief) -> set[str]:
+        years = {
+            year
+            for year in [
+                brief.focal_year,
+                self._year_from_date(brief.time_start),
+                self._year_from_date(brief.time_end),
+            ]
+            if year
+        }
+        if len(years) >= 2:
+            start, end = sorted(int(year) for year in years if year.isdigit())[:2]
+            if end - start <= 5:
+                years.update(str(year) for year in range(start, end + 1))
+        return years
+
+    def _years_mentioned(self, text: str) -> set[str]:
+        return set(re.findall(r"\b((?:19|20)\d{2})\b", text))
 
     def _year_from_brief(self, brief: ResearchBrief) -> str | None:
         return brief.focal_year or self._year_from_date(brief.time_start) or self._year_from_date(brief.time_end)
@@ -2297,6 +2635,8 @@ class ResearchService:
             return False
         if cleaned.endswith((":", "—", "-", "“", "\"")):
             return False
+        if lower.startswith(("after defining", "this paper", "this article", "this essay", "this project", "in this paper")):
+            return False
         if any(pattern in lower for pattern in _PROMO_TEXT_PATTERNS):
             return False
         if any(pattern in lower for pattern in _VAGUE_STAGE_PATTERNS):
@@ -2305,23 +2645,38 @@ class ResearchService:
             return False
         return True
 
-    def _stage_sentence_score(self, sentence: str, brief: ResearchBrief, finding: ResearchFinding) -> float:
+    def _stage_sentence_anchor_score(self, sentence: str, brief: ResearchBrief) -> float:
         cleaned = " ".join(sentence.split()).strip()
         score = 0.0
         if self._text_mentions_requested_time(cleaned, brief):
-            score += 0.25
+            score += 0.22
+        if self._has_specific_date_anchor(cleaned):
+            score += 0.12
+        if self._concreteness_score(title="", snippet=cleaned, excerpt="", brief=brief) >= 0.16:
+            score += 0.12
         if re.search(r"\b(19|20)\d{2}\b", cleaned):
-            score += 0.15
+            score += 0.08
+        return score
+
+    def _stage_sentence_score(self, sentence: str, brief: ResearchBrief, finding: ResearchFinding) -> float:
+        cleaned = " ".join(sentence.split()).strip()
+        score = self._stage_sentence_anchor_score(cleaned, brief)
+        if re.search(r"\b(19|20)\d{2}\b", cleaned):
+            score += 0.1
         if re.search(r"\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3}\b", cleaned):
             score += 0.12
         if re.search(r"\b\d+\b", cleaned):
             score += 0.08
+        if self._concreteness_score(title="", snippet=cleaned, excerpt="", brief=brief) >= 0.16:
+            score += 0.12
         if len(cleaned.split()) >= 12:
             score += 0.08
         if cleaned.endswith((".", "!", "?")):
             score += 0.05
         if finding.publisher and finding.publisher.lower() not in cleaned.lower():
             score += 0.02
+        if cleaned.lower().startswith(("after defining", "this paper", "this article", "in this paper")):
+            score -= 0.25
         if any(pattern in cleaned.lower() for pattern in _PROMO_TEXT_PATTERNS):
             score -= 0.25
         if any(pattern in cleaned.lower() for pattern in _VAGUE_STAGE_PATTERNS):

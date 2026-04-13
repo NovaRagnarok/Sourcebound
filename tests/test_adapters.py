@@ -17,7 +17,12 @@ from source_aware_worldbuilding.adapters.qdrant_adapter import (
     QdrantProjectionAdapter,
     QdrantResearchSemanticAdapter,
 )
-from source_aware_worldbuilding.adapters.web_research_scout import WebOpenResearchScout
+from source_aware_worldbuilding.adapters.web_research_scout import (
+    BraveSearchApiProvider,
+    DuckDuckGoHtmlSearchProvider,
+    ResearchSearchProviderRegistry,
+    WebOpenResearchScout,
+)
 from source_aware_worldbuilding.adapters.wikibase_adapter import WikibaseTruthStore
 from source_aware_worldbuilding.adapters.zotero_adapter import ZoteroCorpusAdapter
 from source_aware_worldbuilding.api.dependencies import get_extractor
@@ -234,13 +239,62 @@ def test_web_search_filters_duckduckgo_ad_redirects(monkeypatch) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, text=html)
 
-    scout = WebOpenResearchScout(user_agent="SourceboundResearchScout/Test")
-    monkeypatch.setattr(scout, "_client", httpx.Client(transport=httpx.MockTransport(handler)))
+    provider = DuckDuckGoHtmlSearchProvider(user_agent="SourceboundResearchScout/Test")
+    monkeypatch.setattr(provider, "_client", httpx.Client(transport=httpx.MockTransport(handler)))
+    scout = WebOpenResearchScout(
+        user_agent="SourceboundResearchScout/Test",
+        search_provider_registry=ResearchSearchProviderRegistry([provider], default_order=["duckduckgo_html"]),
+        search_provider_ids=["duckduckgo_html"],
+    )
 
     hits = scout.search('"2003" chicago house music', limit=5)
 
     assert len(hits) == 1
     assert hits[0].url == "https://archive.example.org/2003-scene-report"
+
+
+def test_brave_search_provider_normalizes_hits(monkeypatch) -> None:
+    payload = {
+        "web": {
+            "results": [
+                {
+                    "title": "Chicago DJ scene report from 2003",
+                    "url": "https://archive.example.org/2003-scene-report",
+                    "description": "A 2003 report on DJs, club flyers, and record pools.",
+                }
+            ]
+        }
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.headers["X-Subscription-Token"] == "token"
+        return httpx.Response(200, json=payload)
+
+    provider = BraveSearchApiProvider(
+        api_key="token",
+        base_url="https://api.search.brave.com",
+        user_agent="SourceboundResearchScout/Test",
+    )
+    monkeypatch.setattr(
+        provider,
+        "_client",
+        httpx.Client(
+            transport=httpx.MockTransport(handler),
+            headers={
+                "User-Agent": "SourceboundResearchScout/Test",
+                "Accept": "application/json",
+                "X-Subscription-Token": "token",
+            },
+        ),
+    )
+
+    result = provider.search("2003 chicago dj scene", limit=5)
+
+    assert result.provider_id == "brave_search_api"
+    assert len(result.hits) == 1
+    assert result.hits[0].search_provider_id == "brave_search_api"
+    assert result.hits[0].provider_rank == 1
+    assert "record pools" in (result.hits[0].snippet or "")
 
 
 def test_zotero_adapter_file_intake_returns_warning_for_binary_file(monkeypatch) -> None:
