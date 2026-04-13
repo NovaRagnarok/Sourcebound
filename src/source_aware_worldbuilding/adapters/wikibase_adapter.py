@@ -9,7 +9,12 @@ from pydantic import BaseModel
 
 from source_aware_worldbuilding.domain.enums import ClaimKind, ClaimStatus
 from source_aware_worldbuilding.domain.errors import CanonUnavailableError, WikibaseSyncError
-from source_aware_worldbuilding.domain.models import ApprovedClaim, EvidenceSnippet, utc_now
+from source_aware_worldbuilding.domain.models import (
+    ApprovedClaim,
+    ClaimRelationship,
+    EvidenceSnippet,
+    utc_now,
+)
 from source_aware_worldbuilding.storage.json_store import JsonListStore
 
 
@@ -66,11 +71,17 @@ class WikibaseTruthStore:
             self._upsert_cache(remote_claim)
         return remote_claim
 
+    def list_relationships(self, claim_id: str | None = None) -> list[ClaimRelationship]:
+        _ = claim_id
+        return []
+
     def save_claim(
         self,
         claim: ApprovedClaim,
         evidence: list[EvidenceSnippet] | None = None,
+        review=None,
     ) -> None:
+        _ = review
         self._ensure_canon_available()
 
         sync_record = self._sync_claim(claim, evidence or [])

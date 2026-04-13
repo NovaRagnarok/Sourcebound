@@ -84,6 +84,7 @@ class ApprovedClaim(BaseModel):
     viewpoint_scope: str | None = None
     author_choice: bool = False
     evidence_ids: list[str] = Field(default_factory=list)
+    created_from_run_id: str | None = None
     notes: str | None = None
 
 
@@ -147,11 +148,20 @@ class ProjectionSearchResult(BaseModel):
     fallback_reason: str | None = None
 
 
+class ClaimRelationship(BaseModel):
+    relationship_id: str
+    claim_id: str
+    related_claim_id: str
+    relationship_type: Literal["supports", "contradicts", "supersedes", "superseded_by"]
+    notes: str | None = None
+
+
 class QueryResult(BaseModel):
     question: str
     mode: QueryMode
     answer: str
     supporting_claims: list[ApprovedClaim] = Field(default_factory=list)
+    related_claims: list[ClaimRelationship] = Field(default_factory=list)
     evidence: list[EvidenceSnippet] = Field(default_factory=list)
     sources: list[SourceRecord] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)

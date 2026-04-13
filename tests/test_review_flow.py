@@ -8,7 +8,7 @@ from source_aware_worldbuilding.adapters.file_backed import (
 from source_aware_worldbuilding.cli import seed_dev_data
 from source_aware_worldbuilding.domain.enums import ClaimStatus, ReviewDecision, ReviewState
 from source_aware_worldbuilding.domain.errors import WikibaseSyncError
-from source_aware_worldbuilding.domain.models import ApprovedClaim, ReviewRequest
+from source_aware_worldbuilding.domain.models import ApprovedClaim, ClaimRelationship, ReviewRequest
 from source_aware_worldbuilding.services.review import ReviewService
 
 
@@ -22,8 +22,12 @@ class InMemoryTruthStore:
     def get_claim(self, claim_id: str) -> ApprovedClaim | None:
         return self.claims.get(claim_id)
 
-    def save_claim(self, claim: ApprovedClaim, evidence=None) -> None:
-        _ = evidence
+    def list_relationships(self, claim_id: str | None = None) -> list[ClaimRelationship]:
+        _ = claim_id
+        return []
+
+    def save_claim(self, claim: ApprovedClaim, evidence=None, review=None) -> None:
+        _ = evidence, review
         self.claims[claim.claim_id] = claim
 
 
@@ -57,6 +61,7 @@ def test_review_flow(temp_data_dir: Path) -> None:
     assert approved.status == ClaimStatus.PROBABLE
     assert approved.author_choice is False
     assert approved.evidence_ids == ["evi-1"]
+    assert approved.created_from_run_id == "seed-run"
     updated_candidate = candidate_store.get_candidate("cand-1")
     assert updated_candidate is not None
     assert updated_candidate.review_state == ReviewState.APPROVED
@@ -95,6 +100,7 @@ def test_review_override_can_mark_author_choice(temp_data_dir: Path) -> None:
     assert approved.status == ClaimStatus.AUTHOR_CHOICE
     assert approved.author_choice is True
     assert approved.notes == "Authorial call for the pilot."
+    assert approved.created_from_run_id == "seed-run"
     updated_candidate = candidate_store.get_candidate("cand-2")
     assert updated_candidate is not None
     assert updated_candidate.review_state == ReviewState.APPROVED
@@ -114,8 +120,8 @@ def test_review_missing_candidate_returns_none(temp_data_dir: Path) -> None:
 
 
 class FailingTruthStore(InMemoryTruthStore):
-    def save_claim(self, claim, evidence=None) -> None:
-        _ = claim, evidence
+    def save_claim(self, claim, evidence=None, review=None) -> None:
+        _ = claim, evidence, review
         raise WikibaseSyncError("Wikibase sync failed: upstream unavailable")
 
 

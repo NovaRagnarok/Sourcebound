@@ -4,8 +4,8 @@
 
 - Phase 0 is complete.
 - Large parts of Phase 4 already exist as an operator MVP.
-- Canonical approved-claim reads and writes now assume Wikibase.
-- The main work now is making the remaining integrations real: live Zotero intake, non-heuristic extraction, broader Wikibase usage in configured environments, and Qdrant-backed retrieval in the normal dev loop.
+- Approved-claim reads and writes now use Postgres by default in the normal stack.
+- The main work now is making the remaining integrations real: live Zotero intake, non-heuristic extraction, and Qdrant-backed retrieval in the normal dev loop.
 
 ## Phase 0 — architecture seed
 
@@ -24,11 +24,11 @@
 - replace the default heuristic extractor with GraphRAG or another LLM-backed extraction path
 - manually review candidates against a real pilot corpus
 
-## Phase 2 — canonical truth
+## Phase 2 — approved truth store
 
-- keep approved-claim review/write/read working against a configured Wikibase instance
-- write references and qualifiers with a project-specific property map
-- prove one approved-claim round trip through the live review flow
+- keep approved-claim review/write/read solid in the Postgres truth store
+- decide whether Wikibase still earns its complexity for canonical sync
+- if it does, write references and qualifiers with a project-specific property map
 - handle competing claims cleanly
 
 ## Phase 3 — retrieval

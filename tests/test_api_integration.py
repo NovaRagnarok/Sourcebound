@@ -61,10 +61,8 @@ def test_operator_flow_routes_share_file_backed_state(temp_data_dir) -> None:
             f"/v1/candidates/{first_candidate_id}/review",
             json={"decision": "approve"},
         )
-        assert approve_response.status_code == 503
-        assert "Canonical Wikibase truth store is not configured" in approve_response.json()[
-            "detail"
-        ]
+        assert approve_response.status_code == 200
+        assert approve_response.json()["status"] == "approved"
 
         source_detail = client.get("/v1/sources/src-1")
         assert source_detail.status_code == 200
@@ -73,22 +71,18 @@ def test_operator_flow_routes_share_file_backed_state(temp_data_dir) -> None:
 
         candidate_detail = client.get(f"/v1/candidates/{first_candidate_id}")
         assert candidate_detail.status_code == 200
-        assert candidate_detail.json()["review_state"] == "pending"
+        assert candidate_detail.json()["review_state"] == "approved"
 
         claims_response = client.get("/v1/claims")
-        assert claims_response.status_code == 503
-        assert "Canonical Wikibase truth store is not configured" in claims_response.json()[
-            "detail"
-        ]
+        assert claims_response.status_code == 200
+        assert len(claims_response.json()) == 1
 
         query_response = client.post(
             "/v1/query",
             json={"question": "Rouen bread prices", "mode": "strict_facts"},
         )
-        assert query_response.status_code == 503
-        assert "Canonical Wikibase truth store is not configured" in query_response.json()[
-            "detail"
-        ]
+        assert query_response.status_code == 200
+        assert query_response.json()["supporting_claims"]
 
 
 def test_review_route_surfaces_wikibase_sync_failures(temp_data_dir) -> None:

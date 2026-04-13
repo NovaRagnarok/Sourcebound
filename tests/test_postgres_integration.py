@@ -6,8 +6,11 @@ from fastapi.testclient import TestClient
 from psycopg import connect
 from psycopg.sql import SQL, Identifier
 
+from source_aware_worldbuilding.adapters.postgres_backed import PostgresTruthStore
 from source_aware_worldbuilding.api.main import app
 from source_aware_worldbuilding.cli import seed_dev_data
+from source_aware_worldbuilding.domain.enums import ClaimKind, ClaimStatus, ReviewDecision
+from source_aware_worldbuilding.domain.models import ApprovedClaim, EvidenceSnippet, ReviewEvent
 
 
 def _table_count(dsn: str, schema: str, table_name: str) -> int:
@@ -35,6 +38,12 @@ def test_operator_flow_routes_share_postgres_backed_state(
     assert _table_count(dsn, schema, "candidates") == 2
     assert _table_count(dsn, schema, "evidence") == 2
     assert _table_count(dsn, schema, "review_events") == 0
+    assert _table_count(dsn, schema, "claims") == 0
+    assert _table_count(dsn, schema, "claim_evidence") == 0
+    assert _table_count(dsn, schema, "claim_reviews") == 0
+    assert _table_count(dsn, schema, "claim_versions") == 0
+    assert _table_count(dsn, schema, "source_documents") == 0
+    assert _table_count(dsn, schema, "source_chunks") == 0
 
     with TestClient(app) as client:
         sources_before = client.get("/v1/sources")
@@ -72,11 +81,15 @@ def test_operator_flow_routes_share_postgres_backed_state(
             f"/v1/candidates/{first_candidate_id}/review",
             json={"decision": "approve"},
         )
-        assert approve_response.status_code == 503
-        assert "Canonical Wikibase truth store is not configured" in approve_response.json()[
-            "detail"
-        ]
-        assert _table_count(dsn, schema, "review_events") == 0
+        assert approve_response.status_code == 200
+        assert approve_response.json()["status"] == "approved"
+        assert _table_count(dsn, schema, "review_events") == 1
+        assert _table_count(dsn, schema, "claims") == 1
+        assert _table_count(dsn, schema, "claim_evidence") == 1
+        assert _table_count(dsn, schema, "claim_reviews") == 1
+        assert _table_count(dsn, schema, "claim_versions") == 1
+        assert _table_count(dsn, schema, "source_documents") == 1
+        assert _table_count(dsn, schema, "source_chunks") == 1
 
         source_detail = client.get("/v1/sources/src-1")
         assert source_detail.status_code == 200
@@ -85,19 +98,161 @@ def test_operator_flow_routes_share_postgres_backed_state(
 
         candidate_detail = client.get(f"/v1/candidates/{first_candidate_id}")
         assert candidate_detail.status_code == 200
-        assert candidate_detail.json()["review_state"] == "pending"
+        assert candidate_detail.json()["review_state"] == "approved"
 
         claims_response = client.get("/v1/claims")
-        assert claims_response.status_code == 503
-        assert "Canonical Wikibase truth store is not configured" in claims_response.json()[
-            "detail"
-        ]
+        assert claims_response.status_code == 200
+        assert len(claims_response.json()) == 1
 
         query_response = client.post(
             "/v1/query",
             json={"question": "Rouen bread prices", "mode": "strict_facts"},
         )
-        assert query_response.status_code == 503
-        assert "Canonical Wikibase truth store is not configured" in query_response.json()[
-            "detail"
-        ]
+        assert query_response.status_code == 200
+        assert query_response.json()["supporting_claims"]
+
+
+def test_postgres_truth_store_derives_claim_relationships(
+    postgres_app_state: dict[str, str | Path],
+) -> None:
+    dsn = str(postgres_app_state["dsn"])
+    schema = str(postgres_app_state["schema"])
+    store = PostgresTruthStore(dsn, schema)
+
+    store.save_claim(
+        ApprovedClaim(
+            claim_id="claim-1",
+            subject="Rouen bread prices",
+            predicate="rose_during",
+            value="winter shortage",
+            claim_kind=ClaimKind.PRACTICE,
+            status=ClaimStatus.PROBABLE,
+            place="Rouen",
+            time_start="1421-12-01",
+            time_end="1422-02-28",
+            evidence_ids=["evi-1"],
+            created_from_run_id="run-1",
+        ),
+        evidence=[
+            EvidenceSnippet(
+                evidence_id="evi-1",
+                source_id="src-1",
+                locator="folio 12r",
+                text="Bread prices rose sharply during the winter shortage.",
+                text_unit_id="txt-1",
+            )
+        ],
+        review=ReviewEvent(
+            review_id="rev-1",
+            candidate_id="cand-1",
+            decision=ReviewDecision.APPROVE,
+            approved_claim_id="claim-1",
+        ),
+    )
+    store.save_claim(
+        ApprovedClaim(
+            claim_id="claim-2",
+            subject="Rouen bread prices",
+            predicate="rose_during",
+            value="winter shortage",
+            claim_kind=ClaimKind.PRACTICE,
+            status=ClaimStatus.VERIFIED,
+            place="Rouen",
+            time_start="1421-12-01",
+            time_end="1422-02-28",
+            evidence_ids=["evi-2"],
+            created_from_run_id="run-2",
+        ),
+        evidence=[
+            EvidenceSnippet(
+                evidence_id="evi-2",
+                source_id="src-2",
+                locator="folio 14r",
+                text="The winter shortage drove bread prices upward.",
+                text_unit_id="txt-2",
+            )
+        ],
+        review=ReviewEvent(
+            review_id="rev-2",
+            candidate_id="cand-2",
+            decision=ReviewDecision.APPROVE,
+            approved_claim_id="claim-2",
+        ),
+    )
+    store.save_claim(
+        ApprovedClaim(
+            claim_id="claim-3",
+            subject="Rouen bread prices",
+            predicate="rose_during",
+            value="winter shortage",
+            claim_kind=ClaimKind.PRACTICE,
+            status=ClaimStatus.PROBABLE,
+            place="Normandy",
+            evidence_ids=["evi-3"],
+            created_from_run_id="run-3",
+        ),
+        evidence=[
+            EvidenceSnippet(
+                evidence_id="evi-3",
+                source_id="src-3",
+                locator="folio 15r",
+                text="Regional accounts also describe the same winter shortage.",
+                text_unit_id="txt-3",
+            )
+        ],
+        review=ReviewEvent(
+            review_id="rev-3",
+            candidate_id="cand-3",
+            decision=ReviewDecision.APPROVE,
+            approved_claim_id="claim-3",
+        ),
+    )
+    store.save_claim(
+        ApprovedClaim(
+            claim_id="claim-4",
+            subject="Rouen bread prices",
+            predicate="rose_during",
+            value="harvest glut",
+            claim_kind=ClaimKind.PRACTICE,
+            status=ClaimStatus.CONTESTED,
+            place="Rouen",
+            evidence_ids=["evi-4"],
+            created_from_run_id="run-4",
+        ),
+        evidence=[
+            EvidenceSnippet(
+                evidence_id="evi-4",
+                source_id="src-4",
+                locator="folio 16r",
+                text="A later account instead blamed a harvest glut.",
+                text_unit_id="txt-4",
+            )
+        ],
+        review=ReviewEvent(
+            review_id="rev-4",
+            candidate_id="cand-4",
+            decision=ReviewDecision.APPROVE,
+            approved_claim_id="claim-4",
+        ),
+    )
+
+    relationships = store.list_relationships()
+
+    assert any(
+        item.claim_id == "claim-2"
+        and item.related_claim_id == "claim-1"
+        and item.relationship_type == "supersedes"
+        for item in relationships
+    )
+    assert any(
+        item.claim_id == "claim-3"
+        and item.related_claim_id == "claim-2"
+        and item.relationship_type == "supports"
+        for item in relationships
+    )
+    assert any(
+        item.claim_id == "claim-4"
+        and item.related_claim_id == "claim-2"
+        and item.relationship_type == "contradicts"
+        for item in relationships
+    )

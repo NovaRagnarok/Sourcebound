@@ -75,12 +75,13 @@ class ReviewService:
                 and request.override_status.value == "author_choice"
             ),
             evidence_ids=candidate.evidence_ids,
+            created_from_run_id=candidate.extractor_run_id,
             notes=request.notes or candidate.notes,
         )
-        self.truth_store.save_claim(approved, evidence=evidence)
+        review.approved_claim_id = approved.claim_id
+        self.truth_store.save_claim(approved, evidence=evidence, review=review)
         candidate.review_state = ReviewState.APPROVED
         self.candidate_store.update_candidate(candidate)
-        review.approved_claim_id = approved.claim_id
         self.review_store.save_review(review)
         if self.projection is not None:
             self.projection.upsert_claims([approved], evidence)

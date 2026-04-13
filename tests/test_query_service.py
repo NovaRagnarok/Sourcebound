@@ -6,6 +6,7 @@ from source_aware_worldbuilding.adapters.file_backed import FileEvidenceStore, F
 from source_aware_worldbuilding.domain.enums import ClaimKind, ClaimStatus, QueryMode
 from source_aware_worldbuilding.domain.models import (
     ApprovedClaim,
+    ClaimRelationship,
     EvidenceSnippet,
     ProjectionSearchResult,
     QueryFilter,
@@ -17,8 +18,13 @@ from source_aware_worldbuilding.storage.json_store import JsonListStore
 
 
 class InMemoryTruthStore:
-    def __init__(self, claims: list[ApprovedClaim]) -> None:
+    def __init__(
+        self,
+        claims: list[ApprovedClaim],
+        relationships: list[ClaimRelationship] | None = None,
+    ) -> None:
         self.claims = {claim.claim_id: claim for claim in claims}
+        self.relationships = relationships or []
 
     def list_claims(self) -> list[ApprovedClaim]:
         return list(self.claims.values())
@@ -26,8 +32,13 @@ class InMemoryTruthStore:
     def get_claim(self, claim_id: str) -> ApprovedClaim | None:
         return self.claims.get(claim_id)
 
-    def save_claim(self, claim: ApprovedClaim, evidence=None) -> None:
-        _ = evidence
+    def list_relationships(self, claim_id: str | None = None) -> list[ClaimRelationship]:
+        if claim_id is None:
+            return list(self.relationships)
+        return [item for item in self.relationships if item.claim_id == claim_id]
+
+    def save_claim(self, claim: ApprovedClaim, evidence=None, review=None) -> None:
+        _ = evidence, review
         self.claims[claim.claim_id] = claim
 
 
@@ -170,9 +181,10 @@ def build_query_service(
     data_dir: Path,
     claims: list[ApprovedClaim],
     projection=None,
+    relationships: list[ClaimRelationship] | None = None,
 ) -> QueryService:
     return QueryService(
-        truth_store=InMemoryTruthStore(claims),
+        truth_store=InMemoryTruthStore(claims, relationships=relationships),
         evidence_store=FileEvidenceStore(data_dir),
         source_store=FileSourceStore(data_dir),
         projection=projection,
@@ -367,3 +379,39 @@ def test_query_falls_back_to_memory_when_projection_fails(temp_data_dir: Path) -
     assert result.metadata.fallback_used is True
     assert result.metadata.fallback_reason == "Qdrant is disabled."
     assert any("Qdrant fallback" in warning for warning in result.warnings)
+
+
+def test_query_surfaces_related_claims_and_relationship_warnings(temp_data_dir: Path) -> None:
+    claims = populate_query_fixtures(temp_data_dir)
+    service = build_query_service(
+        temp_data_dir,
+        claims,
+        relationships=[
+            ClaimRelationship(
+                relationship_id="rel-1",
+                claim_id="claim-probable-1",
+                related_claim_id="claim-probable-2",
+                relationship_type="contradicts",
+                notes="Different object values for the same subject/predicate.",
+            ),
+            ClaimRelationship(
+                relationship_id="rel-2",
+                claim_id="claim-probable-2",
+                related_claim_id="claim-probable-1",
+                relationship_type="contradicts",
+                notes="Different object values for the same subject/predicate.",
+            ),
+        ],
+    )
+
+    result = service.answer(
+        QueryRequest(
+            question="Market gossip about bread prices",
+            mode=QueryMode.OPEN_EXPLORATION,
+            filters=QueryFilter(status=ClaimStatus.PROBABLE),
+        )
+    )
+
+    assert result.related_claims
+    assert any(item.relationship_type == "contradicts" for item in result.related_claims)
+    assert any("contradictions" in warning for warning in result.warnings)

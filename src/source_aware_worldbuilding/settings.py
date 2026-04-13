@@ -13,7 +13,10 @@ class Settings(BaseSettings):
     app_host: str = Field(default="0.0.0.0", alias="APP_HOST")
     app_port: int = Field(default=8000, alias="APP_PORT")
     app_state_backend: str = Field(default="postgres", alias="APP_STATE_BACKEND")
-    app_truth_backend: Literal["wikibase"] = Field(default="wikibase", alias="APP_TRUTH_BACKEND")
+    app_truth_backend: Literal["file", "postgres", "wikibase"] = Field(
+        default="postgres",
+        alias="APP_TRUTH_BACKEND",
+    )
     app_data_dir: Path = Field(default=Path("data/dev"), alias="APP_DATA_DIR")
     app_sqlite_path: Path = Field(default=Path("runtime/sourcebound.db"), alias="APP_SQLITE_PATH")
     app_postgres_dsn: str = Field(

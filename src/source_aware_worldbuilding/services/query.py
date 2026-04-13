@@ -4,6 +4,7 @@ from collections import defaultdict
 
 from source_aware_worldbuilding.domain.enums import QueryMode
 from source_aware_worldbuilding.domain.models import (
+    ClaimRelationship,
     ProjectionSearchResult,
     QueryRequest,
     QueryResult,
@@ -86,6 +87,12 @@ class QueryService:
                 if snippet is not None:
                     evidence.append(snippet)
 
+        related_claims = self._related_claims_for(matched)
+        if any(item.relationship_type == "contradicts" for item in related_claims):
+            warnings.append("Some returned claims have explicit contradictions in canon.")
+        if any(item.relationship_type == "supersedes" for item in related_claims):
+            warnings.append("Some returned claims supersede earlier canonical claims.")
+
         source_ids = {item.source_id for item in evidence}
         sources = [
             source
@@ -114,6 +121,7 @@ class QueryService:
             mode=request.mode,
             answer=answer,
             supporting_claims=matched[:5],
+            related_claims=related_claims,
             evidence=evidence[:10],
             sources=sources,
             warnings=warnings,
@@ -168,3 +176,26 @@ class QueryService:
         if strongest_score <= 0:
             return []
         return [claim for claim in ranked if scores[claim.claim_id] == strongest_score]
+
+    def _related_claims_for(self, claims) -> list[ClaimRelationship]:
+        if not claims:
+            return []
+        claim_ids = {claim.claim_id for claim in claims[:5]}
+        relationships: list[ClaimRelationship] = []
+        seen: set[tuple[str, str, str]] = set()
+        for claim in claims[:5]:
+            for relationship in self.truth_store.list_relationships(claim.claim_id):
+                key = (
+                    relationship.claim_id,
+                    relationship.related_claim_id,
+                    relationship.relationship_type,
+                )
+                if key in seen:
+                    continue
+                if relationship.related_claim_id not in claim_ids:
+                    seen.add(key)
+                    relationships.append(relationship)
+                    continue
+                seen.add(key)
+                relationships.append(relationship)
+        return relationships

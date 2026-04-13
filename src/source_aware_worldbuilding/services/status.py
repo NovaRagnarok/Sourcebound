@@ -81,6 +81,35 @@ def _state_store_status() -> RuntimeDependencyStatus:
 
 
 def _truth_store_status() -> RuntimeDependencyStatus:
+    if settings.app_truth_backend == "file":
+        return RuntimeDependencyStatus(
+            name="truth_store",
+            role="Approved claims",
+            mode="file",
+            reachable=None,
+            ready=True,
+            detail=f"File-backed approved claims in {settings.app_data_dir / 'claims.json'}.",
+        )
+    if settings.app_truth_backend == "postgres":
+        configured = bool(settings.app_postgres_dsn)
+        reachable, detail = (
+            _probe_postgres(settings.app_postgres_dsn)
+            if configured
+            else (
+                None,
+                "APP_POSTGRES_DSN is required for the Postgres truth backend.",
+            )
+        )
+        return RuntimeDependencyStatus(
+            name="truth_store",
+            role="Approved claims",
+            mode="postgres",
+            configured=configured,
+            reachable=reachable,
+            ready=configured and reachable is True,
+            detail=detail if reachable is not True else "Postgres canonical claim store is ready.",
+        )
+
     configured = all(
         [
             settings.wikibase_api_url,
@@ -99,7 +128,7 @@ def _truth_store_status() -> RuntimeDependencyStatus:
         reachable, detail = _probe_wikibase(settings.wikibase_api_url or "")
     return RuntimeDependencyStatus(
         name="truth_store",
-        role="Canonical approved claims",
+        role="Approved claims",
         mode="wikibase",
         configured=configured,
         reachable=reachable,
@@ -193,7 +222,11 @@ def _next_steps(services: list[RuntimeDependencyStatus]) -> list[str]:
             "Run `docker compose up -d qdrant` and set QDRANT_ENABLED=true "
             "to exercise projection-backed retrieval."
         )
-    if by_name["truth_store"].ready is False:
+    if settings.app_truth_backend == "postgres" and by_name["truth_store"].ready is False:
+        steps.append(
+            "Configure APP_POSTGRES_DSN so Postgres can serve as the canonical approved-claim store."
+        )
+    if settings.app_truth_backend == "wikibase" and by_name["truth_store"].ready is False:
         steps.append(
             "Configure WIKIBASE_API_URL, WIKIBASE_USERNAME, WIKIBASE_PASSWORD, and "
             "WIKIBASE_PROPERTY_MAP to enable canonical approved-claim reads and writes."

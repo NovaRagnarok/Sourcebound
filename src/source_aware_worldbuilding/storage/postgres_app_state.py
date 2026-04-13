@@ -45,15 +45,136 @@ TABLE_DEFINITIONS = {
         reviewed_at TIMESTAMPTZ NOT NULL,
         payload JSONB NOT NULL
     """,
+    "source_documents": """
+        id UUID PRIMARY KEY,
+        source_id TEXT NOT NULL UNIQUE,
+        project_id TEXT NOT NULL,
+        title TEXT,
+        source_type TEXT,
+        created_at TIMESTAMPTZ NOT NULL,
+        updated_at TIMESTAMPTZ NOT NULL,
+        metadata_json JSONB
+    """,
+    "source_chunks": """
+        id UUID PRIMARY KEY,
+        chunk_id TEXT NOT NULL UNIQUE,
+        source_document_id UUID REFERENCES source_documents(id) ON DELETE CASCADE,
+        source_id TEXT NOT NULL,
+        locator TEXT NOT NULL,
+        text_content TEXT NOT NULL,
+        text_unit_id TEXT,
+        checksum TEXT,
+        metadata_json JSONB,
+        created_at TIMESTAMPTZ NOT NULL,
+        updated_at TIMESTAMPTZ NOT NULL
+    """,
+    "claims": """
+        id UUID PRIMARY KEY,
+        claim_id TEXT NOT NULL UNIQUE,
+        project_id TEXT NOT NULL,
+        subject TEXT NOT NULL,
+        predicate TEXT NOT NULL,
+        object_value TEXT NOT NULL,
+        time_start TEXT,
+        time_end TEXT,
+        place TEXT,
+        certainty_status TEXT NOT NULL CHECK (
+            certainty_status IN ('verified', 'probable', 'contested', 'rumor', 'legend', 'author_choice')
+        ),
+        claim_kind TEXT NOT NULL CHECK (
+            claim_kind IN ('person', 'place', 'institution', 'event', 'practice', 'belief', 'relationship', 'object')
+        ),
+        review_status TEXT NOT NULL CHECK (
+            review_status IN ('pending', 'approved', 'rejected', 'needs_split', 'needs_edit', 'superseded')
+        ),
+        created_from_run_id TEXT,
+        viewpoint_scope TEXT,
+        author_choice BOOLEAN NOT NULL DEFAULT FALSE,
+        notes TEXT,
+        created_at TIMESTAMPTZ NOT NULL,
+        updated_at TIMESTAMPTZ NOT NULL
+    """,
+    "claim_evidence": """
+        id UUID PRIMARY KEY,
+        claim_id UUID NOT NULL REFERENCES claims(id) ON DELETE CASCADE,
+        evidence_id TEXT NOT NULL,
+        source_id TEXT NOT NULL,
+        source_chunk_id TEXT,
+        locator TEXT NOT NULL,
+        evidence_text TEXT NOT NULL,
+        span_start INTEGER,
+        span_end INTEGER,
+        evidence_notes TEXT,
+        position INTEGER NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL,
+        UNIQUE (claim_id, evidence_id)
+    """,
+    "claim_relationships": """
+        id UUID PRIMARY KEY,
+        claim_id UUID NOT NULL REFERENCES claims(id) ON DELETE CASCADE,
+        related_claim_id UUID NOT NULL REFERENCES claims(id) ON DELETE CASCADE,
+        relationship_type TEXT NOT NULL,
+        notes TEXT,
+        created_at TIMESTAMPTZ NOT NULL,
+        UNIQUE (claim_id, related_claim_id, relationship_type)
+    """,
+    "claim_reviews": """
+        id UUID PRIMARY KEY,
+        review_id TEXT NOT NULL UNIQUE,
+        claim_id UUID NOT NULL REFERENCES claims(id) ON DELETE CASCADE,
+        candidate_id TEXT NOT NULL,
+        decision TEXT NOT NULL CHECK (decision IN ('approve', 'reject')),
+        override_status TEXT CHECK (
+            override_status IS NULL OR override_status IN ('verified', 'probable', 'contested', 'rumor', 'legend', 'author_choice')
+        ),
+        notes TEXT,
+        approved_claim_id TEXT,
+        reviewed_at TIMESTAMPTZ NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL
+    """,
+    "claim_versions": """
+        id UUID PRIMARY KEY,
+        claim_id UUID NOT NULL REFERENCES claims(id) ON DELETE CASCADE,
+        version_number INTEGER NOT NULL,
+        snapshot JSONB NOT NULL,
+        changed_at TIMESTAMPTZ NOT NULL,
+        change_reason TEXT,
+        UNIQUE (claim_id, version_number)
+    """,
+    "author_decisions": """
+        id UUID PRIMARY KEY,
+        claim_id UUID NOT NULL REFERENCES claims(id) ON DELETE CASCADE,
+        decision_type TEXT NOT NULL,
+        notes TEXT,
+        created_at TIMESTAMPTZ NOT NULL
+    """,
 }
 
 TABLE_ORDER = [
+    "author_decisions",
+    "claim_versions",
+    "claim_reviews",
+    "claim_relationships",
+    "claim_evidence",
+    "claims",
+    "source_chunks",
+    "source_documents",
     "review_events",
     "evidence",
     "candidates",
     "extraction_runs",
     "text_units",
     "sources",
+]
+
+POST_INIT_STATEMENTS = [
+    "CREATE INDEX IF NOT EXISTS idx_source_documents_source_id ON {schema}.source_documents (source_id)",
+    "CREATE INDEX IF NOT EXISTS idx_source_chunks_source_id ON {schema}.source_chunks (source_id)",
+    "CREATE INDEX IF NOT EXISTS idx_claims_project_status ON {schema}.claims (project_id, certainty_status, review_status)",
+    "CREATE INDEX IF NOT EXISTS idx_claims_run_id ON {schema}.claims (created_from_run_id)",
+    "CREATE INDEX IF NOT EXISTS idx_claim_evidence_claim_id ON {schema}.claim_evidence (claim_id, position)",
+    "CREATE INDEX IF NOT EXISTS idx_claim_reviews_claim_id ON {schema}.claim_reviews (claim_id, reviewed_at DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_claim_versions_claim_id ON {schema}.claim_versions (claim_id, version_number DESC)",
 ]
 
 
@@ -70,6 +191,7 @@ class PostgresAppStateStore:
         with self._connect() as connection:
             cursor = connection.cursor()
             cursor.execute(SQL("CREATE SCHEMA IF NOT EXISTS {}").format(Identifier(self.schema)))
+            cursor.execute(SQL("SET search_path TO {}").format(Identifier(self.schema)))
             for table_name, definition in TABLE_DEFINITIONS.items():
                 cursor.execute(
                     SQL("CREATE TABLE IF NOT EXISTS {}.{} ({})").format(
@@ -78,17 +200,18 @@ class PostgresAppStateStore:
                         SQL(definition),
                     )
                 )
+            for statement in POST_INIT_STATEMENTS:
+                cursor.execute(
+                    SQL(statement.format(schema="{}")).format(Identifier(self.schema))
+                )
 
     def clear_all(self) -> None:
         with self._connect() as connection:
-            cursor = connection.cursor()
-            for table_name in TABLE_ORDER:
-                cursor.execute(
-                    SQL("TRUNCATE TABLE {}.{}").format(
-                        Identifier(self.schema),
-                        Identifier(table_name),
-                    )
-                )
+            table_list = SQL(", ").join(
+                SQL("{}.{}").format(Identifier(self.schema), Identifier(table_name))
+                for table_name in TABLE_ORDER
+            )
+            connection.execute(SQL("TRUNCATE TABLE {} CASCADE").format(table_list))
 
     def list_models(
         self,

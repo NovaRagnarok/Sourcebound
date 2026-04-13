@@ -3,7 +3,9 @@ from __future__ import annotations
 from pathlib import Path
 
 from source_aware_worldbuilding.domain.models import (
+    ApprovedClaim,
     CandidateClaim,
+    ClaimRelationship,
     EvidenceSnippet,
     ExtractionRun,
     ReviewEvent,
@@ -140,3 +142,29 @@ class FileReviewStore:
         existing = {item.review_id: item for item in self.store.read_models(ReviewEvent)}
         existing[review.review_id] = review
         self.store.write_models(existing.values())
+
+
+class FileTruthStore:
+    def __init__(self, data_dir: Path):
+        self.store = JsonListStore(data_dir / "claims.json")
+
+    def list_claims(self) -> list[ApprovedClaim]:
+        return self.store.read_models(ApprovedClaim)
+
+    def get_claim(self, claim_id: str) -> ApprovedClaim | None:
+        return next((item for item in self.list_claims() if item.claim_id == claim_id), None)
+
+    def list_relationships(self, claim_id: str | None = None) -> list[ClaimRelationship]:
+        _ = claim_id
+        return []
+
+    def save_claim(
+        self,
+        claim: ApprovedClaim,
+        evidence: list[EvidenceSnippet] | None = None,
+        review=None,
+    ) -> None:
+        _ = evidence, review
+        claims = {item.claim_id: item for item in self.store.read_models(ApprovedClaim)}
+        claims[claim.claim_id] = claim
+        self.store.write_models(claims.values())

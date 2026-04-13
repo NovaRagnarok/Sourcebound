@@ -198,9 +198,7 @@ def seed_dev_data() -> None:
         [item.model_dump(mode="json") for item in extraction_runs],
     )
     _write_json(data_dir / "review_events.json", review_events)
-    claims_path = data_dir / "claims.json"
-    if claims_path.exists():
-        claims_path.unlink()
+    _write_json(data_dir / "claims.json", [])
 
     if settings.app_state_backend == "postgres":
         source_store = PostgresSourceStore(
