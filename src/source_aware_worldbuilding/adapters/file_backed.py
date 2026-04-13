@@ -147,6 +147,7 @@ class FileReviewStore:
 class FileTruthStore:
     def __init__(self, data_dir: Path):
         self.store = JsonListStore(data_dir / "claims.json")
+        self.relationship_store = JsonListStore(data_dir / "claim_relationships.json")
 
     def list_claims(self) -> list[ApprovedClaim]:
         return self.store.read_models(ApprovedClaim)
@@ -155,8 +156,43 @@ class FileTruthStore:
         return next((item for item in self.list_claims() if item.claim_id == claim_id), None)
 
     def list_relationships(self, claim_id: str | None = None) -> list[ClaimRelationship]:
-        _ = claim_id
-        return []
+        relationships = self.relationship_store.read_models(ClaimRelationship)
+        if claim_id is None:
+            return relationships
+        return [item for item in relationships if item.claim_id == claim_id]
+
+    def upsert_relationship(
+        self,
+        claim_id: str,
+        related_claim_id: str,
+        relationship_type: str,
+        *,
+        notes: str | None = None,
+        source_kind: str = "manual",
+    ) -> ClaimRelationship:
+        relationships = self.relationship_store.read_models(ClaimRelationship)
+        key = (claim_id, related_claim_id, relationship_type, source_kind)
+        by_key = {
+            (item.claim_id, item.related_claim_id, item.relationship_type, item.source_kind): item
+            for item in relationships
+        }
+        relationship = ClaimRelationship(
+            relationship_id=by_key.get(key, ClaimRelationship(
+                relationship_id=f"rel-{len(by_key) + 1}",
+                claim_id=claim_id,
+                related_claim_id=related_claim_id,
+                relationship_type=relationship_type,
+                source_kind=source_kind,
+            )).relationship_id,
+            claim_id=claim_id,
+            related_claim_id=related_claim_id,
+            relationship_type=relationship_type,
+            source_kind=source_kind,
+            notes=notes,
+        )
+        by_key[key] = relationship
+        self.relationship_store.write_models(by_key.values())
+        return relationship
 
     def save_claim(
         self,

@@ -296,3 +296,55 @@ def test_postgres_truth_store_derives_claim_relationships(
         item.claim_id == "claim-5" and item.relationship_type == "contradicts"
         for item in relationships
     )
+
+
+def test_postgres_truth_store_supports_manual_relationship_curation(
+    postgres_app_state: dict[str, str | Path],
+) -> None:
+    dsn = str(postgres_app_state["dsn"])
+    schema = str(postgres_app_state["schema"])
+    store = PostgresTruthStore(dsn, schema)
+
+    for claim_id in ("claim-a", "claim-b"):
+        store.save_claim(
+            ApprovedClaim(
+                claim_id=claim_id,
+                subject="Rouen guild policy",
+                predicate="requires",
+                value="oath",
+                claim_kind=ClaimKind.INSTITUTION,
+                status=ClaimStatus.PROBABLE,
+                evidence_ids=[f"evi-{claim_id}"],
+            ),
+            evidence=[
+                EvidenceSnippet(
+                    evidence_id=f"evi-{claim_id}",
+                    source_id=f"src-{claim_id}",
+                    locator="folio 1r",
+                    text="Guild policy references an oath.",
+                    text_unit_id=f"txt-{claim_id}",
+                )
+            ],
+            review=ReviewEvent(
+                review_id=f"rev-{claim_id}",
+                candidate_id=f"cand-{claim_id}",
+                decision=ReviewDecision.APPROVE,
+                approved_claim_id=claim_id,
+            ),
+        )
+
+    relationship = store.upsert_relationship(
+        "claim-a",
+        "claim-b",
+        "supports",
+        notes="Reviewer confirmed the claims reinforce each other.",
+    )
+
+    assert relationship.source_kind == "manual"
+    assert relationship.relationship_type == "supports"
+    assert any(
+        item.claim_id == "claim-a"
+        and item.related_claim_id == "claim-b"
+        and item.source_kind == "manual"
+        for item in store.list_relationships("claim-a")
+    )

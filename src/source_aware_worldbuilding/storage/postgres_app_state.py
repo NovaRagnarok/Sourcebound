@@ -114,9 +114,10 @@ TABLE_DEFINITIONS = {
         claim_id UUID NOT NULL REFERENCES claims(id) ON DELETE CASCADE,
         related_claim_id UUID NOT NULL REFERENCES claims(id) ON DELETE CASCADE,
         relationship_type TEXT NOT NULL,
+        source_kind TEXT NOT NULL CHECK (source_kind IN ('derived', 'manual')),
         notes TEXT,
         created_at TIMESTAMPTZ NOT NULL,
-        UNIQUE (claim_id, related_claim_id, relationship_type)
+        UNIQUE (claim_id, related_claim_id, relationship_type, source_kind)
     """,
     "claim_reviews": """
         id UUID PRIMARY KEY,

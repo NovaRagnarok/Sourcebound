@@ -153,6 +153,13 @@ class ClaimRelationship(BaseModel):
     claim_id: str
     related_claim_id: str
     relationship_type: Literal["supports", "contradicts", "supersedes", "superseded_by"]
+    source_kind: Literal["derived", "manual"] = "derived"
+    notes: str | None = None
+
+
+class ClaimRelationshipRequest(BaseModel):
+    related_claim_id: str
+    relationship_type: Literal["supports", "contradicts", "supersedes", "superseded_by"]
     notes: str | None = None
 
 

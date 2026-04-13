@@ -61,6 +61,15 @@ class TruthStorePort(Protocol):
     def list_claims(self) -> list[ApprovedClaim]: ...
     def get_claim(self, claim_id: str) -> ApprovedClaim | None: ...
     def list_relationships(self, claim_id: str | None = None) -> list[ClaimRelationship]: ...
+    def upsert_relationship(
+        self,
+        claim_id: str,
+        related_claim_id: str,
+        relationship_type: str,
+        *,
+        notes: str | None = None,
+        source_kind: str = "manual",
+    ) -> ClaimRelationship: ...
     def save_claim(
         self,
         claim: ApprovedClaim,

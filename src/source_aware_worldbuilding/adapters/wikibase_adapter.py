@@ -75,6 +75,18 @@ class WikibaseTruthStore:
         _ = claim_id
         return []
 
+    def upsert_relationship(
+        self,
+        claim_id: str,
+        related_claim_id: str,
+        relationship_type: str,
+        *,
+        notes: str | None = None,
+        source_kind: str = "manual",
+    ) -> ClaimRelationship:
+        _ = claim_id, related_claim_id, relationship_type, notes, source_kind
+        raise CanonUnavailableError("Manual claim relationship curation is not supported for Wikibase.")
+
     def save_claim(
         self,
         claim: ApprovedClaim,

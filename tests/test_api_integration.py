@@ -22,6 +22,7 @@ def test_openapi_includes_operator_mvp_routes() -> None:
         "/v1/candidates/{candidate_id}/review",
         "/v1/claims",
         "/v1/claims/{claim_id}",
+        "/v1/claims/{claim_id}/relationships",
         "/v1/query",
     } <= paths
 
@@ -76,6 +77,12 @@ def test_operator_flow_routes_share_file_backed_state(temp_data_dir) -> None:
         claims_response = client.get("/v1/claims")
         assert claims_response.status_code == 200
         assert len(claims_response.json()) == 1
+
+        relationships_before = client.get(
+            f"/v1/claims/{claims_response.json()[0]['claim_id']}/relationships"
+        )
+        assert relationships_before.status_code == 200
+        assert relationships_before.json() == []
 
         query_response = client.post(
             "/v1/query",

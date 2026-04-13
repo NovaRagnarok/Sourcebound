@@ -250,6 +250,7 @@ class PostgresTruthStore(_PostgresAdapterBase):
                 c.claim_id,
                 rc.claim_id AS related_claim_id,
                 cr.relationship_type,
+                cr.source_kind,
                 cr.notes
             FROM {}.claim_relationships cr
             JOIN {}.claims c ON c.id = cr.claim_id
@@ -273,10 +274,34 @@ class PostgresTruthStore(_PostgresAdapterBase):
                 claim_id=row["claim_id"],
                 related_claim_id=row["related_claim_id"],
                 relationship_type=row["relationship_type"],
+                source_kind=row["source_kind"],
                 notes=row["notes"],
             )
             for row in rows
         ]
+
+    def upsert_relationship(
+        self,
+        claim_id: str,
+        related_claim_id: str,
+        relationship_type: str,
+        *,
+        notes: str | None = None,
+        source_kind: str = "manual",
+    ) -> ClaimRelationship:
+        with self._connect() as connection:
+            claim_row = self._require_claim_row(connection, claim_id)
+            related_row = self._require_claim_row(connection, related_claim_id)
+            relationship = self._insert_relationship(
+                connection,
+                str(claim_row["id"]),
+                str(related_row["id"]),
+                relationship_type,
+                notes or "Manually curated relationship.",
+                source_kind=source_kind,
+            )
+            connection.commit()
+        return relationship
 
     def save_claim(
         self,
@@ -634,7 +659,8 @@ class PostgresTruthStore(_PostgresAdapterBase):
     ) -> None:
         connection.execute(
             SQL(
-                "DELETE FROM {}.claim_relationships WHERE claim_id = %s OR related_claim_id = %s"
+                "DELETE FROM {}.claim_relationships "
+                "WHERE (claim_id = %s OR related_claim_id = %s) AND source_kind = 'derived'"
             ).format(Identifier(self.store.schema)),
             (claim_row_id, claim_row_id),
         )
@@ -685,6 +711,7 @@ class PostgresTruthStore(_PostgresAdapterBase):
                 claim_row_id,
                 reverse_type,
                 notes,
+                source_kind="derived",
             )
 
     def _classify_relationship(self, existing_row, claim: ApprovedClaim) -> str | None:
@@ -730,7 +757,10 @@ class PostgresTruthStore(_PostgresAdapterBase):
         related_claim_row_id: str,
         relationship_type: str,
         notes: str,
-    ) -> None:
+        *,
+        source_kind: str = "derived",
+    ) -> ClaimRelationship:
+        relationship_id = str(uuid4())
         connection.execute(
             SQL(
                 """
@@ -739,21 +769,31 @@ class PostgresTruthStore(_PostgresAdapterBase):
                     claim_id,
                     related_claim_id,
                     relationship_type,
+                    source_kind,
                     notes,
                     created_at
-                ) VALUES (%s, %s, %s, %s, %s, %s)
-                ON CONFLICT (claim_id, related_claim_id, relationship_type) DO UPDATE SET
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (claim_id, related_claim_id, relationship_type, source_kind) DO UPDATE SET
                     notes = EXCLUDED.notes
                 """
             ).format(Identifier(self.store.schema)),
             (
-                str(uuid4()),
+                relationship_id,
                 claim_row_id,
                 related_claim_row_id,
                 relationship_type,
+                source_kind,
                 notes,
                 _as_datetime(_utc_now()),
             ),
+        )
+        return ClaimRelationship(
+            relationship_id=relationship_id,
+            claim_id=self._claim_id_for_row(connection, claim_row_id),
+            related_claim_id=self._claim_id_for_row(connection, related_claim_row_id),
+            relationship_type=relationship_type,
+            source_kind=source_kind,
+            notes=notes,
         )
 
     def _reverse_relationship_type(self, relationship_type: str) -> str:
@@ -782,6 +822,24 @@ class PostgresTruthStore(_PostgresAdapterBase):
         if relationship_type == "supports":
             return "Canonical claims align on subject, predicate, and value." + provenance_note
         return "Canonical claims share a subject/predicate but disagree on value." + provenance_note
+
+    def _require_claim_row(self, connection, claim_id: str):
+        row = connection.execute(
+            SQL("SELECT id, claim_id FROM {}.claims WHERE claim_id = %s").format(
+                Identifier(self.store.schema)
+            ),
+            (claim_id,),
+        ).fetchone()
+        if row is None:
+            raise ValueError(f"Claim not found: {claim_id}")
+        return row
+
+    def _claim_id_for_row(self, connection, row_id: str) -> str:
+        row = connection.execute(
+            SQL("SELECT claim_id FROM {}.claims WHERE id = %s").format(Identifier(self.store.schema)),
+            (row_id,),
+        ).fetchone()
+        return row["claim_id"]
 
     def _supersede_exact_matches(
         self,

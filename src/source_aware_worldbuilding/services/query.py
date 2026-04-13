@@ -33,6 +33,7 @@ class QueryService:
 
     def answer(self, request: QueryRequest) -> QueryResult:
         claims = self.truth_store.list_claims()
+        relationship_index = self._relationship_index(claims)
         if request.filters:
             if request.filters.status:
                 claims = [c for c in claims if c.status == request.filters.status]
@@ -47,7 +48,7 @@ class QueryService:
         if projection_result is not None and not projection_result.fallback_used:
             matched = self._claims_from_projection(claims, projection_result.claim_ids)
         else:
-            matched = self._rank_claims(request.question, claims)
+            matched = self._rank_claims(request.question, claims, relationship_index)
         if not matched:
             matched = claims[:5]
 
@@ -142,13 +143,20 @@ class QueryService:
         ordered = [claim_by_id[claim_id] for claim_id in claim_ids if claim_id in claim_by_id]
         if ordered:
             return ordered
-        return self._rank_claims("", claims)
+        return self._rank_claims("", claims, {})
 
-    def _rank_claims(self, question: str, claims):
+    def _rank_claims(self, question: str, claims, relationship_index):
         question_lower = question.lower().strip()
         tokens = [token for token in question.lower().split() if token]
         if not tokens:
-            return claims
+            return sorted(
+                claims,
+                key=lambda claim: (
+                    self._relationship_score(claim.claim_id, relationship_index),
+                    claim.claim_id,
+                ),
+                reverse=True,
+            )
 
         scores = defaultdict(int)
         for claim in claims:
@@ -169,13 +177,47 @@ class QueryService:
                     scores[claim.claim_id] += 1
         ranked = sorted(
             claims,
-            key=lambda claim: (scores[claim.claim_id], claim.claim_id),
+            key=lambda claim: (
+                scores[claim.claim_id],
+                self._relationship_score(claim.claim_id, relationship_index),
+                claim.claim_id,
+            ),
             reverse=True,
         )
         strongest_score = max((scores[claim.claim_id] for claim in ranked), default=0)
         if strongest_score <= 0:
             return []
         return [claim for claim in ranked if scores[claim.claim_id] == strongest_score]
+
+    def _relationship_index(self, claims) -> dict[str, list[ClaimRelationship]]:
+        if not claims:
+            return {}
+        allowed = {claim.claim_id for claim in claims}
+        index: dict[str, list[ClaimRelationship]] = defaultdict(list)
+        for relationship in self.truth_store.list_relationships():
+            if relationship.claim_id in allowed:
+                index[relationship.claim_id].append(relationship)
+        return index
+
+    def _relationship_score(
+        self,
+        claim_id: str,
+        relationship_index: dict[str, list[ClaimRelationship]],
+    ) -> int:
+        relationships = relationship_index.get(claim_id, [])
+        score = 0
+        for relationship in relationships:
+            if relationship.relationship_type == "supports":
+                score += 2
+            elif relationship.relationship_type == "supersedes":
+                score += 3
+            elif relationship.relationship_type == "contradicts":
+                score -= 1
+            elif relationship.relationship_type == "superseded_by":
+                score -= 3
+            if relationship.source_kind == "manual":
+                score += 1
+        return score
 
     def _related_claims_for(self, claims) -> list[ClaimRelationship]:
         if not claims:
