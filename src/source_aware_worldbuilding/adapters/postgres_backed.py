@@ -289,12 +289,13 @@ class PostgresTruthStore(_PostgresAdapterBase):
             claim_row_id = self._upsert_claim(connection, claim)
             self._replace_claim_evidence(connection, claim_row_id, evidence)
             self._upsert_source_records(connection, evidence)
+            self._supersede_exact_matches(connection, claim_row_id, claim)
             self._insert_claim_version(connection, claim_row_id, claim, review)
             if review is not None:
                 self._upsert_claim_review(connection, claim_row_id, review)
             if claim.author_choice:
                 self._upsert_author_decision(connection, claim_row_id, claim, review)
-            self._refresh_claim_relationships(connection, claim_row_id, claim)
+            self._refresh_claim_relationships(connection, claim_row_id, claim, evidence)
             connection.commit()
 
     def _connect(self):
@@ -629,6 +630,7 @@ class PostgresTruthStore(_PostgresAdapterBase):
         connection,
         claim_row_id: str,
         claim: ApprovedClaim,
+        evidence: list[EvidenceSnippet],
     ) -> None:
         connection.execute(
             SQL(
@@ -648,18 +650,33 @@ class PostgresTruthStore(_PostgresAdapterBase):
                     place,
                     time_start,
                     time_end,
-                    viewpoint_scope
+                    viewpoint_scope,
+                    review_status,
+                    COALESCE(
+                        ARRAY(
+                            SELECT ce.source_id
+                            FROM {}.claim_evidence ce
+                            WHERE ce.claim_id = claims.id
+                            ORDER BY ce.position
+                        ),
+                        ARRAY[]::TEXT[]
+                    ) AS source_ids
                 FROM {}.claims
-                WHERE id <> %s AND review_status = 'approved'
+                WHERE id <> %s
                 """
-            ).format(Identifier(self.store.schema)),
+            ).format(Identifier(self.store.schema), Identifier(self.store.schema)),
             (claim_row_id,),
         ).fetchall()
+        current_source_ids = [snippet.source_id for snippet in evidence]
         for row in rows:
             relationship_type = self._classify_relationship(row, claim)
             if relationship_type is None:
                 continue
-            notes = self._relationship_note(relationship_type)
+            notes = self._relationship_note(
+                relationship_type,
+                current_source_ids=current_source_ids,
+                other_source_ids=list(row["source_ids"] or []),
+            )
             self._insert_relationship(connection, claim_row_id, str(row["id"]), relationship_type, notes)
             reverse_type = self._reverse_relationship_type(relationship_type)
             self._insert_relationship(
@@ -684,8 +701,26 @@ class PostgresTruthStore(_PostgresAdapterBase):
         )
         if same_signature:
             return "supersedes"
+        if existing_row["review_status"] != "approved":
+            return None
+        if not self._places_compatible(existing_row["place"], claim.place):
+            return None
         if existing_row["object_value"] == claim.value:
+            if not self._times_compatible(
+                existing_row["time_start"],
+                existing_row["time_end"],
+                claim.time_start,
+                claim.time_end,
+            ):
+                return None
             return "supports"
+        if not self._times_conflict_scope(
+            existing_row["time_start"],
+            existing_row["time_end"],
+            claim.time_start,
+            claim.time_end,
+        ):
+            return None
         return "contradicts"
 
     def _insert_relationship(
@@ -728,12 +763,99 @@ class PostgresTruthStore(_PostgresAdapterBase):
             return "supersedes"
         return relationship_type
 
-    def _relationship_note(self, relationship_type: str) -> str:
+    def _relationship_note(
+        self,
+        relationship_type: str,
+        *,
+        current_source_ids: list[str],
+        other_source_ids: list[str],
+    ) -> str:
+        shared_sources = sorted(set(current_source_ids) & set(other_source_ids))
+        distinct_sources = len(set(current_source_ids + other_source_ids))
+        provenance_note = (
+            f" Shared provenance: {', '.join(shared_sources)}."
+            if shared_sources
+            else f" Distinct provenance across {distinct_sources} sources."
+        )
         if relationship_type == "supersedes":
-            return "Newer canonical claim with the same signature."
+            return "Newer canonical claim with the same signature." + provenance_note
         if relationship_type == "supports":
-            return "Canonical claims align on subject, predicate, and value."
-        return "Canonical claims share a subject/predicate but disagree on value."
+            return "Canonical claims align on subject, predicate, and value." + provenance_note
+        return "Canonical claims share a subject/predicate but disagree on value." + provenance_note
+
+    def _supersede_exact_matches(
+        self,
+        connection,
+        claim_row_id: str,
+        claim: ApprovedClaim,
+    ) -> None:
+        connection.execute(
+            SQL(
+                """
+                UPDATE {}.claims
+                SET review_status = 'superseded', updated_at = %s
+                WHERE id <> %s
+                  AND review_status = 'approved'
+                  AND subject = %s
+                  AND predicate = %s
+                  AND object_value = %s
+                  AND COALESCE(place, '') = COALESCE(%s, '')
+                  AND COALESCE(time_start, '') = COALESCE(%s, '')
+                  AND COALESCE(time_end, '') = COALESCE(%s, '')
+                  AND COALESCE(viewpoint_scope, '') = COALESCE(%s, '')
+                """
+            ).format(Identifier(self.store.schema)),
+            (
+                _as_datetime(_utc_now()),
+                claim_row_id,
+                claim.subject,
+                claim.predicate,
+                claim.value,
+                claim.place,
+                claim.time_start,
+                claim.time_end,
+                claim.viewpoint_scope,
+            ),
+        )
+
+    def _places_compatible(self, existing_place: str | None, new_place: str | None) -> bool:
+        if not existing_place or not new_place:
+            return True
+        return existing_place == new_place
+
+    def _times_compatible(
+        self,
+        existing_start: str | None,
+        existing_end: str | None,
+        new_start: str | None,
+        new_end: str | None,
+    ) -> bool:
+        if not existing_start and not existing_end:
+            return True
+        if not new_start and not new_end:
+            return True
+        left_start = existing_start or existing_end
+        left_end = existing_end or existing_start
+        right_start = new_start or new_end
+        right_end = new_end or new_start
+        if not left_start or not left_end or not right_start or not right_end:
+            return True
+        return max(left_start, right_start) <= min(left_end, right_end)
+
+    def _times_conflict_scope(
+        self,
+        existing_start: str | None,
+        existing_end: str | None,
+        new_start: str | None,
+        new_end: str | None,
+    ) -> bool:
+        existing_has_time = bool(existing_start or existing_end)
+        new_has_time = bool(new_start or new_end)
+        if not existing_has_time and not new_has_time:
+            return True
+        if existing_has_time and new_has_time:
+            return self._times_compatible(existing_start, existing_end, new_start, new_end)
+        return False
 
 
 def _utc_now() -> str:

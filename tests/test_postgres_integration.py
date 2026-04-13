@@ -187,7 +187,7 @@ def test_postgres_truth_store_derives_claim_relationships(
             value="winter shortage",
             claim_kind=ClaimKind.PRACTICE,
             status=ClaimStatus.PROBABLE,
-            place="Normandy",
+            place="Rouen",
             evidence_ids=["evi-3"],
             created_from_run_id="run-3",
         ),
@@ -216,6 +216,8 @@ def test_postgres_truth_store_derives_claim_relationships(
             claim_kind=ClaimKind.PRACTICE,
             status=ClaimStatus.CONTESTED,
             place="Rouen",
+            time_start="1421-12-15",
+            time_end="1422-01-15",
             evidence_ids=["evi-4"],
             created_from_run_id="run-4",
         ),
@@ -235,13 +237,47 @@ def test_postgres_truth_store_derives_claim_relationships(
             approved_claim_id="claim-4",
         ),
     )
+    store.save_claim(
+        ApprovedClaim(
+            claim_id="claim-5",
+            subject="Rouen bread prices",
+            predicate="rose_during",
+            value="another shortage",
+            claim_kind=ClaimKind.PRACTICE,
+            status=ClaimStatus.CONTESTED,
+            place="Rouen",
+            time_start="1500-01-01",
+            time_end="1500-12-31",
+            evidence_ids=["evi-5"],
+            created_from_run_id="run-5",
+        ),
+        evidence=[
+            EvidenceSnippet(
+                evidence_id="evi-5",
+                source_id="src-5",
+                locator="folio 18r",
+                text="A much later shortage is described elsewhere.",
+                text_unit_id="txt-5",
+            )
+        ],
+        review=ReviewEvent(
+            review_id="rev-5",
+            candidate_id="cand-5",
+            decision=ReviewDecision.APPROVE,
+            approved_claim_id="claim-5",
+        ),
+    )
 
+    active_claim_ids = [item.claim_id for item in store.list_claims()]
     relationships = store.list_relationships()
 
+    assert "claim-1" not in active_claim_ids
+    assert {"claim-2", "claim-3", "claim-4", "claim-5"} <= set(active_claim_ids)
     assert any(
         item.claim_id == "claim-2"
         and item.related_claim_id == "claim-1"
         and item.relationship_type == "supersedes"
+        and "Distinct provenance" in (item.notes or "")
         for item in relationships
     )
     assert any(
@@ -254,5 +290,9 @@ def test_postgres_truth_store_derives_claim_relationships(
         item.claim_id == "claim-4"
         and item.related_claim_id == "claim-2"
         and item.relationship_type == "contradicts"
+        for item in relationships
+    )
+    assert not any(
+        item.claim_id == "claim-5" and item.relationship_type == "contradicts"
         for item in relationships
     )

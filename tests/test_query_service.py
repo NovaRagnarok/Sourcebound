@@ -415,3 +415,30 @@ def test_query_surfaces_related_claims_and_relationship_warnings(temp_data_dir: 
     assert result.related_claims
     assert any(item.relationship_type == "contradicts" for item in result.related_claims)
     assert any("contradictions" in warning for warning in result.warnings)
+
+
+def test_query_surfaces_supersession_warning(temp_data_dir: Path) -> None:
+    claims = populate_query_fixtures(temp_data_dir)
+    service = build_query_service(
+        temp_data_dir,
+        claims,
+        relationships=[
+            ClaimRelationship(
+                relationship_id="rel-3",
+                claim_id="claim-verified-1",
+                related_claim_id="claim-probable-1",
+                relationship_type="supersedes",
+                notes="Newer canonical claim with the same signature.",
+            )
+        ],
+    )
+
+    result = service.answer(
+        QueryRequest(
+            question="Rouen bread prices",
+            mode=QueryMode.STRICT_FACTS,
+        )
+    )
+
+    assert any(item.relationship_type == "supersedes" for item in result.related_claims)
+    assert any("supersede" in warning for warning in result.warnings)
