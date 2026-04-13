@@ -242,7 +242,9 @@ def test_query_modes_return_expected_claims_and_warnings(temp_data_dir: Path) ->
         assert result.evidence[0].evidence_id == expected_evidence_id
         assert result.sources[0].source_id == expected_source_id
         assert warning_fragment in result.warnings[0]
-        assert result.answer.startswith(f"- {result.supporting_claims[0].subject}")
+        assert result.claim_clusters
+        assert result.answer_sections
+        assert result.supporting_claims[0].subject in result.answer
         assert result.metadata.retrieval_backend == "memory"
         assert result.metadata.fallback_used is False
 
@@ -413,7 +415,10 @@ def test_query_surfaces_related_claims_and_relationship_warnings(temp_data_dir: 
     )
 
     assert result.related_claims
+    assert result.claim_clusters
+    assert result.claim_clusters[0].cluster_kind == "contested"
     assert any(item.relationship_type == "contradicts" for item in result.related_claims)
+    assert "Canonical claims disagree here" in result.answer
     assert any("contradictions" in warning for warning in result.warnings)
 
 
@@ -441,6 +446,9 @@ def test_query_surfaces_supersession_warning(temp_data_dir: Path) -> None:
     )
 
     assert any(item.relationship_type == "supersedes" for item in result.related_claims)
+    assert result.claim_clusters
+    assert result.claim_clusters[0].cluster_kind == "supersession"
+    assert "current canonical position" in result.answer
     assert any("supersede" in warning for warning in result.warnings)
 
 
@@ -477,3 +485,438 @@ def test_query_prefers_supported_claims_when_lexical_scores_tie(temp_data_dir: P
     )
 
     assert result.supporting_claims[0].claim_id == "claim-probable-1"
+
+
+def test_query_groups_supporting_claims_into_one_reinforcing_cluster(temp_data_dir: Path) -> None:
+    claims = populate_query_fixtures(temp_data_dir)
+    service = build_query_service(
+        temp_data_dir,
+        claims,
+        relationships=[
+            ClaimRelationship(
+                relationship_id="rel-support-1",
+                claim_id="claim-probable-1",
+                related_claim_id="claim-probable-2",
+                relationship_type="supports",
+                notes="These market-account claims reinforce the same point.",
+            ),
+            ClaimRelationship(
+                relationship_id="rel-support-2",
+                claim_id="claim-probable-2",
+                related_claim_id="claim-probable-1",
+                relationship_type="supports",
+                notes="These market-account claims reinforce the same point.",
+            ),
+        ],
+    )
+
+    result = service.answer(
+        QueryRequest(
+            question="Market gossip about bread prices",
+            mode=QueryMode.OPEN_EXPLORATION,
+            filters=QueryFilter(status=ClaimStatus.PROBABLE),
+        )
+    )
+
+    assert len(result.claim_clusters) == 1
+    assert result.claim_clusters[0].cluster_kind == "reinforcing"
+    assert set(result.claim_clusters[0].claim_ids) == {"claim-probable-1", "claim-probable-2"}
+    assert "Multiple canonical claims reinforce the point" in result.answer
+
+
+def test_query_contradiction_pair_produces_contested_summary_text(temp_data_dir: Path) -> None:
+    claims = populate_query_fixtures(temp_data_dir)
+    service = build_query_service(
+        temp_data_dir,
+        claims,
+        relationships=[
+            ClaimRelationship(
+                relationship_id="rel-contradict-1",
+                claim_id="claim-probable-1",
+                related_claim_id="claim-probable-2",
+                relationship_type="contradicts",
+            ),
+            ClaimRelationship(
+                relationship_id="rel-contradict-2",
+                claim_id="claim-probable-2",
+                related_claim_id="claim-probable-1",
+                relationship_type="contradicts",
+            ),
+        ],
+    )
+
+    result = service.answer(
+        QueryRequest(
+            question="Market gossip about bread prices",
+            mode=QueryMode.OPEN_EXPLORATION,
+            filters=QueryFilter(status=ClaimStatus.PROBABLE),
+        )
+    )
+
+    assert result.claim_clusters[0].cluster_kind == "contested"
+    assert "Canonical claims disagree here" in result.answer
+    assert "Rouen market accounts" in result.answer
+    assert "Paris market accounts" in result.answer
+
+
+def test_query_superseded_claim_does_not_become_cluster_lead(temp_data_dir: Path) -> None:
+    claims = populate_query_fixtures(temp_data_dir)
+    older_claim = ApprovedClaim(
+        claim_id="claim-verified-older",
+        subject="Rouen bread prices",
+        predicate="rose_during",
+        value="autumn shortage",
+        claim_kind=ClaimKind.PRACTICE,
+        status=ClaimStatus.VERIFIED,
+        place="Rouen",
+        evidence_ids=["evi-1"],
+    )
+    service = build_query_service(
+        temp_data_dir,
+        claims + [older_claim],
+        relationships=[
+            ClaimRelationship(
+                relationship_id="rel-super-1",
+                claim_id="claim-verified-1",
+                related_claim_id="claim-verified-older",
+                relationship_type="supersedes",
+            ),
+            ClaimRelationship(
+                relationship_id="rel-super-2",
+                claim_id="claim-verified-older",
+                related_claim_id="claim-verified-1",
+                relationship_type="superseded_by",
+            ),
+        ],
+    )
+
+    result = service.answer(
+        QueryRequest(
+            question="Rouen bread prices",
+            mode=QueryMode.STRICT_FACTS,
+        )
+    )
+
+    assert result.claim_clusters[0].cluster_kind == "supersession"
+    assert result.claim_clusters[0].lead_claim_id == "claim-verified-1"
+    assert "autumn shortage" in result.answer
+    assert "winter shortage" in result.answer
+
+
+def test_query_mixed_cluster_chooses_stable_lead_claim(temp_data_dir: Path) -> None:
+    claims = populate_query_fixtures(temp_data_dir)
+    service = build_query_service(
+        temp_data_dir,
+        claims,
+        relationships=[
+            ClaimRelationship(
+                relationship_id="rel-mixed-1",
+                claim_id="claim-verified-1",
+                related_claim_id="claim-probable-1",
+                relationship_type="supports",
+                source_kind="manual",
+            ),
+            ClaimRelationship(
+                relationship_id="rel-mixed-2",
+                claim_id="claim-probable-1",
+                related_claim_id="claim-probable-2",
+                relationship_type="contradicts",
+            ),
+            ClaimRelationship(
+                relationship_id="rel-mixed-3",
+                claim_id="claim-probable-2",
+                related_claim_id="claim-probable-1",
+                relationship_type="contradicts",
+            ),
+        ],
+    )
+
+    result = service.answer(
+        QueryRequest(
+            question="bread",
+            mode=QueryMode.STRICT_FACTS,
+        )
+    )
+
+    contested_cluster = next(
+        cluster for cluster in result.claim_clusters if cluster.cluster_kind == "contested"
+    )
+    assert contested_cluster.lead_claim_id == "claim-verified-1"
+
+
+def test_query_cluster_ids_are_stable_for_same_inputs(temp_data_dir: Path) -> None:
+    claims = populate_query_fixtures(temp_data_dir)
+    relationships = [
+        ClaimRelationship(
+            relationship_id="rel-stable-1",
+            claim_id="claim-probable-1",
+            related_claim_id="claim-probable-2",
+            relationship_type="supports",
+        ),
+        ClaimRelationship(
+            relationship_id="rel-stable-2",
+            claim_id="claim-probable-2",
+            related_claim_id="claim-probable-1",
+            relationship_type="supports",
+        ),
+    ]
+    service = build_query_service(
+        temp_data_dir,
+        claims,
+        relationships=relationships,
+    )
+
+    first = service.answer(
+        QueryRequest(
+            question="Market gossip about bread prices",
+            mode=QueryMode.OPEN_EXPLORATION,
+            filters=QueryFilter(status=ClaimStatus.PROBABLE),
+        )
+    )
+    second = service.answer(
+        QueryRequest(
+            question="Market gossip about bread prices",
+            mode=QueryMode.OPEN_EXPLORATION,
+            filters=QueryFilter(status=ClaimStatus.PROBABLE),
+        )
+    )
+
+    assert [cluster.cluster_id for cluster in first.claim_clusters] == [
+        cluster.cluster_id for cluster in second.claim_clusters
+    ]
+
+
+def test_query_can_return_multiple_cluster_sections(temp_data_dir: Path) -> None:
+    claims = populate_query_fixtures(temp_data_dir)
+    older_claim = ApprovedClaim(
+        claim_id="claim-verified-older",
+        subject="Rouen bread prices",
+        predicate="rose_during",
+        value="autumn shortage",
+        claim_kind=ClaimKind.PRACTICE,
+        status=ClaimStatus.PROBABLE,
+        place="Rouen",
+        evidence_ids=["evi-1"],
+    )
+    service = build_query_service(
+        temp_data_dir,
+        claims + [older_claim],
+        relationships=[
+            ClaimRelationship(
+                relationship_id="rel-multi-1",
+                claim_id="claim-verified-1",
+                related_claim_id="claim-verified-older",
+                relationship_type="supersedes",
+            ),
+            ClaimRelationship(
+                relationship_id="rel-multi-2",
+                claim_id="claim-verified-older",
+                related_claim_id="claim-verified-1",
+                relationship_type="superseded_by",
+            ),
+            ClaimRelationship(
+                relationship_id="rel-multi-3",
+                claim_id="claim-probable-1",
+                related_claim_id="claim-probable-2",
+                relationship_type="contradicts",
+            ),
+            ClaimRelationship(
+                relationship_id="rel-multi-4",
+                claim_id="claim-probable-2",
+                related_claim_id="claim-probable-1",
+                relationship_type="contradicts",
+            ),
+        ],
+    )
+
+    result = service.answer(
+        QueryRequest(
+            question="bread",
+            mode=QueryMode.OPEN_EXPLORATION,
+        )
+    )
+
+    assert len(result.claim_clusters) >= 2
+    assert len(result.answer_sections) >= 2
+    assert "\n\n" in result.answer
+    assert {"supersession", "contested"} <= {
+        cluster.cluster_kind for cluster in result.claim_clusters
+    }
+
+
+def test_query_prefers_supersession_cluster_for_current_canon_questions(
+    temp_data_dir: Path,
+) -> None:
+    claims = populate_query_fixtures(temp_data_dir)
+    older_claim = ApprovedClaim(
+        claim_id="claim-current-older",
+        subject="Rouen bread prices",
+        predicate="rose_during",
+        value="autumn shortage",
+        claim_kind=ClaimKind.PRACTICE,
+        status=ClaimStatus.PROBABLE,
+        place="Rouen",
+        evidence_ids=["evi-1"],
+    )
+    service = build_query_service(
+        temp_data_dir,
+        claims + [older_claim],
+        relationships=[
+            ClaimRelationship(
+                relationship_id="rel-current-1",
+                claim_id="claim-verified-1",
+                related_claim_id="claim-current-older",
+                relationship_type="supersedes",
+            ),
+            ClaimRelationship(
+                relationship_id="rel-current-2",
+                claim_id="claim-current-older",
+                related_claim_id="claim-verified-1",
+                relationship_type="superseded_by",
+            ),
+            ClaimRelationship(
+                relationship_id="rel-current-3",
+                claim_id="claim-probable-1",
+                related_claim_id="claim-probable-2",
+                relationship_type="contradicts",
+            ),
+            ClaimRelationship(
+                relationship_id="rel-current-4",
+                claim_id="claim-probable-2",
+                related_claim_id="claim-probable-1",
+                relationship_type="contradicts",
+            ),
+        ],
+    )
+
+    result = service.answer(
+        QueryRequest(
+            question="What is the current canonical view on bread prices?",
+            mode=QueryMode.OPEN_EXPLORATION,
+        )
+    )
+
+    assert result.answer_sections[0].cluster_kind == "supersession"
+
+
+def test_query_prefers_contested_cluster_for_disagreement_questions(
+    temp_data_dir: Path,
+) -> None:
+    claims = populate_query_fixtures(temp_data_dir)
+    older_claim = ApprovedClaim(
+        claim_id="claim-dispute-older",
+        subject="Rouen bread prices",
+        predicate="rose_during",
+        value="autumn shortage",
+        claim_kind=ClaimKind.PRACTICE,
+        status=ClaimStatus.PROBABLE,
+        place="Rouen",
+        evidence_ids=["evi-1"],
+    )
+    service = build_query_service(
+        temp_data_dir,
+        claims + [older_claim],
+        relationships=[
+            ClaimRelationship(
+                relationship_id="rel-dispute-1",
+                claim_id="claim-verified-1",
+                related_claim_id="claim-dispute-older",
+                relationship_type="supersedes",
+            ),
+            ClaimRelationship(
+                relationship_id="rel-dispute-2",
+                claim_id="claim-dispute-older",
+                related_claim_id="claim-verified-1",
+                relationship_type="superseded_by",
+            ),
+            ClaimRelationship(
+                relationship_id="rel-dispute-3",
+                claim_id="claim-probable-1",
+                related_claim_id="claim-probable-2",
+                relationship_type="contradicts",
+            ),
+            ClaimRelationship(
+                relationship_id="rel-dispute-4",
+                claim_id="claim-probable-2",
+                related_claim_id="claim-probable-1",
+                relationship_type="contradicts",
+            ),
+        ],
+    )
+
+    result = service.answer(
+        QueryRequest(
+            question="Where do canonical claims disagree about bread?",
+            mode=QueryMode.OPEN_EXPLORATION,
+        )
+    )
+
+    assert result.answer_sections[0].cluster_kind == "contested"
+
+
+def test_query_cluster_expansion_uses_more_than_top_five_matches(temp_data_dir: Path) -> None:
+    JsonListStore(temp_data_dir / "sources.json").write_models(
+        [SourceRecord(source_id="src-1", title="Bread notes", source_type="record")]
+    )
+    JsonListStore(temp_data_dir / "evidence.json").write_models(
+        [
+            EvidenceSnippet(
+                evidence_id="evi-1",
+                source_id="src-1",
+                locator="folio 1r",
+                text="Bread note.",
+            )
+        ]
+    )
+    claims = [
+        ApprovedClaim(
+            claim_id=f"claim-bread-{index}",
+            subject="Bread record",
+            predicate="appears_in",
+            value=f"ledger {index}",
+            claim_kind=ClaimKind.PRACTICE,
+            status=ClaimStatus.PROBABLE,
+            place="Rouen",
+            evidence_ids=["evi-1"],
+        )
+        for index in range(1, 7)
+    ]
+    explainer_claim = ApprovedClaim(
+        claim_id="claim-bread-explainer",
+        subject="Bread record",
+        predicate="is_contested_by",
+        value="a missing ledger",
+        claim_kind=ClaimKind.BELIEF,
+        status=ClaimStatus.CONTESTED,
+        place="Rouen",
+        evidence_ids=["evi-1"],
+    )
+    service = build_query_service(
+        temp_data_dir,
+        claims + [explainer_claim],
+        relationships=[
+            ClaimRelationship(
+                relationship_id="rel-top-six-1",
+                claim_id="claim-bread-6",
+                related_claim_id="claim-bread-explainer",
+                relationship_type="contradicts",
+            ),
+            ClaimRelationship(
+                relationship_id="rel-top-six-2",
+                claim_id="claim-bread-explainer",
+                related_claim_id="claim-bread-6",
+                relationship_type="contradicts",
+            ),
+        ],
+    )
+
+    result = service.answer(
+        QueryRequest(
+            question="Bread record",
+            mode=QueryMode.OPEN_EXPLORATION,
+        )
+    )
+
+    assert any(
+        "claim-bread-explainer" in cluster.claim_ids for cluster in result.claim_clusters
+    )

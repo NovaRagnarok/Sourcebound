@@ -90,6 +90,11 @@ def test_operator_flow_routes_share_file_backed_state(temp_data_dir) -> None:
         )
         assert query_response.status_code == 200
         assert query_response.json()["supporting_claims"]
+        assert "related_claims" in query_response.json()
+        assert "claim_clusters" in query_response.json()
+        assert "answer_sections" in query_response.json()
+        assert isinstance(query_response.json()["claim_clusters"], list)
+        assert isinstance(query_response.json()["answer_sections"], list)
 
 
 def test_review_route_surfaces_wikibase_sync_failures(temp_data_dir) -> None:

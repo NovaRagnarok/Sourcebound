@@ -163,12 +163,33 @@ class ClaimRelationshipRequest(BaseModel):
     notes: str | None = None
 
 
+class ClaimCluster(BaseModel):
+    cluster_id: str
+    lead_claim_id: str
+    claim_ids: list[str] = Field(default_factory=list)
+    relationship_types: list[Literal["supports", "contradicts", "supersedes", "superseded_by"]] = (
+        Field(default_factory=list)
+    )
+    cluster_kind: Literal["reinforcing", "contested", "supersession"]
+    summary: str
+
+
+class AnswerSection(BaseModel):
+    cluster_id: str
+    heading: str
+    text: str
+    claim_ids: list[str] = Field(default_factory=list)
+    cluster_kind: Literal["reinforcing", "contested", "supersession"]
+
+
 class QueryResult(BaseModel):
     question: str
     mode: QueryMode
     answer: str
     supporting_claims: list[ApprovedClaim] = Field(default_factory=list)
     related_claims: list[ClaimRelationship] = Field(default_factory=list)
+    claim_clusters: list[ClaimCluster] = Field(default_factory=list)
+    answer_sections: list[AnswerSection] = Field(default_factory=list)
     evidence: list[EvidenceSnippet] = Field(default_factory=list)
     sources: list[SourceRecord] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
