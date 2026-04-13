@@ -30,7 +30,7 @@ class Settings(BaseSettings):
     zotero_base_url: str = Field(default="https://api.zotero.org", alias="ZOTERO_BASE_URL")
 
     graph_rag_root: Path = Field(default=Path("runtime/graphrag"), alias="GRAPH_RAG_ROOT")
-    graph_rag_enabled: bool = Field(default=False, alias="GRAPH_RAG_ENABLED")
+    graph_rag_enabled: bool = Field(default=True, alias="GRAPH_RAG_ENABLED")
     graph_rag_mode: Literal["in_process", "artifact_import"] = Field(
         default="in_process",
         alias="GRAPH_RAG_MODE",

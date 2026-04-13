@@ -28,6 +28,7 @@ def restore_api_dependency_overrides() -> None:
     original_wikibase_property_map = settings.wikibase_property_map
     original_qdrant_enabled = settings.qdrant_enabled
     original_qdrant_collection = settings.qdrant_collection
+    original_graph_rag_enabled = settings.graph_rag_enabled
     original_graph_rag_mode = settings.graph_rag_mode
     original_graph_rag_root = settings.graph_rag_root
     original_graph_rag_artifacts_dir = settings.graph_rag_artifacts_dir
@@ -49,6 +50,7 @@ def restore_api_dependency_overrides() -> None:
         settings.wikibase_property_map = original_wikibase_property_map
         settings.qdrant_enabled = original_qdrant_enabled
         settings.qdrant_collection = original_qdrant_collection
+        settings.graph_rag_enabled = original_graph_rag_enabled
         settings.graph_rag_mode = original_graph_rag_mode
         settings.graph_rag_root = original_graph_rag_root
         settings.graph_rag_artifacts_dir = original_graph_rag_artifacts_dir
@@ -66,6 +68,7 @@ def temp_data_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setattr(settings, "wikibase_password", None)
     monkeypatch.setattr(settings, "wikibase_property_map", None)
     monkeypatch.setattr(settings, "qdrant_enabled", False)
+    monkeypatch.setattr(settings, "graph_rag_enabled", False)
     return tmp_path
 
 
@@ -96,6 +99,7 @@ def postgres_app_state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[
     monkeypatch.setattr(settings, "wikibase_password", None)
     monkeypatch.setattr(settings, "wikibase_property_map", None)
     monkeypatch.setattr(settings, "qdrant_enabled", False)
+    monkeypatch.setattr(settings, "graph_rag_enabled", False)
 
     try:
         yield {"dsn": dsn, "schema": schema, "data_dir": tmp_path}
