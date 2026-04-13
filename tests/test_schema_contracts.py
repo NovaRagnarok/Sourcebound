@@ -106,3 +106,5 @@ def test_seed_dev_data_writes_reproducible_temp_fixtures(temp_data_dir) -> None:
     assert len(load_json_list(temp_data_dir / "evidence.json")) == 2
     assert len(load_json_list(temp_data_dir / "candidates.json")) == 2
     assert len(load_json_list(temp_data_dir / "claims.json")) == 0
+    assert len(load_json_list(temp_data_dir / "claim_relationships.json")) == 0
+    assert len(load_json_list(temp_data_dir / "source_documents.json")) == 0

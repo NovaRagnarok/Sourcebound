@@ -1,6 +1,8 @@
 [
   {
     "source_id": "src-1",
+    "external_source": "zotero",
+    "external_id": null,
     "title": "Municipal price records of Rouen",
     "author": "City clerk",
     "year": "1421",
@@ -9,10 +11,14 @@
     "zotero_item_key": null,
     "collection_key": null,
     "abstract": "Bread prices rose sharply during the winter shortage.",
-    "url": null
+    "url": null,
+    "sync_status": "imported",
+    "raw_metadata_json": null
   },
   {
     "source_id": "src-2",
+    "external_source": "zotero",
+    "external_id": null,
     "title": "Later chronicle of unrest",
     "author": "Anonymous chronicler",
     "year": "1450",
@@ -21,6 +27,8 @@
     "zotero_item_key": null,
     "collection_key": null,
     "abstract": "Townspeople whispered that merchants were withholding grain.",
-    "url": null
+    "url": null,
+    "sync_status": "imported",
+    "raw_metadata_json": null
   }
 ]
