@@ -37,6 +37,7 @@ from source_aware_worldbuilding.domain.models import (
     ClaimRelationship,
     ClaimStatus,
     EvidenceSnippet,
+    JobResultRef,
     ResearchBrief,
     ResearchCuratedInput,
     ResearchExecutionPolicy,
@@ -48,6 +49,7 @@ from source_aware_worldbuilding.services.ingestion import IngestionService
 from source_aware_worldbuilding.services.jobs import JobService
 from source_aware_worldbuilding.services.normalization import NormalizationService
 from source_aware_worldbuilding.services.research import ResearchService
+from source_aware_worldbuilding.settings import settings
 from source_aware_worldbuilding.storage.json_store import JsonListStore
 
 
@@ -224,6 +226,9 @@ def test_job_service_processes_bible_compose_jobs(temp_data_dir: Path) -> None:
     assert processed is True
     assert completed is not None
     assert completed.status.value == "completed"
+    assert completed.worker_state == "completed"
+    assert completed.progress_message == "Completed successfully."
+    assert completed.last_checkpoint_at is not None
     assert section is not None
     assert section.generated_markdown
     assert section.paragraphs
@@ -263,6 +268,7 @@ def test_job_service_processes_curated_research_jobs(temp_data_dir: Path) -> Non
     assert completed is not None
     assert completed.status.value == "completed"
     assert completed.result_ref.run_id is not None
+    assert completed.last_checkpoint_at is not None
 
 
 def test_job_service_can_cancel_queued_jobs_and_export_in_background(temp_data_dir: Path) -> None:
@@ -286,6 +292,7 @@ def test_job_service_can_cancel_queued_jobs_and_export_in_background(temp_data_d
 
     assert cancelled.status.value == "cancelled"
     assert cancelled.status_label == "cancelled"
+    assert cancelled.worker_state == "cancelled"
     assert processed is True
     assert completed is not None
     assert completed.status.value == "completed"
@@ -297,7 +304,8 @@ def test_job_service_marks_bible_section_failed_when_background_compose_fails(
     temp_data_dir: Path,
 ) -> None:
     class BrokenBibleService(BibleWorkspaceService):
-        def compose_prepared_section(self, section_id: str):
+        def compose_prepared_section(self, section_id: str, progress_callback=None):
+            _ = section_id, progress_callback
             raise RuntimeError("compose blew up")
 
     populate_bible_fixtures(temp_data_dir)
@@ -364,6 +372,66 @@ def test_job_service_retries_failed_jobs_by_creating_a_new_attempt(temp_data_dir
     assert retry.retry_of_job_id == failed_job.job_id
     assert retry.attempt_count == failed_job.attempt_count + 1
     assert retry.status_label == "queued"
+
+
+def test_job_service_reconciles_stale_running_jobs(temp_data_dir: Path) -> None:
+    populate_bible_fixtures(temp_data_dir)
+    job_store = FileJobStore(temp_data_dir)
+    job_service = JobService(
+        job_store=job_store,
+        research_service=build_research_service(temp_data_dir),
+        bible_service=build_bible_service(temp_data_dir),
+    )
+
+    stale_job = job_service._new_job(  # noqa: SLF001 - targeted recovery regression test
+        "research_run_stage",
+        {"run_id": "run-stale"},
+        result_ref=JobResultRef(run_id="run-stale"),
+    )
+    stale_job.status = JobStatus.RUNNING
+    stale_job.status_label = "running"
+    stale_job.worker_state = "running"
+    stale_job.updated_at = "2000-01-01T00:00:00+00:00"
+    stale_job.last_heartbeat_at = "2000-01-01T00:00:00+00:00"
+    stale_job.last_checkpoint_at = "2000-01-01T00:00:00+00:00"
+    job_store.save_job(stale_job)
+
+    recovered = job_service.reconcile_stale_jobs()
+    refreshed = job_service.get_job(stale_job.job_id)
+
+    assert len(recovered) == 1
+    assert refreshed is not None
+    assert refreshed.status.value == "running"
+    assert refreshed.status_label == "stalled"
+    assert refreshed.worker_state == "stalled"
+    assert refreshed.stalled_reason is not None
+
+
+def test_job_service_blocks_enqueue_when_worker_disabled(
+    temp_data_dir: Path,
+    monkeypatch,
+) -> None:
+    populate_bible_fixtures(temp_data_dir)
+    bible_service = build_bible_service(temp_data_dir)
+    bible_service.save_profile(
+        "project-greyport",
+        BibleProjectProfileUpdateRequest(project_name="Greyport Bible", geography="Greyport"),
+    )
+    job_service = JobService(
+        job_store=FileJobStore(temp_data_dir),
+        research_service=build_research_service(temp_data_dir),
+        bible_service=bible_service,
+    )
+
+    monkeypatch.setattr(settings, "app_job_worker_enabled", False)
+    monkeypatch.setattr(settings, "app_allow_queued_jobs_without_worker", False)
+
+    try:
+        job_service.enqueue_bible_export("project-greyport")
+    except RuntimeError as exc:
+        assert "Background worker is disabled" in str(exc)
+    else:  # pragma: no cover - defensive
+        raise AssertionError("Expected worker-disabled enqueue to fail.")
 
 
 def test_job_service_can_cancel_running_jobs_at_checkpoints(temp_data_dir: Path) -> None:

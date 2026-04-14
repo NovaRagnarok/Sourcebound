@@ -3,6 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException
 
 from source_aware_worldbuilding.api.dependencies import get_job_service
+from source_aware_worldbuilding.domain.errors import WorkerUnavailableError
 from source_aware_worldbuilding.services.jobs import JobService
 
 router = APIRouter(prefix="/v1/jobs", tags=["jobs"])
@@ -45,5 +46,7 @@ def retry_job(
 ) -> dict:
     try:
         return service.retry_job(job_id).model_dump(mode="json")
+    except WorkerUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

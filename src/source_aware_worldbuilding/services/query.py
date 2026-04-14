@@ -92,10 +92,9 @@ class QueryService:
         claims = self._apply_filters(claims, request.filters)
         relationship_index = self._relationship_index(claims)
         question_profile = self._question_profile(request)
-        gap_first = bool(question_profile["hard_cap"])
 
         projection_result = self._search_projection(request, claims, profile)
-        matched = self._rank_claims(
+        ranked_matches = self._rank_claims(
             request,
             claims,
             relationship_index,
@@ -103,14 +102,13 @@ class QueryService:
             profile=profile,
             question_profile=question_profile,
         )
-        if not matched:
-            matched = claims[:5]
 
         warnings: list[str] = []
         ranking_strategy = "intent_blended" if profile is not None else "lexical"
         metadata = QueryResultMetadata(
             retrieval_backend="memory",
             ranking_strategy=ranking_strategy,
+            retrieval_quality_tier="memory_ranked",
         )
         if (
             projection_result is not None
@@ -120,6 +118,7 @@ class QueryService:
             metadata = QueryResultMetadata(
                 retrieval_backend="qdrant",
                 ranking_strategy="blended",
+                retrieval_quality_tier="projection",
             )
         elif (
             projection_result is not None
@@ -129,6 +128,7 @@ class QueryService:
             metadata = QueryResultMetadata(
                 retrieval_backend="qdrant",
                 ranking_strategy="intent_blended",
+                retrieval_quality_tier="projection",
             )
         elif projection_result is not None and projection_result.fallback_used:
             metadata = QueryResultMetadata(
@@ -136,41 +136,43 @@ class QueryService:
                 fallback_used=True,
                 fallback_reason=projection_result.fallback_reason,
                 ranking_strategy=ranking_strategy,
+                retrieval_quality_tier="memory_ranked",
             )
             if projection_result.fallback_reason:
                 warnings.append(f"Qdrant fallback: {projection_result.fallback_reason}")
 
-        if request.mode == QueryMode.STRICT_FACTS:
-            matched = [c for c in matched if c.status.value in {"verified", "probable"}]
-            warnings.append("Strict facts mode hides rumor and legend by design.")
-        elif request.mode == QueryMode.CONTESTED_VIEWS:
-            matched = [c for c in matched if c.status.value == "contested"] or matched
-            warnings.append("Contested views mode prefers disputed claims.")
-        elif request.mode == QueryMode.RUMOR_AND_LEGEND:
-            matched = [c for c in matched if c.status.value in {"rumor", "legend"}] or matched
-            warnings.append("Rumor and legend mode surfaces low-certainty material intentionally.")
-        elif request.mode == QueryMode.CHARACTER_KNOWLEDGE:
-            warnings.append(
-                "Character knowledge mode is a placeholder until viewpoint models are richer."
-            )
-        else:
-            warnings.append("Open exploration mode may include mixed-certainty material.")
-        gap_first_unanswered = False
-        if gap_first:
-            direct_matches = self._direct_topic_claims(
-                matched,
+        direct_matches = self._direct_topic_claims(
+            claims,
+            request,
+            question_profile=question_profile,
+        )
+        matched, direct_match_ids, adjacent_context_ids, boundary_warnings = (
+            self._resolve_answer_claims(
                 request,
+                ranked_matches,
+                direct_matches,
                 question_profile=question_profile,
             )
-            if direct_matches:
-                matched = self._augment_direct_matches_with_linked_claims(direct_matches, matched)
-            else:
-                matched = []
-                gap_first_unanswered = True
+        )
+        warnings.extend(boundary_warnings)
+
+        if request.mode == QueryMode.STRICT_FACTS:
+            warnings.append("Strict facts mode hides rumor and legend by design.")
+        elif request.mode == QueryMode.CONTESTED_VIEWS:
+            warnings.append("Contested views mode prefers disputed claims.")
+        elif request.mode == QueryMode.RUMOR_AND_LEGEND:
+            warnings.append("Rumor and legend mode surfaces low-certainty material intentionally.")
+        elif request.mode == QueryMode.CHARACTER_KNOWLEDGE:
+            if self._has_viewpoint_grounding(matched, request, profile):
                 warnings.append(
-                    "Approved canon does not directly answer this narrow question yet; "
-                    "adjacent canon was not substituted."
+                    "Character knowledge mode preferred canon that matches the requested or inferred viewpoint."
                 )
+            else:
+                warnings.append(
+                    "Character knowledge mode found only limited viewpoint grounding; treat the answer as adjacent occupational canon."
+                )
+        else:
+            warnings.append("Open exploration mode may include mixed-certainty material.")
         if self._is_disagreement_question(request.question):
             contradictory_ids = {
                 relationship.claim_id
@@ -204,6 +206,12 @@ class QueryService:
                     for c in matched
                     if c.claim_id not in {item.claim_id for item in disagreement_first}
                 ]
+                if not direct_match_ids:
+                    adjacent_context_ids = [
+                        claim.claim_id
+                        for claim in disagreement_first
+                        if claim.claim_id not in direct_match_ids
+                    ]
 
         cluster_seed_claims = matched[: self._CLUSTER_MATCH_LIMIT]
         related_claims = self._related_claims_for(cluster_seed_claims)
@@ -251,9 +259,23 @@ class QueryService:
         evidence = self._evidence_for_claims(surfaced_claims)
         sources = self._sources_for_evidence(evidence)
 
-        if answer_sections:
+        answer_boundary = self._answer_boundary(
+            matched,
+            direct_match_ids,
+            adjacent_context_ids,
+        )
+        metadata.answer_boundary = answer_boundary
+        metadata.used_nearby_context = bool(adjacent_context_ids)
+
+        if answer_sections and answer_boundary == "adjacent_context":
+            answer = (
+                "Approved canon does not directly answer this question, but it does offer "
+                "nearby context that may help.\n\n"
+                + "\n\n".join(section.text for section in answer_sections[:3])
+            )
+        elif answer_sections:
             answer = "\n\n".join(section.text for section in answer_sections[:3])
-        elif gap_first_unanswered:
+        elif answer_boundary == "research_gap":
             answer = (
                 "Approved canon does not directly answer this question yet. "
                 "Treat the missing detail as a research gap instead of filling it "
@@ -283,8 +305,154 @@ class QueryService:
             coverage_gaps=coverage_gaps,
             contradiction_flags=contradiction_flags,
             recommended_next_research=recommended_next_research,
+            direct_match_claim_ids=direct_match_ids,
+            adjacent_context_claim_ids=adjacent_context_ids,
             metadata=metadata,
         )
+
+    def _resolve_answer_claims(
+        self,
+        request: QueryRequest,
+        ranked_matches: list[ApprovedClaim],
+        direct_matches: list[ApprovedClaim],
+        *,
+        question_profile: dict[str, bool | list[str]],
+    ) -> tuple[list[ApprovedClaim], list[str], list[str], list[str]]:
+        warnings: list[str] = []
+        direct_ids = [claim.claim_id for claim in direct_matches]
+        direct_id_set = set(direct_ids)
+        if request.mode == QueryMode.STRICT_FACTS:
+            fact_direct = [
+                claim
+                for claim in direct_matches
+                if claim.status.value in {"verified", "probable"}
+            ]
+            if fact_direct:
+                matched = self._augment_direct_matches_with_linked_claims(
+                    fact_direct[:3],
+                    ranked_matches,
+                )
+                direct_ids = [claim.claim_id for claim in fact_direct[:3]]
+                adjacent_ids = [
+                    claim.claim_id for claim in matched if claim.claim_id not in set(direct_ids)
+                ]
+                return matched, direct_ids, adjacent_ids, warnings
+            warnings.append(
+                "Approved canon does not directly answer this narrow question yet; adjacent canon was not substituted."
+            )
+            return [], [], [], warnings
+
+        if request.mode == QueryMode.CONTESTED_VIEWS:
+            contested_matches = [
+                claim
+                for claim in ranked_matches
+                if claim.status.value == "contested"
+                or claim.claim_id in {
+                    relationship.claim_id
+                    for relationship in self.truth_store.list_relationships()
+                    if relationship.relationship_type == "contradicts"
+                }
+                or claim.claim_id in {
+                    relationship.related_claim_id
+                    for relationship in self.truth_store.list_relationships()
+                    if relationship.relationship_type == "contradicts"
+                }
+            ]
+            direct_contested = [
+                claim for claim in contested_matches if claim.claim_id in direct_id_set
+            ]
+            if direct_contested:
+                matched = self._augment_direct_matches_with_linked_claims(
+                    direct_contested[:3],
+                    contested_matches,
+                )
+                direct_ids = [claim.claim_id for claim in direct_contested[:3]]
+                adjacent_ids = [
+                    claim.claim_id for claim in matched if claim.claim_id not in set(direct_ids)
+                ]
+                return matched, direct_ids, adjacent_ids, warnings
+            if contested_matches:
+                warnings.append(
+                    "Approved canon offers contested context here, but not a direct disputed answer."
+                )
+                nearby = contested_matches[:4]
+                return nearby, [], [claim.claim_id for claim in nearby], warnings
+            return [], [], [], warnings
+
+        if request.mode == QueryMode.RUMOR_AND_LEGEND:
+            low_certainty = [
+                claim
+                for claim in ranked_matches
+                if claim.status.value in {"rumor", "legend", "contested"}
+            ]
+            direct_low = [claim for claim in low_certainty if claim.claim_id in direct_id_set]
+            if direct_low:
+                matched = self._augment_direct_matches_with_linked_claims(
+                    direct_low[:3],
+                    low_certainty,
+                )
+                direct_ids = [claim.claim_id for claim in direct_low[:3]]
+                adjacent_ids = [
+                    claim.claim_id for claim in matched if claim.claim_id not in set(direct_ids)
+                ]
+                return matched, direct_ids, adjacent_ids, warnings
+            if low_certainty:
+                warnings.append(
+                    "Approved canon did not contain a direct rumor/legend hit, so nearby low-certainty canon was surfaced explicitly."
+                )
+                return low_certainty[:4], [], [claim.claim_id for claim in low_certainty[:4]], warnings
+            return [], [], [], warnings
+
+        if direct_matches:
+            matched = self._augment_direct_matches_with_linked_claims(
+                direct_matches[:3],
+                ranked_matches,
+            )
+            direct_ids = [claim.claim_id for claim in direct_matches[:3]]
+            adjacent_ids = [
+                claim.claim_id for claim in matched if claim.claim_id not in set(direct_ids)
+            ]
+            return matched, direct_ids, adjacent_ids, warnings
+        if ranked_matches:
+            warnings.append(
+                "Approved canon did not contain a direct answer, so nearby canon was surfaced explicitly."
+            )
+            nearby = ranked_matches[:4]
+            return nearby, [], [claim.claim_id for claim in nearby], warnings
+        return [], [], [], warnings
+
+    def _has_viewpoint_grounding(
+        self,
+        claims: list[ApprovedClaim],
+        request: QueryRequest,
+        profile: BibleProjectProfile | None,
+    ) -> bool:
+        if not claims:
+            return False
+        requested_scope = self._normalize_text(request.filters.viewpoint_scope) if request.filters and request.filters.viewpoint_scope else ""
+        inferred_scope = self._normalize_text(profile.social_lens) if profile and profile.social_lens else ""
+        scope_hints = {hint for hint in [requested_scope, inferred_scope] if hint}
+        if not scope_hints:
+            return any(claim.viewpoint_scope for claim in claims)
+        for claim in claims:
+            claim_scope = self._normalize_text(claim.viewpoint_scope or "")
+            if any(hint in claim_scope or claim_scope in hint for hint in scope_hints if claim_scope):
+                return True
+        return False
+
+    def _answer_boundary(
+        self,
+        matched: list[ApprovedClaim],
+        direct_match_ids: list[str],
+        adjacent_context_ids: list[str],
+    ) -> str:
+        if not matched:
+            return "research_gap"
+        if direct_match_ids:
+            return "direct_answer"
+        if adjacent_context_ids:
+            return "adjacent_context"
+        return "research_gap"
 
     def _apply_filters(self, claims, filters):
         if filters is None:
@@ -588,7 +756,16 @@ class QueryService:
             if self._is_direct_topic_match(claim, request, question_profile=question_profile)
         ]
         if direct_matches:
-            return direct_matches[:5]
+            return sorted(
+                direct_matches,
+                key=lambda claim: (
+                    self._direct_topic_score(claim, request, question_profile=question_profile),
+                    self._CERTAINTY_RANK.get(claim.status.value, 0),
+                    1 if claim.evidence_ids else 0,
+                    claim.claim_id,
+                ),
+                reverse=True,
+            )[:5]
         return []
 
     def _is_direct_topic_match(
@@ -617,6 +794,53 @@ class QueryService:
                 return True
             return False
         return any(token in haystack for token in core_tokens)
+
+    def _direct_topic_score(
+        self,
+        claim: ApprovedClaim,
+        request: QueryRequest,
+        *,
+        question_profile: dict[str, bool | list[str]],
+    ) -> int:
+        core_tokens, core_bigrams = self._direct_topic_terms(
+            request,
+            question_profile=question_profile,
+        )
+        if not core_tokens:
+            return 0
+        subject = self._normalize_text(claim.subject)
+        value = self._normalize_text(claim.value)
+        predicate = self._normalize_text(claim.predicate)
+        notes = self._normalize_text(claim.notes or "")
+        evidence = self._normalize_text(
+            " ".join(
+                snippet.text
+                for evidence_id in claim.evidence_ids[:2]
+                if (snippet := self.evidence_store.get_evidence(evidence_id)) is not None
+            )
+        )
+        place = self._normalize_text(claim.place or "")
+        score = 0
+        phrase = " ".join(core_tokens)
+        if phrase and phrase in " ".join(part for part in [subject, value, notes, evidence] if part):
+            score += 10
+        for bigram in core_bigrams:
+            if bigram in " ".join(part for part in [subject, value, evidence] if part):
+                score += 6
+        for token in core_tokens:
+            if token in value:
+                score += 5
+            if token in subject:
+                score += 4
+            if token in evidence:
+                score += 4
+            if token in notes:
+                score += 2
+            if token in predicate:
+                score += 1
+            if token in place:
+                score += 2
+        return score
 
     def _direct_topic_terms(
         self,
@@ -859,6 +1083,7 @@ class QueryService:
         )
         narrow_topic = not broad and not is_disagreement and len(tokens) >= 2
         topic_first = narrow_topic or rumor_focus or wants_current
+        hard_cap = request.mode == QueryMode.STRICT_FACTS and narrow_topic and not is_disagreement
         return {
             "tokens": tokens,
             "is_disagreement": is_disagreement,
@@ -867,7 +1092,7 @@ class QueryService:
             "broad": broad,
             "narrow_topic": narrow_topic,
             "topic_first": topic_first,
-            "hard_cap": topic_first and not broad and not is_disagreement,
+            "hard_cap": hard_cap,
         }
 
     def _question_bigrams(self, tokens: list[str]) -> list[str]:

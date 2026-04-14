@@ -258,6 +258,9 @@ class QueryResultMetadata(BaseModel):
     fallback_used: bool = False
     fallback_reason: str | None = None
     ranking_strategy: Literal["lexical", "blended", "projection_only", "intent_blended"] = "lexical"
+    answer_boundary: Literal["direct_answer", "adjacent_context", "research_gap"] = "research_gap"
+    retrieval_quality_tier: Literal["projection", "memory_ranked"] = "memory_ranked"
+    used_nearby_context: bool = False
 
 
 class ProjectionSearchResult(BaseModel):
@@ -340,6 +343,8 @@ class QueryResult(BaseModel):
     coverage_gaps: list[str] = Field(default_factory=list)
     contradiction_flags: list[str] = Field(default_factory=list)
     recommended_next_research: list[str] = Field(default_factory=list)
+    direct_match_claim_ids: list[str] = Field(default_factory=list)
+    adjacent_context_claim_ids: list[str] = Field(default_factory=list)
     metadata: QueryResultMetadata = Field(default_factory=QueryResultMetadata)
 
 
@@ -576,17 +581,34 @@ class JobRecord(BaseModel):
     progress_stage: str = "queued"
     progress_current: int = 0
     progress_total: int = 100
+    progress_message: str | None = None
     result_ref: JobResultRef = Field(default_factory=JobResultRef)
     error: str | None = None
     error_code: str | None = None
     error_detail: str | None = None
     warnings: list[str] = Field(default_factory=list)
+    worker_state: (
+        Literal[
+            "queued",
+            "running",
+            "cancel_requested",
+            "stalled",
+            "completed",
+            "failed",
+            "cancelled",
+            "partial",
+        ]
+        | None
+    ) = None
+    stalled_reason: str | None = None
+    degraded_reason: str | None = None
     retryable: bool = False
     attempt_count: int = 1
     max_attempts: int = 1
     retry_of_job_id: str | None = None
     cancel_requested_at: str | None = None
     last_heartbeat_at: str | None = None
+    last_checkpoint_at: str | None = None
     created_at: str = Field(default_factory=utc_now)
     started_at: str | None = None
     completed_at: str | None = None
@@ -603,6 +625,23 @@ class JobRecord(BaseModel):
                 self.status_label = "queued"
             else:
                 self.status_label = self.status.value
+        if not self.worker_state:
+            if self.status_label in {"queued", "pending"}:
+                self.worker_state = "queued"
+            elif self.status_label == "running":
+                self.worker_state = "running"
+            elif self.status_label == "partial":
+                self.worker_state = "partial"
+            elif self.status_label == "cancelled":
+                self.worker_state = "cancelled"
+            elif self.status_label == "failed":
+                self.worker_state = "failed"
+            elif self.status_label == "completed":
+                self.worker_state = "completed"
+            elif self.cancel_requested_at:
+                self.worker_state = "cancel_requested"
+        if self.progress_message is None and self.progress_stage:
+            self.progress_message = self.progress_stage.replace("_", " ")
         if self.error_detail is None and self.error is not None:
             self.error_detail = self.error
         return self
@@ -617,9 +656,26 @@ class JobSummary(BaseModel):
     progress_stage: str = "queued"
     progress_current: int = 0
     progress_total: int = 100
+    progress_message: str | None = None
     updated_at: str = Field(default_factory=utc_now)
     retryable: bool = False
     warnings: list[str] = Field(default_factory=list)
+    worker_state: (
+        Literal[
+            "queued",
+            "running",
+            "cancel_requested",
+            "stalled",
+            "completed",
+            "failed",
+            "cancelled",
+            "partial",
+        ]
+        | None
+    ) = None
+    stalled_reason: str | None = None
+    degraded_reason: str | None = None
+    last_checkpoint_at: str | None = None
 
     @model_validator(mode="after")
     def populate_status_label(self) -> JobSummary:
@@ -632,6 +688,21 @@ class JobSummary(BaseModel):
                 self.status_label = "queued"
             else:
                 self.status_label = self.status.value
+        if not self.worker_state:
+            if self.status_label in {"queued", "pending"}:
+                self.worker_state = "queued"
+            elif self.status_label == "running":
+                self.worker_state = "running"
+            elif self.status_label == "partial":
+                self.worker_state = "partial"
+            elif self.status_label == "cancelled":
+                self.worker_state = "cancelled"
+            elif self.status_label == "failed":
+                self.worker_state = "failed"
+            elif self.status_label == "completed":
+                self.worker_state = "completed"
+        if self.progress_message is None and self.progress_stage:
+            self.progress_message = self.progress_stage.replace("_", " ")
         return self
 
 

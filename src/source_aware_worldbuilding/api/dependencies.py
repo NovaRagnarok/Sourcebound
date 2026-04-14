@@ -389,6 +389,8 @@ def get_job_service() -> JobService:
         settings.app_postgres_dsn,
         settings.app_postgres_schema,
         settings.app_job_poll_interval_seconds,
+        settings.app_job_stale_timeout_seconds,
+        settings.app_allow_queued_jobs_without_worker,
     )
     if _job_service is None or _job_service_key != key:
         if _job_service is not None:

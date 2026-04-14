@@ -3,6 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from source_aware_worldbuilding.api.dependencies import get_job_service, get_research_service
+from source_aware_worldbuilding.domain.errors import WorkerUnavailableError
 from source_aware_worldbuilding.domain.models import (
     ResearchProgramCreateRequest,
     ResearchRunRequest,
@@ -20,6 +21,8 @@ def create_research_run(
 ) -> dict:
     try:
         return service.enqueue_research_run(payload).model_dump(mode="json")
+    except WorkerUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -55,6 +58,8 @@ def stage_research_run(
 ) -> dict:
     try:
         return service.enqueue_research_stage(run_id).model_dump(mode="json")
+    except WorkerUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
@@ -66,6 +71,8 @@ def extract_research_run(
 ) -> dict:
     try:
         return service.enqueue_research_extract(run_id).model_dump(mode="json")
+    except WorkerUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 

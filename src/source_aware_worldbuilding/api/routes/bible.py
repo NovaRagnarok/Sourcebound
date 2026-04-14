@@ -3,6 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from source_aware_worldbuilding.api.dependencies import get_bible_workspace_service, get_job_service
+from source_aware_worldbuilding.domain.errors import WorkerUnavailableError
 from source_aware_worldbuilding.domain.models import (
     BibleProjectProfileUpdateRequest,
     BibleSectionCreateRequest,
@@ -59,7 +60,10 @@ def create_section(
     payload: BibleSectionCreateRequest,
     service: JobService = Depends(get_job_service),
 ) -> dict:
-    return service.enqueue_bible_compose(payload).model_dump(mode="json")
+    try:
+        return service.enqueue_bible_compose(payload).model_dump(mode="json")
+    except WorkerUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 @router.get("/sections/{section_id}")
@@ -95,6 +99,8 @@ def regenerate_section(
 ) -> dict:
     try:
         return service.enqueue_bible_regenerate(section_id, payload).model_dump(mode="json")
+    except WorkerUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
@@ -132,5 +138,7 @@ def queue_export_project(
 ) -> dict:
     try:
         return service.enqueue_bible_export(project_id).model_dump(mode="json")
+    except WorkerUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc

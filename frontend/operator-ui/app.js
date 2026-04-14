@@ -1133,7 +1133,7 @@
       seen.add(job.job_id);
       jobs.push({
         label: titleize((job.job_type || "background_job").replaceAll("_", " ")),
-        summary: job.checkpoint || job.error_detail || job.error || "Background workflow status is available.",
+        summary: renderJobHeadline(job),
         job,
       });
     }
@@ -1143,7 +1143,7 @@
       seen.add(job.job_id);
       jobs.push({
         label: `${section.title} ${titleize((job.job_type || "job").replaceAll("_", " "))}`.trim(),
-        summary: job.checkpoint || renderJobSummary(job),
+        summary: renderJobHeadline(job),
         job,
       });
     }
@@ -1153,7 +1153,7 @@
       seen.add(job.job_id);
       jobs.push({
         label: run.brief?.topic || run.run_id || "Research run",
-        summary: job.checkpoint || renderJobSummary(job),
+        summary: renderJobHeadline(job),
         job,
       });
     }
@@ -2406,17 +2406,20 @@
       return "memory ranking";
     }
     const backend = metadata.retrieval_backend || "memory";
+    const quality = metadata.retrieval_quality_tier || (backend === "qdrant" ? "projection" : "memory_ranked");
+    const boundary = metadata.answer_boundary || "research_gap";
     const rawStrategy = metadata.ranking_strategy || "lexical";
     const strategy = rawStrategy === "intent_blended" ? "topic-first blended" : rawStrategy;
     const fallback = metadata.fallback_used ? ` · fallback ${metadata.fallback_reason || "used"}` : "";
-    return `${backend} · ${strategy}${fallback}`;
+    const nearby = metadata.used_nearby_context ? " · nearby canon visible" : "";
+    return `${renderAnswerBoundaryLabel(boundary)} · ${backend} · ${quality.replaceAll("_", " ")} · ${strategy}${nearby}${fallback}`;
   }
 
   function renderJobControls(job) {
     if (!job) {
       return "";
     }
-    if (["queued", "running"].includes(job.status_label || job.status)) {
+    if (["queued", "running", "cancel_requested"].includes(job.worker_state || job.status_label || job.status)) {
       return `<button class="secondary-button" type="button" data-action="cancel-job" data-job-id="${escapeHtml(job.job_id)}">Cancel job</button>`;
     }
     if ((job.status_label || job.status) === "failed" && job.retryable) {
@@ -2430,13 +2433,23 @@
       return "";
     }
     const warnings = job.warnings || [];
+    const diagnostic = [];
+    if (job.progress_message) {
+      diagnostic.push(`<div class="mini"><strong>Stage</strong><div class="detail-note">${escapeHtml(job.progress_message)}</div></div>`);
+    }
+    if (job.stalled_reason) {
+      diagnostic.push(`<div class="warning">${escapeHtml(job.stalled_reason)}</div>`);
+    }
+    if (job.degraded_reason) {
+      diagnostic.push(`<div class="warning">${escapeHtml(job.degraded_reason)}</div>`);
+    }
     if ((job.status_label || job.status) === "failed") {
-      return `<div class="warning">${escapeHtml(job.error_detail || job.error || "Background job failed.")}</div>`;
+      diagnostic.push(`<div class="warning">${escapeHtml(job.error_detail || job.error || "Background job failed.")}</div>`);
     }
     if (warnings.length) {
-      return warnings.map((warning) => `<div class="warning">${escapeHtml(warning)}</div>`).join("");
+      diagnostic.push(...warnings.map((warning) => `<div class="warning">${escapeHtml(warning)}</div>`));
     }
-    return "";
+    return diagnostic.join("");
   }
 
   function buildBibleCoverage(profile, sections, claims) {
@@ -2953,6 +2966,10 @@
             <div>${escapeHtml(renderRetrievalSummary(result.metadata || {}))}</div>
           </div>
           <div class="mini">
+            <div class="detail-note">answer boundary</div>
+            <div>${escapeHtml(renderAnswerBoundaryLabel(result.metadata?.answer_boundary || "research_gap"))}</div>
+          </div>
+          <div class="mini">
             <div class="detail-note">certainty summary</div>
             <div>${escapeHtml(renderKeyValueMap(result.certainty_summary || {}))}</div>
           </div>
@@ -2990,7 +3007,10 @@
                 .map(
                   (claim) => `
                     <div class="mini">
-                      <div class="code">${escapeHtml(claim.claim_id)}</div>
+                      <div class="toolbar">
+                        <div class="code">${escapeHtml(claim.claim_id)}</div>
+                        <span class="pill ${escapeHtml(renderClaimLaneTone(claim.claim_id, result))}">${escapeHtml(renderClaimLaneLabel(claim.claim_id, result))}</span>
+                      </div>
                       <div>${escapeHtml(claim.subject)} — ${escapeHtml(claim.predicate)} — ${escapeHtml(claim.value)}</div>
                       <div class="detail-note">${escapeHtml(claim.status)} · ${escapeHtml(claim.claim_kind)}</div>
                     </div>
@@ -3230,7 +3250,12 @@
           fallback_used: true,
           fallback_reason: error.message || "Query endpoint unavailable.",
           ranking_strategy: request.project_id ? "intent_blended" : "lexical",
+          retrieval_quality_tier: "memory_ranked",
+          answer_boundary: "research_gap",
+          used_nearby_context: false,
         },
+        direct_match_claim_ids: [],
+        adjacent_context_claim_ids: [],
       };
       setApiStatus(false, "Query failed. Seed and local state remain available.");
       setBanner("failed", "Query failed", error.message || "Could not reach the query endpoint.");
@@ -3836,23 +3861,64 @@
     const total = Number(job.progress_total || 100);
     const current = Number(job.progress_current || 0);
     const percent = total > 0 ? Math.max(0, Math.min(100, Math.round((current / total) * 100))) : 0;
-    const label = (job.status_label || job.status || "queued").replaceAll("_", " ");
-    return `${label}${job.progress_stage ? ` · ${job.progress_stage}` : ""}${["running", "queued"].includes(job.status_label || job.status) ? ` · ${percent}%` : ""}`;
+    const label = (job.worker_state || job.status_label || job.status || "queued").replaceAll("_", " ");
+    return `${label}${job.progress_stage ? ` · ${job.progress_stage.replaceAll("_", " ")}` : ""}${["running", "queued", "cancel_requested"].includes(job.worker_state || job.status_label || job.status) ? ` · ${percent}%` : ""}`;
   }
 
   function renderJobPill(job) {
     if (!job) {
       return `<span class="pill verified">idle</span>`;
     }
+    const state = job.worker_state || job.status_label || job.status;
     const tone =
-      (job.status_label || job.status) === "completed"
+      state === "completed"
         ? "verified"
-        : (job.status_label || job.status) === "failed"
+        : state === "failed" || state === "stalled"
           ? "contested"
-          : (job.status_label || job.status) === "partial"
+          : state === "partial"
             ? "probable"
-          : "queued";
+            : state === "cancelled"
+              ? "author_choice"
+              : state === "cancel_requested"
+                ? "probable"
+                : "queued";
     return `<span class="pill ${escapeHtml(tone)}">${escapeHtml(renderJobSummary(job))}</span>`;
+  }
+
+  function renderJobHeadline(job) {
+    if (!job) {
+      return "Background workflow status is available.";
+    }
+    return (
+      job.progress_message ||
+      job.stalled_reason ||
+      job.degraded_reason ||
+      job.error_detail ||
+      job.error ||
+      renderJobSummary(job)
+    );
+  }
+
+  function renderAnswerBoundaryLabel(boundary) {
+    if (boundary === "direct_answer") return "Direct canon answer";
+    if (boundary === "adjacent_context") return "Nearby canon only";
+    return "Research gap";
+  }
+
+  function renderClaimLaneLabel(claimId, result) {
+    const direct = new Set(result.direct_match_claim_ids || []);
+    const adjacent = new Set(result.adjacent_context_claim_ids || []);
+    if (direct.has(claimId)) return "approved answer";
+    if (adjacent.has(claimId)) return "nearby canon";
+    return "supporting context";
+  }
+
+  function renderClaimLaneTone(claimId, result) {
+    const direct = new Set(result.direct_match_claim_ids || []);
+    const adjacent = new Set(result.adjacent_context_claim_ids || []);
+    if (direct.has(claimId)) return "verified";
+    if (adjacent.has(claimId)) return "probable";
+    return "queued";
   }
 
   function nullableString(value) {

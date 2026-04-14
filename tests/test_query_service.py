@@ -258,6 +258,9 @@ def test_query_modes_return_expected_claims_and_warnings(temp_data_dir: Path) ->
         assert result.supporting_claims[0].status == expected_status
         assert result.evidence[0].evidence_id == expected_evidence_id
         assert result.sources[0].source_id == expected_source_id
+        assert result.metadata.answer_boundary == "direct_answer"
+        assert result.direct_match_claim_ids
+        assert result.metadata.retrieval_quality_tier in {"projection", "memory_ranked"}
         assert warning_fragment in result.warnings[0]
         assert result.claim_clusters
         assert result.answer_sections
@@ -332,6 +335,9 @@ def test_query_gap_first_mode_does_not_substitute_adjacent_canon_for_narrow_ques
     assert "does not directly answer this question yet" in result.answer
     assert any("adjacent canon was not substituted" in warning for warning in result.warnings)
     assert result.coverage_gaps == ["Approved canon does not directly answer the question yet."]
+    assert result.metadata.answer_boundary == "research_gap"
+    assert result.direct_match_claim_ids == []
+    assert result.adjacent_context_claim_ids == []
     assert result.recommended_next_research == [
         "Find directly documented evidence for: How were bread tokens handled in "
         "Rouen during the winter shortage?"
@@ -395,7 +401,7 @@ def test_query_strict_facts_reports_gap_when_only_uncertain_claims_remain(
     assert result.supporting_claims == []
     assert result.evidence == []
     assert result.sources == []
-    assert result.answer.startswith("No approved claims matched")
+    assert result.answer.startswith("Approved canon does not directly answer this question yet")
     assert result.metadata.retrieval_backend == "memory"
 
 
@@ -1118,6 +1124,9 @@ def test_query_narrow_topic_prefers_bread_token_claims_and_caps_unrelated_canon(
     returned_ids = [claim.claim_id for claim in result.supporting_claims]
     assert returned_ids[:2] == ["claim-token", "claim-scrip"]
     assert "claim-price" not in returned_ids
+    assert result.metadata.answer_boundary == "direct_answer"
+    assert result.direct_match_claim_ids[:1] == ["claim-token"]
+    assert "claim-scrip" in result.adjacent_context_claim_ids
     assert all("claim-price" not in section.claim_ids for section in result.answer_sections)
     assert result.claim_clusters[0].lead_claim_id == "claim-token"
 
@@ -1210,4 +1219,6 @@ def test_query_rumor_question_stays_centered_on_rumor_material(
     returned_ids = {claim.claim_id for claim in result.supporting_claims}
     assert {"claim-rumor", "claim-contested"} <= returned_ids
     assert "claim-price" not in returned_ids
+    assert result.metadata.answer_boundary in {"direct_answer", "adjacent_context"}
+    assert result.metadata.used_nearby_context is True
     assert "grain-hoarding" in result.answer or "shuttered lofts" in result.answer

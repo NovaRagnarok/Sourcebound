@@ -34,6 +34,14 @@ class Settings(BaseSettings):
         default=0.25,
         alias="APP_JOB_POLL_INTERVAL_SECONDS",
     )
+    app_job_stale_timeout_seconds: float = Field(
+        default=15.0,
+        alias="APP_JOB_STALE_TIMEOUT_SECONDS",
+    )
+    app_allow_queued_jobs_without_worker: bool = Field(
+        default=False,
+        alias="APP_ALLOW_QUEUED_JOBS_WITHOUT_WORKER",
+    )
     app_research_default_adapter_id: str = Field(
         default="web_open",
         alias="APP_RESEARCH_DEFAULT_ADAPTER_ID",

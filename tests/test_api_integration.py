@@ -288,6 +288,9 @@ def test_query_route_keeps_bread_token_question_topic_first(temp_data_dir) -> No
     body = response.json()
     returned_ids = [claim["claim_id"] for claim in body["supporting_claims"]]
     assert returned_ids[:2] == ["claim-bread-tokens", "claim-bread-scrip"]
+    assert body["metadata"]["answer_boundary"] == "direct_answer"
+    assert body["metadata"]["retrieval_quality_tier"] in {"projection", "memory_ranked"}
+    assert body["direct_match_claim_ids"][0] == "claim-bread-tokens"
     assert body["answer_sections"]
     assert body["claim_clusters"][0]["lead_claim_id"] == "claim-bread-tokens"
 
@@ -483,6 +486,33 @@ def test_research_routes_accept_nested_execution_policy_and_curated_inputs(temp_
         assert body["facet_coverage"]
         assert "diagnostic_summary" in body["facet_coverage"][0]
         assert "semantic" in body["run"]["telemetry"]
+
+
+def test_long_running_routes_return_503_when_worker_disabled(temp_data_dir, monkeypatch) -> None:
+    populate_lore_packet_fixtures(temp_data_dir)
+    monkeypatch.setattr(settings, "app_job_worker_enabled", False)
+    monkeypatch.setattr(settings, "app_allow_queued_jobs_without_worker", False)
+
+    with TestClient(app) as client:
+        profile = client.put(
+            "/v1/bible/profiles/project-greyport",
+            json={"project_name": "Greyport Bible", "geography": "Greyport"},
+        )
+        assert profile.status_code == 200
+
+        section = client.post(
+            "/v1/bible/sections",
+            json={"project_id": "project-greyport", "section_type": "setting_overview"},
+        )
+        assert section.status_code == 503
+        assert "Background worker is disabled" in section.json()["detail"]
+
+        research = client.post(
+            "/v1/research/runs",
+            json={"brief": {"topic": "Greyport docks", "adapter_id": "curated_inputs"}},
+        )
+        assert research.status_code == 503
+        assert "Background worker is disabled" in research.json()["detail"]
 
 
 def test_async_author_flow_uses_background_jobs_end_to_end(temp_data_dir) -> None:

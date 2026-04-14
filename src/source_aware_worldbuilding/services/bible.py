@@ -445,14 +445,33 @@ class BibleWorkspaceService:
             )
         return section
 
-    def compose_prepared_section(self, section_id: str) -> BibleSection:
+    def compose_prepared_section(
+        self,
+        section_id: str,
+        progress_callback: Callable[[str, str, int | None], None] | None = None,
+    ) -> BibleSection:
         section = self.section_store.get_section(section_id)
         if section is None:
             raise ValueError("Bible section not found.")
+        self._emit_progress(
+            progress_callback,
+            "selecting_canon",
+            "Selecting canon for the section draft.",
+            35,
+        )
         draft = self._compose_section(
-            section.project_id, section.section_type, section.generation_filters
+            section.project_id,
+            section.section_type,
+            section.generation_filters,
+            progress_callback=progress_callback,
         )
         now = utc_now()
+        self._emit_progress(
+            progress_callback,
+            "saving_section",
+            "Saving the generated section and provenance state.",
+            90,
+        )
         section.title = section.title or draft.title
         section.generated_markdown = draft.generated_markdown
         section.paragraphs = draft.paragraphs
@@ -495,13 +514,31 @@ class BibleWorkspaceService:
         self,
         section_id: str,
         request: BibleSectionRegenerateRequest | None = None,
+        progress_callback: Callable[[str, str, int | None], None] | None = None,
     ) -> BibleSection:
         section = self.section_store.get_section(section_id)
         if section is None:
             raise ValueError("Bible section not found.")
         filters = request.filters if request and request.filters else section.generation_filters
-        draft = self._compose_section(section.project_id, section.section_type, filters)
+        self._emit_progress(
+            progress_callback,
+            "selecting_canon",
+            "Selecting canon for the regenerated draft.",
+            35,
+        )
+        draft = self._compose_section(
+            section.project_id,
+            section.section_type,
+            filters,
+            progress_callback=progress_callback,
+        )
         now = utc_now()
+        self._emit_progress(
+            progress_callback,
+            "saving_section",
+            "Saving the regenerated section while preserving manual text.",
+            90,
+        )
         section.generated_markdown = draft.generated_markdown
         section.paragraphs = draft.paragraphs
         if not section.has_manual_edits:
@@ -543,8 +580,16 @@ class BibleWorkspaceService:
         project_id: str,
         section_type: BibleSectionType,
         filters: BibleSectionFilters,
+        *,
+        progress_callback: Callable[[str, str, int | None], None] | None = None,
     ) -> BibleSectionDraft:
         profile = self.profile_store.get_profile(project_id)
+        self._emit_progress(
+            progress_callback,
+            "selecting_canon",
+            "Selecting approved canon and ranking the strongest material.",
+            40,
+        )
         claims, retrieval_metadata = self._select_claims(section_type, filters, profile)
         evidence_by_id = self._evidence_index(claims)
         source_by_id = self._source_index(evidence_by_id.values())
@@ -557,6 +602,12 @@ class BibleWorkspaceService:
             coverage_gaps,
             profile,
             section_type,
+        )
+        self._emit_progress(
+            progress_callback,
+            "assembling_paragraphs",
+            "Assembling writer-facing paragraphs and provenance links.",
+            60,
         )
         paragraphs, composition_metrics = self._build_paragraphs(
             section_type,
@@ -589,6 +640,12 @@ class BibleWorkspaceService:
             ),
         )
         title = self._SECTION_TITLES[section_type]
+        self._emit_progress(
+            progress_callback,
+            "writing_generated_draft",
+            "Writing the generated draft and coverage notes.",
+            80,
+        )
         markdown = self._render_markdown(
             title,
             paragraphs,
@@ -619,6 +676,16 @@ class BibleWorkspaceService:
             generation_error=None,
             ready_for_writer=generation_status == BibleSectionGenerationStatus.READY,
         )
+
+    def _emit_progress(
+        self,
+        progress_callback: Callable[[str, str, int | None], None] | None,
+        stage: str,
+        message: str,
+        current: int | None = None,
+    ) -> None:
+        if progress_callback is not None:
+            progress_callback(stage, message, current)
 
     def _select_claims(
         self,
@@ -721,12 +788,15 @@ class BibleWorkspaceService:
         projection_order: dict[str, int] = {}
         retrieval_metadata: dict[str, object] = {
             "retrieval_backend": "memory",
+            "retrieval_quality_tier": "memory_ranked",
             "fallback_used": False,
             "fallback_reason": None,
             "seed_query": self._retrieval_seed_query(section_type, filters, profile),
             "ranking_strategy": "intent_blended"
             if self._has_intent_context(filters, profile)
             else "lexical",
+            "answer_boundary": "research_gap",
+            "used_nearby_context": False,
         }
         seed_query = str(retrieval_metadata["seed_query"] or "")
         if seed_query and self.projection is not None and claims:
@@ -737,6 +807,7 @@ class BibleWorkspaceService:
             )
             if not projection.fallback_used:
                 retrieval_metadata["retrieval_backend"] = projection.retrieval_backend
+                retrieval_metadata["retrieval_quality_tier"] = "projection"
                 retrieval_metadata["ranking_strategy"] = (
                     "intent_blended" if self._has_intent_context(filters, profile) else "blended"
                 )
@@ -771,6 +842,8 @@ class BibleWorkspaceService:
         )
         if filters.focus:
             ranked = self._focused_claim_window(ranked, filters.focus, relationships)
+            retrieval_metadata["used_nearby_context"] = len(ranked) > 1
+        retrieval_metadata["answer_boundary"] = "direct_answer" if ranked else "research_gap"
         return ranked, retrieval_metadata
 
     def _focused_claim_window(

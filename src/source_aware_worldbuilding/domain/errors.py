@@ -8,3 +8,7 @@ class WikibaseSyncError(RuntimeError):
 
 class ZoteroWriteError(RuntimeError):
     """Raised when Zotero write operations cannot complete."""
+
+
+class WorkerUnavailableError(RuntimeError):
+    """Raised when persisted background work is requested without an active worker."""
