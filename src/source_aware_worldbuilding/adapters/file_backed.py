@@ -5,9 +5,11 @@ from pathlib import Path
 from source_aware_worldbuilding.domain.models import (
     ApprovedClaim,
     CandidateClaim,
+    ClaimRelationship,
     EvidenceSnippet,
     ExtractionRun,
     ReviewEvent,
+    SourceDocumentRecord,
     SourceRecord,
     TextUnit,
 )
@@ -43,6 +45,45 @@ class FileTextUnitStore:
         for item in text_units:
             existing[item.text_unit_id] = item
         self.store.write_models(existing.values())
+
+
+class FileSourceDocumentStore:
+    def __init__(self, data_dir: Path):
+        self.store = JsonListStore(data_dir / "source_documents.json")
+
+    def list_source_documents(
+        self,
+        source_id: str | None = None,
+        *,
+        ingest_status: str | None = None,
+        raw_text_status: str | None = None,
+        claim_extraction_status: str | None = None,
+    ) -> list[SourceDocumentRecord]:
+        documents = self.store.read_models(SourceDocumentRecord)
+        if source_id is not None:
+            documents = [item for item in documents if item.source_id == source_id]
+        if ingest_status is not None:
+            documents = [item for item in documents if item.ingest_status == ingest_status]
+        if raw_text_status is not None:
+            documents = [item for item in documents if item.raw_text_status == raw_text_status]
+        if claim_extraction_status is not None:
+            documents = [
+                item
+                for item in documents
+                if item.claim_extraction_status == claim_extraction_status
+            ]
+        return documents
+
+    def save_source_documents(self, source_documents: list[SourceDocumentRecord]) -> None:
+        existing = {
+            item.document_id: item for item in self.store.read_models(SourceDocumentRecord)
+        }
+        for item in source_documents:
+            existing[item.document_id] = item
+        self.store.write_models(existing.values())
+
+    def update_source_document(self, source_document: SourceDocumentRecord) -> None:
+        self.save_source_documents([source_document])
 
 
 class FileExtractionRunStore:
@@ -104,23 +145,6 @@ class FileCandidateStore:
         self.store.write_models(updated)
 
 
-class FileTruthStore:
-    def __init__(self, data_dir: Path):
-        self.store = JsonListStore(data_dir / "claims.json")
-
-    def list_claims(self) -> list[ApprovedClaim]:
-        return self.store.read_models(ApprovedClaim)
-
-    def get_claim(self, claim_id: str) -> ApprovedClaim | None:
-        return next((item for item in self.list_claims() if item.claim_id == claim_id), None)
-
-    def save_claim(self, claim: ApprovedClaim) -> None:
-        claims = self.list_claims()
-        existing = {item.claim_id: item for item in claims}
-        existing[claim.claim_id] = claim
-        self.store.write_models(existing.values())
-
-
 class FileEvidenceStore:
     def __init__(self, data_dir: Path):
         self.store = JsonListStore(data_dir / "evidence.json")
@@ -158,3 +182,65 @@ class FileReviewStore:
         existing = {item.review_id: item for item in self.store.read_models(ReviewEvent)}
         existing[review.review_id] = review
         self.store.write_models(existing.values())
+
+
+class FileTruthStore:
+    def __init__(self, data_dir: Path):
+        self.store = JsonListStore(data_dir / "claims.json")
+        self.relationship_store = JsonListStore(data_dir / "claim_relationships.json")
+
+    def list_claims(self) -> list[ApprovedClaim]:
+        return self.store.read_models(ApprovedClaim)
+
+    def get_claim(self, claim_id: str) -> ApprovedClaim | None:
+        return next((item for item in self.list_claims() if item.claim_id == claim_id), None)
+
+    def list_relationships(self, claim_id: str | None = None) -> list[ClaimRelationship]:
+        relationships = self.relationship_store.read_models(ClaimRelationship)
+        if claim_id is None:
+            return relationships
+        return [item for item in relationships if item.claim_id == claim_id]
+
+    def upsert_relationship(
+        self,
+        claim_id: str,
+        related_claim_id: str,
+        relationship_type: str,
+        *,
+        notes: str | None = None,
+        source_kind: str = "manual",
+    ) -> ClaimRelationship:
+        relationships = self.relationship_store.read_models(ClaimRelationship)
+        key = (claim_id, related_claim_id, relationship_type, source_kind)
+        by_key = {
+            (item.claim_id, item.related_claim_id, item.relationship_type, item.source_kind): item
+            for item in relationships
+        }
+        relationship = ClaimRelationship(
+            relationship_id=by_key.get(key, ClaimRelationship(
+                relationship_id=f"rel-{len(by_key) + 1}",
+                claim_id=claim_id,
+                related_claim_id=related_claim_id,
+                relationship_type=relationship_type,
+                source_kind=source_kind,
+            )).relationship_id,
+            claim_id=claim_id,
+            related_claim_id=related_claim_id,
+            relationship_type=relationship_type,
+            source_kind=source_kind,
+            notes=notes,
+        )
+        by_key[key] = relationship
+        self.relationship_store.write_models(by_key.values())
+        return relationship
+
+    def save_claim(
+        self,
+        claim: ApprovedClaim,
+        evidence: list[EvidenceSnippet] | None = None,
+        review=None,
+    ) -> None:
+        _ = evidence, review
+        claims = {item.claim_id: item for item in self.store.read_models(ApprovedClaim)}
+        claims[claim.claim_id] = claim
+        self.store.write_models(claims.values())

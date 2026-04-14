@@ -1,15 +1,16 @@
-# ADR 0002: Wikibase is the canonical approved-claim store
+# ADR 0002: Wikibase as a future approved-claim adapter
 
 ## Status
-Accepted
+Superseded for the current MVP
 
 ## Context
-Approved claims need qualifiers, references, and support for multiple competing statements.
+Approved claims may eventually need qualifiers, references, and support for multiple competing statements, but MVP development is moving faster with Postgres as the default truth store and files as the no-infra fallback.
 
 ## Decision
-Persist approved claims to Wikibase through a truth-store adapter.
+Do not require Wikibase in the default development loop. Keep Wikibase as an optional truth-store adapter that can be reintroduced later if product needs justify the added complexity.
 
 ## Consequences
 - domain models remain independent of Wikibase JSON
-- the truth-store adapter handles translation
-- the rest of the system reasons about claims, evidence, and statuses instead of raw Wikibase structures
+- the truth-store port stays intact
+- the default approved-claim path stays local and easy to run
+- any future Wikibase integration must prove it is worth the operational cost

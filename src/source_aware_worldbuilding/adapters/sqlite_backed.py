@@ -3,11 +3,11 @@ from __future__ import annotations
 from pathlib import Path
 
 from source_aware_worldbuilding.domain.models import (
-    ApprovedClaim,
     CandidateClaim,
     EvidenceSnippet,
     ExtractionRun,
     ReviewEvent,
+    SourceDocumentRecord,
     SourceRecord,
     TextUnit,
 )
@@ -47,6 +47,51 @@ class SqliteTextUnitStore(_SqliteAdapterBase):
             text_units,
             extra_columns={"source_id": "source_id", "ordinal": "ordinal"},
         )
+
+
+class SqliteSourceDocumentStore(_SqliteAdapterBase):
+    def list_source_documents(
+        self,
+        source_id: str | None = None,
+        *,
+        ingest_status: str | None = None,
+        raw_text_status: str | None = None,
+        claim_extraction_status: str | None = None,
+    ) -> list[SourceDocumentRecord]:
+        documents = self.store.list_models(
+            "source_documents_state",
+            SourceDocumentRecord,
+            order_by="source_id, document_id",
+        )
+        if source_id is not None:
+            documents = [item for item in documents if item.source_id == source_id]
+        if ingest_status is not None:
+            documents = [item for item in documents if item.ingest_status == ingest_status]
+        if raw_text_status is not None:
+            documents = [item for item in documents if item.raw_text_status == raw_text_status]
+        if claim_extraction_status is not None:
+            documents = [
+                item
+                for item in documents
+                if item.claim_extraction_status == claim_extraction_status
+            ]
+        return documents
+
+    def save_source_documents(self, source_documents: list[SourceDocumentRecord]) -> None:
+        self.store.upsert_models(
+            "source_documents_state",
+            "document_id",
+            source_documents,
+            extra_columns={
+                "source_id": "source_id",
+                "ingest_status": "ingest_status",
+                "raw_text_status": "raw_text_status",
+                "claim_extraction_status": "claim_extraction_status",
+            },
+        )
+
+    def update_source_document(self, source_document: SourceDocumentRecord) -> None:
+        self.save_source_documents([source_document])
 
 
 class SqliteExtractionRunStore(_SqliteAdapterBase):
@@ -113,17 +158,6 @@ class SqliteEvidenceStore(_SqliteAdapterBase):
             evidence,
             extra_columns={"source_id": "source_id"},
         )
-
-
-class SqliteTruthStore(_SqliteAdapterBase):
-    def list_claims(self) -> list[ApprovedClaim]:
-        return self.store.list_models("claims", ApprovedClaim, order_by="claim_id")
-
-    def get_claim(self, claim_id: str) -> ApprovedClaim | None:
-        return self.store.get_model("claims", "claim_id", claim_id, ApprovedClaim)
-
-    def save_claim(self, claim: ApprovedClaim) -> None:
-        self.store.upsert_models("claims", "claim_id", [claim])
 
 
 class SqliteReviewStore(_SqliteAdapterBase):

@@ -1,5 +1,12 @@
 # Roadmap
 
+## Current status
+
+- Phase 0 is complete.
+- Large parts of Phase 4 already exist as an operator MVP.
+- Approved-claim reads and writes now use Postgres by default in the normal stack.
+- The main work now is making the remaining integrations real: live Zotero intake, non-heuristic extraction, and Qdrant-backed retrieval in the normal dev loop.
+
 ## Phase 0 — architecture seed
 
 - domain models
@@ -7,23 +14,26 @@
 - file-backed stores
 - API skeleton
 - review flow
+- operator MVP
+- Postgres and SQLite app-state adapters
 
 ## Phase 1 — pilot corpus
 
-- connect to a narrow Zotero collection
+- connect to a narrow Zotero collection as the normal ingest path
 - normalize attached sources into text units
-- produce candidate claims via GraphRAG
-- manually review candidates
+- replace the default heuristic extractor with GraphRAG or another LLM-backed extraction path
+- manually review candidates against a real pilot corpus
 
-## Phase 2 — canonical truth
+## Phase 2 — approved truth store
 
-- write approved claims to Wikibase
-- write references and qualifiers
+- keep approved-claim review/write/read solid in the Postgres truth store
+- decide whether Wikibase still earns its complexity for canonical sync
+- if it does, write references and qualifiers with a project-specific property map
 - handle competing claims cleanly
 
 ## Phase 3 — retrieval
 
-- project approved claims and evidence into Qdrant
+- make Qdrant-backed projection part of the normal local dev loop
 - support filtered semantic search
 - enable query modes by certainty and viewpoint
 
@@ -32,6 +42,7 @@
 - review queue UI
 - source browsing UI
 - ask-the-bible UI
+- runtime readiness and environment status reporting
 
 ## Phase 5 — advanced features
 

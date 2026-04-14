@@ -15,6 +15,7 @@ from source_aware_worldbuilding.ports import (
     EvidenceStorePort,
     ExtractionPort,
     ExtractionRunStorePort,
+    SourceDocumentStorePort,
     SourceStorePort,
     TextUnitStorePort,
 )
@@ -27,6 +28,7 @@ class IngestionService:
         extractor: ExtractionPort,
         source_store: SourceStorePort,
         text_unit_store: TextUnitStorePort,
+        source_document_store: SourceDocumentStorePort | None,
         run_store: ExtractionRunStorePort,
         candidate_store: CandidateStorePort,
         evidence_store: EvidenceStorePort,
@@ -35,15 +37,17 @@ class IngestionService:
         self.extractor = extractor
         self.source_store = source_store
         self.text_unit_store = text_unit_store
+        self.source_document_store = source_document_store
         self.run_store = run_store
         self.candidate_store = candidate_store
         self.evidence_store = evidence_store
 
     def pull_sources(self) -> list[SourceRecord]:
         sources = self.corpus.pull_sources()
-        text_units = self.corpus.pull_text_units(sources)
+        source_documents = self.corpus.discover_source_documents(sources)
         self.source_store.save_sources(sources)
-        self.text_unit_store.save_text_units(text_units)
+        if self.source_document_store is not None:
+            self.source_document_store.save_source_documents(source_documents)
         return sources
 
     def list_sources(self) -> list[SourceRecord]:
@@ -63,6 +67,7 @@ class IngestionService:
 
         run = ExtractionRun(run_id=f"run-{uuid4().hex[:12]}", status=ExtractionRunStatus.RUNNING)
         self.run_store.save_run(run)
+        self._mark_document_extraction_status(text_units, "running")
         try:
             output = self.extractor.extract_candidates(
                 run=run,
@@ -73,9 +78,30 @@ class IngestionService:
             self.candidate_store.save_candidates(output.candidates)
             output.run.status = ExtractionRunStatus.COMPLETED
             self.run_store.update_run(output.run)
+            self._mark_document_extraction_status(text_units, "completed")
             return output
         except Exception as exc:
             run.status = ExtractionRunStatus.FAILED
             run.error = str(exc)
             self.run_store.update_run(run)
+            self._mark_document_extraction_status(text_units, "failed")
             raise
+
+    def _mark_document_extraction_status(self, text_units: list[TextUnit], status: str) -> None:
+        if self.source_document_store is None:
+            return
+        document_ids: set[str] = set()
+        for text_unit in text_units:
+            notes = text_unit.notes or ""
+            marker = "source_document_id="
+            if marker not in notes:
+                continue
+            document_id = notes.split(marker, 1)[1].split(";", 1)[0].strip()
+            if document_id:
+                document_ids.add(document_id)
+        if not document_ids:
+            return
+        for document in self.source_document_store.list_source_documents():
+            if document.document_id in document_ids:
+                document.claim_extraction_status = status
+                self.source_document_store.update_source_document(document)

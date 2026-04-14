@@ -83,15 +83,11 @@ def test_repository_fixtures_match_domain_models() -> None:
     candidates = [
         CandidateClaim.model_validate(item) for item in load_json_list(DATA_DIR / "candidates.json")
     ]
-    claims = [
-        ApprovedClaim.model_validate(item) for item in load_json_list(DATA_DIR / "claims.json")
-    ]
 
     assert len(sources) == 2
     assert len(text_units) == 2
     assert len(evidence) == 2
     assert len(candidates) == 2
-    assert claims == []
 
     evidence_ids = {item.evidence_id for item in evidence}
     source_ids = {item.source_id for item in sources}
@@ -103,11 +99,10 @@ def test_repository_fixtures_match_domain_models() -> None:
 
 
 def test_seed_dev_data_writes_reproducible_temp_fixtures(temp_data_dir) -> None:
-    temp_data_dir.joinpath("claims.json").write_text('[{"unexpected": true}]', encoding="utf-8")
     seed_dev_data()
 
     assert len(load_json_list(temp_data_dir / "sources.json")) == 2
     assert len(load_json_list(temp_data_dir / "text_units.json")) == 2
     assert len(load_json_list(temp_data_dir / "evidence.json")) == 2
     assert len(load_json_list(temp_data_dir / "candidates.json")) == 2
-    assert load_json_list(temp_data_dir / "claims.json") == []
+    assert len(load_json_list(temp_data_dir / "claims.json")) == 0

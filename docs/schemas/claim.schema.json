@@ -57,6 +57,12 @@
       },
       "minItems": 1
     },
+    "created_from_run_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
     "notes": {
       "type": [
         "string",

@@ -14,6 +14,8 @@ class ReviewState(StrEnum):
     PENDING = "pending"
     APPROVED = "approved"
     REJECTED = "rejected"
+    NEEDS_SPLIT = "needs_split"
+    NEEDS_EDIT = "needs_edit"
     SUPERSEDED = "superseded"
 
 

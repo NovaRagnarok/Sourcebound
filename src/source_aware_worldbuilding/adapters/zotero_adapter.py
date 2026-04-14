@@ -1,123 +1,675 @@
 from __future__ import annotations
 
+import mimetypes
+import re
 from hashlib import sha1
+from html import unescape
 
 import httpx
+from tenacity import Retrying, retry_if_exception, stop_after_attempt, wait_exponential
 
-from source_aware_worldbuilding.domain.models import SourceRecord, TextUnit
+from source_aware_worldbuilding.domain.errors import ZoteroWriteError
+from source_aware_worldbuilding.domain.models import (
+    IntakeTextRequest,
+    IntakeUrlRequest,
+    SourceDocumentRecord,
+    SourceRecord,
+    TextUnit,
+    ZoteroCreatedItem,
+)
 from source_aware_worldbuilding.settings import settings
+
+HTML_BREAK_RE = re.compile(r"(?i)</?(?:p|div|li|ul|ol|br|hr)[^>]*>")
+HTML_TAG_RE = re.compile(r"<[^>]+>")
 
 
 class ZoteroCorpusAdapter:
-    """Pull a narrow Zotero corpus, with a fixture-friendly local fallback."""
+    """Pull a narrow Zotero corpus, including note-derived text units."""
 
     def pull_sources(self) -> list[SourceRecord]:
         if not settings.zotero_library_id:
             return self._stub_sources()
 
-        endpoint = self._items_endpoint()
+        sources: list[SourceRecord] = []
+        with self._client() as client:
+            for item in self._request_paginated(client, self._top_items_path()):
+                data = item.get("data", {})
+                item_key = item.get("key")
+                if not item_key:
+                    continue
+
+                creators = data.get("creators") or []
+                author = (
+                    ", ".join(
+                        filter(None, [self._creator_name(creator) for creator in creators[:2]])
+                    )
+                    or None
+                )
+                date_value = data.get("date") or ""
+                year = date_value[:4] if isinstance(date_value, str) and date_value else None
+                sources.append(
+                    SourceRecord(
+                        source_id=f"zotero-{item_key}",
+                        external_source="zotero",
+                        external_id=item_key,
+                        title=data.get("title") or f"Untitled Zotero item {item_key}",
+                        author=author,
+                        year=year,
+                        source_type=data.get("itemType", "document"),
+                        locator_hint=data.get("archiveLocation") or data.get("callNumber"),
+                        zotero_item_key=item_key,
+                        collection_key=self._collection_key_from_item(data),
+                        abstract=self._clean_text(data.get("abstractNote")),
+                        url=data.get("url") or None,
+                        sync_status="imported",
+                        raw_metadata_json=data,
+                    )
+                )
+        return sources
+
+    def pull_sources_by_item_keys(self, item_keys: list[str]) -> list[SourceRecord]:
+        if not settings.zotero_library_id or not item_keys:
+            return []
+
+        sources: list[SourceRecord] = []
+        with self._client() as client:
+            path = f"{self._library_path()}/items"
+            response = self._request_with_retry(
+                client,
+                path,
+                params={"itemKey": ",".join(sorted(set(item_keys)))},
+            )
+            for item in response.json():
+                data = item.get("data", {})
+                if data.get("parentItem"):
+                    continue
+                item_key = item.get("key")
+                if not item_key:
+                    continue
+                creators = data.get("creators") or []
+                author = (
+                    ", ".join(
+                        filter(None, [self._creator_name(creator) for creator in creators[:2]])
+                    )
+                    or None
+                )
+                date_value = data.get("date") or ""
+                year = date_value[:4] if isinstance(date_value, str) and date_value else None
+                sources.append(
+                    SourceRecord(
+                        source_id=f"zotero-{item_key}",
+                        external_source="zotero",
+                        external_id=item_key,
+                        title=data.get("title") or f"Untitled Zotero item {item_key}",
+                        author=author,
+                        year=year,
+                        source_type=data.get("itemType", "document"),
+                        locator_hint=data.get("archiveLocation") or data.get("callNumber"),
+                        zotero_item_key=item_key,
+                        collection_key=self._collection_key_from_item(data),
+                        abstract=self._clean_text(data.get("abstractNote")),
+                        url=data.get("url") or None,
+                        sync_status="imported",
+                        raw_metadata_json=data,
+                    )
+                )
+        return sources
+
+    def discover_source_documents(self, sources: list[SourceRecord]) -> list[SourceDocumentRecord]:
+        if not settings.zotero_library_id:
+            return self._stub_source_documents(sources)
+
+        source_documents: list[SourceDocumentRecord] = []
+        with self._client() as client:
+            for source in sources:
+                if not source.zotero_item_key:
+                    continue
+                child_path = f"{self._library_path()}/items/{source.zotero_item_key}/children"
+                children = self._request_paginated(client, child_path)
+                if not children:
+                    source.sync_status = "attachments_missing"
+                    continue
+
+                source.sync_status = "awaiting_text_extraction"
+                for child in children:
+                    child_key = child.get("key")
+                    data = child.get("data", {})
+                    if not child_key:
+                        continue
+
+                    item_type = data.get("itemType", "")
+                    if item_type == "note":
+                        raw_text = self._clean_text(data.get("note"))
+                        source_documents.append(
+                            SourceDocumentRecord(
+                                document_id=f"zdoc-{child_key}",
+                                source_id=source.source_id,
+                                document_kind="note",
+                                external_id=child_key,
+                                filename=data.get("title"),
+                                mime_type="text/html",
+                                ingest_status="imported",
+                                raw_text_status="ready" if raw_text else "missing",
+                                claim_extraction_status="queued",
+                                locator=data.get("title") or data.get("parentItem") or "note",
+                                raw_text=raw_text,
+                                raw_metadata_json=data,
+                            )
+                        )
+                        continue
+
+                    if item_type != "attachment":
+                        continue
+
+                    content_type = data.get("contentType")
+                    raw_text = self._clean_text(data.get("note"))
+                    document_kind = (
+                        "snapshot"
+                        if isinstance(content_type, str) and content_type.startswith("text/html")
+                        else "attachment"
+                    )
+                    raw_text_status = "ready" if raw_text else "missing"
+                    ingest_status = (
+                        "awaiting_text_extraction"
+                        if raw_text_status == "ready"
+                        else "attachments_missing"
+                    )
+                    source_documents.append(
+                        SourceDocumentRecord(
+                            document_id=f"zdoc-{child_key}",
+                            source_id=source.source_id,
+                            document_kind=document_kind,
+                            external_id=child_key,
+                            filename=data.get("filename") or data.get("title"),
+                            mime_type=content_type,
+                            storage_path=data.get("path"),
+                            ingest_status=ingest_status,
+                            raw_text_status=raw_text_status,
+                            claim_extraction_status="queued",
+                            locator=data.get("title") or content_type or "attachment",
+                            raw_text=raw_text,
+                            raw_metadata_json=data,
+                        )
+                    )
+        return source_documents
+
+    def create_text_source(self, request: IntakeTextRequest) -> ZoteroCreatedItem:
+        parent_key = self._create_parent_item(
+            {
+                "itemType": self._zotero_item_type(request.source_type, has_url=False),
+                "title": request.title,
+                "creators": self._creators_for_author(request.author),
+                "date": request.year or "",
+                "abstractNote": request.notes or "",
+                "collections": self._collections_list(request.collection_key),
+                "extra": self._extra_for_source_type(request.source_type),
+            }
+        )
+        self._create_child_note(parent_key, self._text_note_body(request.text, request.notes))
+        return ZoteroCreatedItem(
+            zotero_item_key=parent_key,
+            title=request.title,
+            item_type=self._zotero_item_type(request.source_type, has_url=False),
+            collection_key=request.collection_key or settings.zotero_collection_key,
+        )
+
+    def create_url_source(self, request: IntakeUrlRequest) -> ZoteroCreatedItem:
+        title = request.title or request.url
+        parent_key = self._create_parent_item(
+            {
+                "itemType": "webpage",
+                "title": title,
+                "url": request.url,
+                "collections": self._collections_list(request.collection_key),
+                "abstractNote": request.notes or "",
+            }
+        )
+        if request.notes:
+            self._create_child_note(parent_key, self._notes_only_body(request.notes))
+        return ZoteroCreatedItem(
+            zotero_item_key=parent_key,
+            title=title,
+            item_type="webpage",
+            collection_key=request.collection_key or settings.zotero_collection_key,
+            url=request.url,
+        )
+
+    def create_file_source(
+        self,
+        *,
+        filename: str,
+        content_type: str | None,
+        content: bytes,
+        title: str | None = None,
+        source_type: str = "document",
+        notes: str | None = None,
+        collection_key: str | None = None,
+    ) -> tuple[ZoteroCreatedItem, list[str]]:
+        warnings: list[str] = []
+        extracted_text = self._extract_file_text(filename, content_type, content)
+        if extracted_text is None:
+            warnings.append(
+                "File text extraction is not implemented for this file type yet; "
+                "Zotero note contains metadata only."
+            )
+            extracted_text = self._file_placeholder_text(filename, content_type, len(content))
+
+        final_title = title or filename
+        parent_key = self._create_parent_item(
+            {
+                "itemType": self._zotero_item_type(source_type, has_url=False),
+                "title": final_title,
+                "collections": self._collections_list(collection_key),
+                "abstractNote": notes or "",
+                "extra": self._extra_for_source_type(source_type),
+            }
+        )
+        self._create_child_note(
+            parent_key,
+            self._file_note_body(
+                filename=filename,
+                content_type=content_type,
+                extracted_text=extracted_text,
+                notes=notes,
+            ),
+        )
+        return (
+            ZoteroCreatedItem(
+                zotero_item_key=parent_key,
+                title=final_title,
+                item_type=self._zotero_item_type(source_type, has_url=False),
+                collection_key=collection_key or settings.zotero_collection_key,
+            ),
+            warnings,
+        )
+
+    def pull_text_units(self, sources: list[SourceRecord]) -> list[TextUnit]:
+        if not settings.zotero_library_id:
+            return self._stub_text_units(sources)
+
+        text_units: list[TextUnit] = []
+        with self._client() as client:
+            for source in sources:
+                ordinal = 1
+                for fragment in self._source_fragments(source):
+                    text_units.append(self._build_text_unit(source, ordinal, "metadata", fragment))
+                    ordinal += 1
+
+                if not source.zotero_item_key:
+                    continue
+
+                child_path = f"{self._library_path()}/items/{source.zotero_item_key}/children"
+                for child in self._request_paginated(client, child_path):
+                    child_key = child.get("key")
+                    data = child.get("data", {})
+                    item_type = data.get("itemType", "")
+                    if item_type == "note":
+                        note_text = self._clean_text(data.get("note"))
+                        if note_text:
+                            locator = data.get("title") or data.get("parentItem") or "note"
+                            text_units.append(
+                                self._build_text_unit(
+                                    source,
+                                    ordinal,
+                                    locator,
+                                    note_text,
+                                    notes=self._child_provenance_notes(child_key, item_type),
+                                )
+                            )
+                            ordinal += 1
+                    elif item_type == "attachment":
+                        attachment_text = self._attachment_fragment(data)
+                        if attachment_text:
+                            locator = data.get("title") or data.get("contentType") or "attachment"
+                            text_units.append(
+                                self._build_text_unit(
+                                    source,
+                                    ordinal,
+                                    locator,
+                                    attachment_text,
+                                    notes=self._child_provenance_notes(child_key, item_type),
+                                )
+                            )
+                            ordinal += 1
+        return text_units
+
+    def _client(self) -> httpx.Client:
         headers = {"Zotero-API-Version": "3"}
         if settings.zotero_api_key:
             headers["Zotero-API-Key"] = settings.zotero_api_key
-
-        response = httpx.get(endpoint, headers=headers, params={"limit": 50}, timeout=20.0)
-        response.raise_for_status()
-        payload = response.json()
-
-        sources: list[SourceRecord] = []
-        for item in payload:
-            data = item.get("data", {})
-            item_key = item.get("key")
-            creators = data.get("creators") or []
-            author = (
-                ", ".join(
-                    filter(
-                        None,
-                        [
-                            " ".join(
-                                filter(None, [creator.get("firstName"), creator.get("lastName")])
-                            ).strip()
-                            for creator in creators[:2]
-                        ],
-                    )
-                )
-                or None
-            )
-            year = None
-            date_value = data.get("date")
-            if isinstance(date_value, str) and date_value:
-                year = date_value[:4]
-            sources.append(
-                SourceRecord(
-                    source_id=f"zotero-{item_key}",
-                    title=data.get("title") or f"Untitled Zotero item {item_key}",
-                    author=author,
-                    year=year,
-                    source_type=data.get("itemType", "document"),
-                    locator_hint=data.get("archiveLocation") or data.get("callNumber"),
-                    zotero_item_key=item_key,
-                    collection_key=settings.zotero_collection_key,
-                    abstract=data.get("abstractNote") or None,
-                    url=data.get("url") or None,
-                )
-            )
-        return sources
-
-    def pull_text_units(self, sources: list[SourceRecord]) -> list[TextUnit]:
-        text_units: list[TextUnit] = []
-        for index, source in enumerate(sources, start=1):
-            body = (source.abstract or "").strip()
-            if not body:
-                fragments = [source.title]
-                if source.author:
-                    fragments.append(f"Author: {source.author}")
-                if source.year:
-                    fragments.append(f"Year: {source.year}")
-                if source.locator_hint:
-                    fragments.append(f"Locator: {source.locator_hint}")
-                if source.url:
-                    fragments.append(f"URL: {source.url}")
-                body = ". ".join(fragment for fragment in fragments if fragment)
-            checksum = sha1(body.encode("utf-8")).hexdigest()
-            text_units.append(
-                TextUnit(
-                    text_unit_id=f"text-{source.source_id}-{index}",
-                    source_id=source.source_id,
-                    locator=source.locator_hint or "metadata",
-                    text=body,
-                    ordinal=index,
-                    checksum=checksum,
-                )
-            )
-        return text_units
-
-    def _items_endpoint(self) -> str:
-        library_root = (
-            f"{settings.zotero_base_url}/"
-            f"{settings.zotero_library_type}s/{settings.zotero_library_id}"
+        return httpx.Client(
+            base_url=settings.zotero_base_url.rstrip("/") + "/",
+            headers=headers,
+            timeout=20.0,
+            follow_redirects=True,
         )
+
+    def _request_paginated(self, client: httpx.Client, path: str) -> list[dict]:
+        results: list[dict] = []
+        start = 0
+        limit = 100
+        while True:
+            response = self._request_with_retry(
+                client,
+                path,
+                params={"limit": limit, "start": start},
+            )
+            payload = response.json()
+            if not payload:
+                break
+            results.extend(payload)
+            if len(payload) < limit:
+                break
+            start += limit
+        return results
+
+    def _request_with_retry(
+        self,
+        client: httpx.Client,
+        path: str,
+        *,
+        params: dict[str, int | str],
+    ) -> httpx.Response:
+        for attempt in Retrying(
+            stop=stop_after_attempt(3),
+            wait=wait_exponential(multiplier=0.2, min=0.2, max=1.0),
+            retry=retry_if_exception(self._is_retryable_error),
+            reraise=True,
+        ):
+            with attempt:
+                response = client.get(path, params=params)
+                response.raise_for_status()
+                return response
+        raise RuntimeError("Zotero retry loop exhausted unexpectedly.")
+
+    def _library_path(self) -> str:
+        return f"{settings.zotero_library_type}s/{settings.zotero_library_id}"
+
+    def _top_items_path(self) -> str:
+        library_path = self._library_path()
         if settings.zotero_collection_key:
-            return f"{library_root}/collections/{settings.zotero_collection_key}/items/top"
-        return f"{library_root}/items/top"
+            return f"{library_path}/collections/{settings.zotero_collection_key}/items/top"
+        return f"{library_path}/items/top"
+
+    def _collection_key_from_item(self, data: dict) -> str | None:
+        collections = data.get("collections") or []
+        if settings.zotero_collection_key and settings.zotero_collection_key in collections:
+            return settings.zotero_collection_key
+        return collections[0] if collections else None
+
+    def _creator_name(self, creator: dict) -> str | None:
+        parts = [creator.get("firstName"), creator.get("lastName")]
+        full_name = " ".join(filter(None, parts)).strip()
+        return full_name or creator.get("name")
+
+    def _source_fragments(self, source: SourceRecord) -> list[str]:
+        fragments: list[str] = []
+        if source.abstract:
+            fragments.append(source.abstract)
+        metadata_bits = [
+            source.title,
+            f"Author: {source.author}" if source.author else None,
+            f"Year: {source.year}" if source.year else None,
+            f"Locator: {source.locator_hint}" if source.locator_hint else None,
+            f"URL: {source.url}" if source.url else None,
+        ]
+        metadata = ". ".join(bit for bit in metadata_bits if bit)
+        if metadata:
+            fragments.append(metadata)
+        return fragments
+
+    def _attachment_fragment(self, data: dict) -> str | None:
+        note_text = self._clean_text(data.get("note"))
+        bits = [
+            f"Attachment: {data.get('title')}" if data.get("title") else "Attachment item",
+            f"Content type: {data.get('contentType')}" if data.get("contentType") else None,
+            f"Filename: {data.get('filename')}" if data.get("filename") else None,
+            f"Path: {data.get('path')}" if data.get("path") else None,
+            f"Link mode: {data.get('linkMode')}" if data.get("linkMode") else None,
+            f"URL: {data.get('url')}" if data.get("url") else None,
+            f"Note: {note_text}" if note_text else None,
+        ]
+        fragment = ". ".join(bit for bit in bits if bit)
+        return fragment or None
+
+    def _build_text_unit(
+        self,
+        source: SourceRecord,
+        ordinal: int,
+        locator: str,
+        text: str,
+        *,
+        notes: str | None = None,
+    ) -> TextUnit:
+        checksum = sha1(text.encode()).hexdigest()
+        return TextUnit(
+            text_unit_id=f"text-{source.source_id}-{ordinal}",
+            source_id=source.source_id,
+            locator=locator,
+            text=text,
+            ordinal=ordinal,
+            checksum=checksum,
+            notes=notes,
+        )
+
+    def _clean_text(self, value: str | None) -> str | None:
+        if not value:
+            return None
+        with_breaks = HTML_BREAK_RE.sub("\n", value)
+        stripped = HTML_TAG_RE.sub(" ", with_breaks)
+        lines = [" ".join(unescape(line).split()) for line in stripped.splitlines()]
+        collapsed = "\n".join(line for line in lines if line)
+        return collapsed or None
+
+    def _child_provenance_notes(self, child_key: str | None, child_type: str) -> str:
+        parts = [f"zotero_child_type={child_type}"]
+        if child_key:
+            parts.insert(0, f"zotero_child_key={child_key}")
+        return "; ".join(parts)
+
+    def _is_retryable_error(self, exc: BaseException) -> bool:
+        if isinstance(exc, httpx.TimeoutException):
+            return True
+        if isinstance(exc, httpx.HTTPStatusError):
+            status_code = exc.response.status_code
+            return status_code in {408, 429} or status_code >= 500
+        return False
+
+    def _create_parent_item(self, payload: dict) -> str:
+        if not settings.zotero_library_id:
+            raise ZoteroWriteError("Zotero writes require ZOTERO_LIBRARY_ID.")
+        with self._client() as client:
+            response = client.post(
+                f"{self._library_path()}/items",
+                json=[payload],
+            )
+            try:
+                response.raise_for_status()
+            except httpx.HTTPError as exc:
+                raise ZoteroWriteError(f"Zotero parent item creation failed: {exc}") from exc
+        data = response.json()
+        key = ((data.get("successful") or {}).get("0") or {}).get("key")
+        if not key:
+            raise ZoteroWriteError("Zotero parent item creation did not return a key.")
+        return str(key)
+
+    def _create_child_note(self, parent_item_key: str, note_body: str) -> str:
+        with self._client() as client:
+            response = client.post(
+                f"{self._library_path()}/items",
+                json=[
+                    {
+                        "itemType": "note",
+                        "parentItem": parent_item_key,
+                        "note": note_body,
+                    }
+                ],
+            )
+            try:
+                response.raise_for_status()
+            except httpx.HTTPError as exc:
+                raise ZoteroWriteError(f"Zotero child note creation failed: {exc}") from exc
+        data = response.json()
+        key = ((data.get("successful") or {}).get("0") or {}).get("key")
+        if not key:
+            raise ZoteroWriteError("Zotero child note creation did not return a key.")
+        return str(key)
+
+    def _collections_list(self, request_collection_key: str | None) -> list[str]:
+        collection_key = request_collection_key or settings.zotero_collection_key
+        return [collection_key] if collection_key else []
+
+    def _creators_for_author(self, author: str | None) -> list[dict]:
+        if not author:
+            return []
+        parts = author.strip().split()
+        if len(parts) == 1:
+            return [{"creatorType": "author", "name": author.strip()}]
+        return [
+            {
+                "creatorType": "author",
+                "firstName": " ".join(parts[:-1]),
+                "lastName": parts[-1],
+            }
+        ]
+
+    def _zotero_item_type(self, source_type: str, *, has_url: bool) -> str:
+        if has_url:
+            return "webpage"
+        mapping = {
+            "document": "document",
+            "record": "document",
+            "chronicle": "manuscript",
+            "note": "document",
+        }
+        return mapping.get(source_type.lower(), "document")
+
+    def _extra_for_source_type(self, source_type: str) -> str:
+        return f"Sourcebound source_type: {source_type}"
+
+    def _text_note_body(self, text: str, notes: str | None) -> str:
+        fragments = []
+        if notes:
+            fragments.append(f"<p><strong>Sourcebound notes:</strong> {self._html_escape(notes)}</p>")
+        fragments.extend(f"<p>{self._html_escape(line)}</p>" for line in text.splitlines() if line.strip())
+        return "".join(fragments) or "<p></p>"
+
+    def _notes_only_body(self, notes: str) -> str:
+        return f"<p>{self._html_escape(notes)}</p>"
+
+    def _file_note_body(
+        self,
+        *,
+        filename: str,
+        content_type: str | None,
+        extracted_text: str,
+        notes: str | None,
+    ) -> str:
+        parts = [
+            f"<p><strong>Filename:</strong> {self._html_escape(filename)}</p>",
+            f"<p><strong>Content type:</strong> {self._html_escape(content_type or 'unknown')}</p>",
+        ]
+        if notes:
+            parts.append(f"<p><strong>Sourcebound notes:</strong> {self._html_escape(notes)}</p>")
+        parts.extend(
+            f"<p>{self._html_escape(line)}</p>" for line in extracted_text.splitlines() if line.strip()
+        )
+        return "".join(parts)
+
+    def _file_placeholder_text(self, filename: str, content_type: str | None, size: int) -> str:
+        return (
+            f"File ingested by Sourcebound.\n"
+            f"Filename: {filename}\n"
+            f"Content type: {content_type or 'unknown'}\n"
+            f"Byte size: {size}\n"
+            "Full binary attachment upload is not enabled yet."
+        )
+
+    def _extract_file_text(
+        self,
+        filename: str,
+        content_type: str | None,
+        content: bytes,
+    ) -> str | None:
+        guessed_content_type = content_type or mimetypes.guess_type(filename)[0] or ""
+        lower_name = filename.lower()
+        is_text_like = guessed_content_type.startswith("text/") or lower_name.endswith(
+            (".txt", ".md", ".markdown", ".json", ".csv", ".html", ".htm", ".xml")
+        )
+        if not is_text_like:
+            return None
+        try:
+            text = content.decode("utf-8")
+        except UnicodeDecodeError:
+            try:
+                text = content.decode("latin-1")
+            except UnicodeDecodeError:
+                return None
+        cleaned = self._clean_text(text) or text.strip()
+        return cleaned or None
+
+    def _html_escape(self, value: str) -> str:
+        return (
+            value.replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+        )
 
     def _stub_sources(self) -> list[SourceRecord]:
         return [
             SourceRecord(
                 source_id="src-1",
+                external_source="zotero",
+                external_id="src-1",
                 title="Municipal price records of Rouen",
                 author="City clerk",
                 year="1421",
                 source_type="record",
                 locator_hint="folios 10-14",
                 abstract="Bread prices rose sharply during the winter shortage.",
+                sync_status="imported",
+                raw_metadata_json={"itemType": "record", "title": "Municipal price records of Rouen"},
             ),
             SourceRecord(
                 source_id="src-2",
+                external_source="zotero",
+                external_id="src-2",
                 title="Later chronicle of unrest",
                 author="Anonymous chronicler",
                 year="1450",
                 source_type="chronicle",
                 locator_hint="chapter 7",
                 abstract="Townspeople whispered that merchants were withholding grain.",
+                sync_status="imported",
+                raw_metadata_json={"itemType": "chronicle", "title": "Later chronicle of unrest"},
             ),
         ]
+
+    def _stub_text_units(self, sources: list[SourceRecord]) -> list[TextUnit]:
+        text_units: list[TextUnit] = []
+        for source in sources:
+            for ordinal, fragment in enumerate(self._source_fragments(source), start=1):
+                text_units.append(self._build_text_unit(source, ordinal, "metadata", fragment))
+        return text_units
+
+    def _stub_source_documents(self, sources: list[SourceRecord]) -> list[SourceDocumentRecord]:
+        source_documents: list[SourceDocumentRecord] = []
+        for source in sources:
+            source.sync_status = "awaiting_text_extraction"
+            source_documents.append(
+                SourceDocumentRecord(
+                    document_id=f"zdoc-{source.source_id}-note",
+                    source_id=source.source_id,
+                    document_kind="note",
+                    external_id=f"{source.source_id}-note",
+                    filename="stub-note",
+                    mime_type="text/plain",
+                    ingest_status="imported",
+                    raw_text_status="ready",
+                    claim_extraction_status="queued",
+                    locator=source.locator_hint or "note",
+                    raw_text=source.abstract or source.title,
+                    raw_metadata_json={"stub": True},
+                )
+            )
+        return source_documents

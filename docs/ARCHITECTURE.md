@@ -18,7 +18,7 @@ Sources (Zotero)
   -> normalized text units
   -> candidate claims (GraphRAG)
   -> review decisions
-  -> approved claims + evidence (Wikibase)
+  -> approved claims + evidence (Postgres truth store by default)
   -> retrieval projection (Qdrant)
   -> provenance-aware answers
 ```
@@ -49,8 +49,10 @@ Examples:
 Concrete implementations of ports.
 Examples:
 - file-backed dev storage
+- Postgres truth-store adapter
 - Zotero API client
 - GraphRAG runner
+- file truth-store adapter
 - Wikibase adapter
 - Qdrant projection adapter
 
@@ -60,22 +62,39 @@ FastAPI routes and dependency wiring.
 ## Storage strategy
 
 ### Day-one development
-Use JSON files in `data/dev/`.
+Use JSON files in `data/dev/` for workflow state such as sources, text units, candidates, evidence, and review events.
+Approved claims also live locally in `data/dev/claims.json`.
 
 ### Real system
 - Zotero: source metadata + attachments
-- Wikibase: approved claims and evidence references
+- Postgres truth store: default approved-claim persistence during MVP work
+- file truth store: zero-infra dev fallback
+- Wikibase: optional later adapter for approved claims and evidence references
 - Qdrant: retrieval projection
 - Postgres: job state, review state, app-specific state
+
+## Epistemic canon tables
+
+The Postgres canon path now uses an epistemic schema instead of a single catch-all claims blob table.
+
+- `claims`: approved canonical claims with certainty, review status, time, place, and run provenance
+- `claim_evidence`: the evidence rows attached to each canonical claim, including source location metadata
+- `claim_reviews`: canon-side review records tied to approved claims
+- `claim_versions`: append-only snapshots for soft versioning
+- `claim_relationships`: explicit support, contradiction, and supersession links between canonical claims
+- `author_decisions`: explicit authorial choices for canonical claims
+- `source_documents`: canon-side source records referenced by approved evidence
+- `source_chunks`: canon-side source snippets/chunks referenced by approved evidence
 
 ## Why not store everything in Wikibase?
 
 Because the system contains several kinds of data with different responsibilities:
 
 - source-library concerns belong in Zotero
-- canonical reviewed claims belong in Wikibase
+- approved claims belong behind a truth-store port, with Postgres as the default for now
 - retrieval projections belong in Qdrant
 - workflow/application state belongs in app storage
+- app-state storage and truth storage remain separate concerns
 
 ## Review gate
 

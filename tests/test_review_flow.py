@@ -4,19 +4,38 @@ from source_aware_worldbuilding.adapters.file_backed import (
     FileCandidateStore,
     FileEvidenceStore,
     FileReviewStore,
-    FileTruthStore,
 )
 from source_aware_worldbuilding.cli import seed_dev_data
 from source_aware_worldbuilding.domain.enums import ClaimStatus, ReviewDecision, ReviewState
-from source_aware_worldbuilding.domain.models import ReviewRequest
+from source_aware_worldbuilding.domain.errors import WikibaseSyncError
+from source_aware_worldbuilding.domain.models import ApprovedClaim, ClaimRelationship, ReviewRequest
 from source_aware_worldbuilding.services.review import ReviewService
+
+
+class InMemoryTruthStore:
+    def __init__(self) -> None:
+        self.claims: dict[str, ApprovedClaim] = {}
+
+    def list_claims(self) -> list[ApprovedClaim]:
+        return list(self.claims.values())
+
+    def get_claim(self, claim_id: str) -> ApprovedClaim | None:
+        return self.claims.get(claim_id)
+
+    def list_relationships(self, claim_id: str | None = None) -> list[ClaimRelationship]:
+        _ = claim_id
+        return []
+
+    def save_claim(self, claim: ApprovedClaim, evidence=None, review=None) -> None:
+        _ = evidence, review
+        self.claims[claim.claim_id] = claim
 
 
 def build_review_service(
     data_dir: Path,
-) -> tuple[FileCandidateStore, FileTruthStore, FileReviewStore, ReviewService]:
+) -> tuple[FileCandidateStore, InMemoryTruthStore, FileReviewStore, ReviewService]:
     candidate_store = FileCandidateStore(data_dir)
-    truth_store = FileTruthStore(data_dir)
+    truth_store = InMemoryTruthStore()
     review_store = FileReviewStore(data_dir)
     evidence_store = FileEvidenceStore(data_dir)
     return (
@@ -42,6 +61,7 @@ def test_review_flow(temp_data_dir: Path) -> None:
     assert approved.status == ClaimStatus.PROBABLE
     assert approved.author_choice is False
     assert approved.evidence_ids == ["evi-1"]
+    assert approved.created_from_run_id == "seed-run"
     updated_candidate = candidate_store.get_candidate("cand-1")
     assert updated_candidate is not None
     assert updated_candidate.review_state == ReviewState.APPROVED
@@ -80,6 +100,7 @@ def test_review_override_can_mark_author_choice(temp_data_dir: Path) -> None:
     assert approved.status == ClaimStatus.AUTHOR_CHOICE
     assert approved.author_choice is True
     assert approved.notes == "Authorial call for the pilot."
+    assert approved.created_from_run_id == "seed-run"
     updated_candidate = candidate_store.get_candidate("cand-2")
     assert updated_candidate is not None
     assert updated_candidate.review_state == ReviewState.APPROVED
@@ -95,4 +116,34 @@ def test_review_missing_candidate_returns_none(temp_data_dir: Path) -> None:
         service.review_candidate("missing", ReviewRequest(decision=ReviewDecision.APPROVE)) is None
     )
     assert truth_store.list_claims() == []
+    assert review_store.list_reviews() == []
+
+
+class FailingTruthStore(InMemoryTruthStore):
+    def save_claim(self, claim, evidence=None, review=None) -> None:
+        _ = claim, evidence, review
+        raise WikibaseSyncError("Wikibase sync failed: upstream unavailable")
+
+
+def test_review_keeps_candidate_pending_when_wikibase_sync_fails(temp_data_dir: Path) -> None:
+    seed_dev_data()
+    candidate_store = FileCandidateStore(temp_data_dir)
+    review_store = FileReviewStore(temp_data_dir)
+    service = ReviewService(
+        candidate_store=candidate_store,
+        truth_store=FailingTruthStore(),
+        review_store=review_store,
+        evidence_store=FileEvidenceStore(temp_data_dir),
+    )
+
+    try:
+        service.review_candidate("cand-1", ReviewRequest(decision=ReviewDecision.APPROVE))
+    except WikibaseSyncError as exc:
+        assert "upstream unavailable" in str(exc)
+    else:
+        raise AssertionError("Expected WikibaseSyncError")
+
+    candidate = candidate_store.get_candidate("cand-1")
+    assert candidate is not None
+    assert candidate.review_state == ReviewState.PENDING
     assert review_store.list_reviews() == []
