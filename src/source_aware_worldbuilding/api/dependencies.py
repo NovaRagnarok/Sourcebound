@@ -3,9 +3,12 @@ from __future__ import annotations
 from pathlib import Path
 
 from source_aware_worldbuilding.adapters.file_backed import (
+    FileBibleProjectProfileStore,
+    FileBibleSectionStore,
     FileCandidateStore,
     FileEvidenceStore,
     FileExtractionRunStore,
+    FileJobStore,
     FileResearchFindingStore,
     FileResearchProgramStore,
     FileResearchRunStore,
@@ -19,9 +22,12 @@ from source_aware_worldbuilding.adapters.heuristic_extraction import (
     HeuristicExtractionAdapter,
 )
 from source_aware_worldbuilding.adapters.postgres_backed import (
+    PostgresBibleProjectProfileStore,
+    PostgresBibleSectionStore,
     PostgresCandidateStore,
     PostgresEvidenceStore,
     PostgresExtractionRunStore,
+    PostgresJobStore,
     PostgresResearchFindingStore,
     PostgresResearchProgramStore,
     PostgresResearchRunStore,
@@ -36,9 +42,12 @@ from source_aware_worldbuilding.adapters.qdrant_adapter import (
     QdrantResearchSemanticAdapter,
 )
 from source_aware_worldbuilding.adapters.sqlite_backed import (
+    SqliteBibleProjectProfileStore,
+    SqliteBibleSectionStore,
     SqliteCandidateStore,
     SqliteEvidenceStore,
     SqliteExtractionRunStore,
+    SqliteJobStore,
     SqliteResearchFindingStore,
     SqliteResearchProgramStore,
     SqliteResearchRunStore,
@@ -59,6 +68,8 @@ from source_aware_worldbuilding.adapters.wikibase_adapter import WikibaseTruthSt
 from source_aware_worldbuilding.adapters.zotero_adapter import ZoteroCorpusAdapter
 from source_aware_worldbuilding.services.ingestion import IngestionService
 from source_aware_worldbuilding.services.intake import IntakeService
+from source_aware_worldbuilding.services.bible import BibleWorkspaceService
+from source_aware_worldbuilding.services.jobs import JobService
 from source_aware_worldbuilding.services.lore_packet import LorePacketService
 from source_aware_worldbuilding.services.normalization import NormalizationService
 from source_aware_worldbuilding.services.query import QueryService
@@ -66,6 +77,10 @@ from source_aware_worldbuilding.services.research import ResearchService
 from source_aware_worldbuilding.services.review import ReviewService
 from source_aware_worldbuilding.settings import settings
 from source_aware_worldbuilding.domain.models import ResearchExecutionPolicy
+
+
+_job_service: JobService | None = None
+_job_service_key: tuple[object, ...] | None = None
 
 
 def _sqlite_path() -> Path:
@@ -170,6 +185,30 @@ def get_research_program_store():
     if settings.app_state_backend == "sqlite":
         return SqliteResearchProgramStore(_sqlite_path())
     return FileResearchProgramStore(settings.app_data_dir)
+
+
+def get_job_store():
+    if settings.app_state_backend == "postgres":
+        return PostgresJobStore(*_postgres_args())
+    if settings.app_state_backend == "sqlite":
+        return SqliteJobStore(_sqlite_path())
+    return FileJobStore(settings.app_data_dir)
+
+
+def get_bible_profile_store():
+    if settings.app_state_backend == "postgres":
+        return PostgresBibleProjectProfileStore(*_postgres_args())
+    if settings.app_state_backend == "sqlite":
+        return SqliteBibleProjectProfileStore(_sqlite_path())
+    return FileBibleProjectProfileStore(settings.app_data_dir)
+
+
+def get_bible_section_store():
+    if settings.app_state_backend == "postgres":
+        return PostgresBibleSectionStore(*_postgres_args())
+    if settings.app_state_backend == "sqlite":
+        return SqliteBibleSectionStore(_sqlite_path())
+    return FileBibleSectionStore(settings.app_data_dir)
 
 
 def get_truth_store():
@@ -326,3 +365,37 @@ def get_research_service() -> ResearchService:
         semantic_novelty_floor=settings.research_semantic_novelty_floor,
         semantic_rerank_weight=settings.research_semantic_rerank_weight,
     )
+
+
+def get_bible_workspace_service() -> BibleWorkspaceService:
+    return BibleWorkspaceService(
+        profile_store=get_bible_profile_store(),
+        section_store=get_bible_section_store(),
+        truth_store=get_truth_store(),
+        evidence_store=get_evidence_store(),
+        source_store=get_source_store(),
+        projection=get_projection(),
+    )
+
+
+def get_job_service() -> JobService:
+    global _job_service, _job_service_key
+    key = (
+        settings.app_state_backend,
+        str(settings.app_data_dir),
+        str(settings.app_sqlite_path),
+        settings.app_postgres_dsn,
+        settings.app_postgres_schema,
+        settings.app_job_poll_interval_seconds,
+    )
+    if _job_service is None or _job_service_key != key:
+        if _job_service is not None:
+            _job_service.stop_worker()
+        _job_service = JobService(
+            job_store=get_job_store(),
+            research_service=get_research_service(),
+            bible_service=get_bible_workspace_service(),
+            poll_interval_seconds=settings.app_job_poll_interval_seconds,
+        )
+        _job_service_key = key
+    return _job_service

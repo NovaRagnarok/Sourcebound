@@ -31,6 +31,29 @@ TABLE_DEFINITIONS = {
         claim_extraction_status TEXT NOT NULL,
         payload JSONB NOT NULL
     """,
+    "source_documents": """
+        id UUID PRIMARY KEY,
+        source_id TEXT NOT NULL UNIQUE,
+        project_id TEXT NOT NULL,
+        title TEXT,
+        source_type TEXT,
+        created_at TIMESTAMPTZ NOT NULL,
+        updated_at TIMESTAMPTZ NOT NULL,
+        metadata_json JSONB
+    """,
+    "source_chunks": """
+        id UUID PRIMARY KEY,
+        chunk_id TEXT NOT NULL UNIQUE,
+        source_document_id UUID REFERENCES source_documents(id) ON DELETE CASCADE,
+        source_id TEXT NOT NULL,
+        locator TEXT NOT NULL,
+        text_content TEXT NOT NULL,
+        text_unit_id TEXT,
+        checksum TEXT,
+        metadata_json JSONB,
+        created_at TIMESTAMPTZ NOT NULL,
+        updated_at TIMESTAMPTZ NOT NULL
+    """,
     "extraction_runs": """
         run_id TEXT PRIMARY KEY,
         started_at TIMESTAMPTZ NOT NULL,
@@ -74,28 +97,25 @@ TABLE_DEFINITIONS = {
         built_in BOOLEAN NOT NULL,
         payload JSONB NOT NULL
     """,
-    "source_documents": """
-        id UUID PRIMARY KEY,
-        source_id TEXT NOT NULL UNIQUE,
-        project_id TEXT NOT NULL,
-        title TEXT,
-        source_type TEXT,
+    "jobs": """
+        job_id TEXT PRIMARY KEY,
+        status TEXT NOT NULL,
+        job_type TEXT NOT NULL,
         created_at TIMESTAMPTZ NOT NULL,
-        updated_at TIMESTAMPTZ NOT NULL,
-        metadata_json JSONB
+        payload JSONB NOT NULL
     """,
-    "source_chunks": """
-        id UUID PRIMARY KEY,
-        chunk_id TEXT NOT NULL UNIQUE,
-        source_document_id UUID REFERENCES source_documents(id) ON DELETE CASCADE,
-        source_id TEXT NOT NULL,
-        locator TEXT NOT NULL,
-        text_content TEXT NOT NULL,
-        text_unit_id TEXT,
-        checksum TEXT,
-        metadata_json JSONB,
-        created_at TIMESTAMPTZ NOT NULL,
-        updated_at TIMESTAMPTZ NOT NULL
+    "bible_project_profiles": """
+        project_id TEXT PRIMARY KEY,
+        project_name TEXT NOT NULL,
+        updated_at TIMESTAMPTZ NOT NULL,
+        payload JSONB NOT NULL
+    """,
+    "bible_sections": """
+        section_id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL,
+        section_type TEXT NOT NULL,
+        updated_at TIMESTAMPTZ NOT NULL,
+        payload JSONB NOT NULL
     """,
     "claims": """
         id UUID PRIMARY KEY,
@@ -193,6 +213,9 @@ TABLE_ORDER = [
     "research_findings",
     "research_runs",
     "research_programs",
+    "jobs",
+    "bible_sections",
+    "bible_project_profiles",
     "evidence",
     "candidates",
     "extraction_runs",

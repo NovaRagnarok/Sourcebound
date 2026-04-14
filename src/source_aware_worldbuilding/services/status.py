@@ -14,9 +14,12 @@ def build_runtime_status() -> RuntimeStatus:
     services = [
         _state_store_status(),
         _truth_store_status(),
+        _bible_workspace_status(),
+        _bible_export_status(),
         _corpus_status(),
         _extraction_status(),
         _projection_status(),
+        _job_worker_status(),
     ]
     next_steps = _next_steps(services)
     overall_status = "ready" if all(service.ready for service in services) else "needs_setup"
@@ -162,6 +165,64 @@ def _corpus_status() -> RuntimeDependencyStatus:
     )
 
 
+def _bible_workspace_status() -> RuntimeDependencyStatus:
+    if settings.app_state_backend == "postgres":
+        return RuntimeDependencyStatus(
+            name="bible_workspace",
+            role="Bible profiles, sections, and provenance state",
+            mode="postgres",
+            reachable=None,
+            ready=True,
+            detail="Bible workspace state shares the configured Postgres app-state store.",
+        )
+    if settings.app_state_backend == "sqlite":
+        sqlite_path = Path(settings.app_sqlite_path)
+        writable = sqlite_path.parent.exists() or _can_create_directory(sqlite_path.parent)
+        return RuntimeDependencyStatus(
+            name="bible_workspace",
+            role="Bible profiles, sections, and provenance state",
+            mode="sqlite",
+            reachable=None,
+            ready=writable,
+            detail=(
+                f"Bible workspace state persists in SQLite at {settings.app_sqlite_path}."
+                if writable
+                else f"SQLite bible workspace path is not writable: {sqlite_path.parent}"
+            ),
+        )
+    data_dir = settings.app_data_dir
+    ready = data_dir.exists() or _can_create_directory(data_dir)
+    return RuntimeDependencyStatus(
+        name="bible_workspace",
+        role="Bible profiles, sections, and provenance state",
+        mode="file",
+        reachable=None,
+        ready=ready,
+        detail=(
+            f"Bible workspace state persists in {settings.app_data_dir}."
+            if ready
+            else f"Bible workspace directory is not writable: {settings.app_data_dir}"
+        ),
+    )
+
+
+def _bible_export_status() -> RuntimeDependencyStatus:
+    worker_ready = settings.app_job_worker_enabled
+    return RuntimeDependencyStatus(
+        name="bible_export",
+        role="Background bible export bundles",
+        mode="job_backed",
+        configured=True,
+        reachable=None,
+        ready=worker_ready,
+        detail=(
+            "Bible export runs as a persisted background job and returns bundles through job results."
+            if worker_ready
+            else "Bible export can still be requested, but the background worker is disabled so queued export jobs will not auto-run."
+        ),
+    )
+
+
 def _extraction_status() -> RuntimeDependencyStatus:
     if not settings.graph_rag_enabled:
         return RuntimeDependencyStatus(
@@ -193,8 +254,8 @@ def _projection_status() -> RuntimeDependencyStatus:
             mode="disabled",
             configured=False,
             reachable=None,
-            ready=False,
-            detail="Qdrant projection is disabled; query falls back to in-memory ranking.",
+            ready=True,
+            detail="Qdrant projection is optional and disabled; query falls back to in-memory ranking.",
         )
 
     reachable, detail = _probe_http(settings.qdrant_url, path="/collections")
@@ -209,6 +270,22 @@ def _projection_status() -> RuntimeDependencyStatus:
     )
 
 
+def _job_worker_status() -> RuntimeDependencyStatus:
+    return RuntimeDependencyStatus(
+        name="job_worker",
+        role="Persisted background research and bible jobs",
+        mode="in_process",
+        configured=settings.app_job_worker_enabled,
+        reachable=None,
+        ready=settings.app_job_worker_enabled,
+        detail=(
+            f"In-process worker enabled with {settings.app_job_poll_interval_seconds}s polling."
+            if settings.app_job_worker_enabled
+            else "Background job worker is disabled; long-running routes will queue without auto-processing."
+        ),
+    )
+
+
 def _next_steps(services: list[RuntimeDependencyStatus]) -> list[str]:
     steps: list[str] = []
     by_name = {service.name: service for service in services}
@@ -217,10 +294,22 @@ def _next_steps(services: list[RuntimeDependencyStatus]) -> list[str]:
         steps.append(
             "Set ZOTERO_LIBRARY_ID to pull a real pilot corpus instead of stub sources."
         )
-    if by_name["projection"].ready is False:
+    if by_name["bible_workspace"].ready is False:
+        steps.append(
+            "Choose a writable app-state location so Bible profiles, sections, and provenance can persist safely."
+        )
+    if by_name["job_worker"].ready is False:
+        steps.append(
+            "Enable APP_JOB_WORKER_ENABLED=true so research, Bible regeneration, and export jobs run without manual intervention."
+        )
+    if settings.qdrant_enabled and by_name["projection"].ready is False:
         steps.append(
             "Run `docker compose up -d qdrant` and set QDRANT_ENABLED=true "
             "to exercise projection-backed retrieval."
+        )
+    elif not settings.qdrant_enabled:
+        steps.append(
+            "Set QDRANT_ENABLED=true and run `docker compose up -d qdrant` for recommended local retrieval quality."
         )
     if settings.app_truth_backend == "postgres" and by_name["truth_store"].ready is False:
         steps.append(

@@ -146,6 +146,14 @@ class HeuristicExtractionAdapter:
             return [("rumored_that", self._after_phrase(normalized, "whispered that"))]
         if " at " in lower and re.search(r"\b(?:club|venue|warehouse|radio|residency|record pool|label)\b", lower):
             return [("occurred_at", normalized)]
+        if " record pool " in f" {lower} ":
+            return [("distributed_via", normalized)]
+        if " radio " in f" {lower} " or " radio show " in f" {lower} ":
+            return [("aired_on", normalized)]
+        if any(term in lower for term in ("vinyl", "cdj", "turntable", "mixtape")):
+            return [("used", normalized)]
+        if " flyer " in f" {lower} " or " flyers " in f" {lower} ":
+            return [("promoted_with", normalized)]
         if " hosted " in lower or " host " in lower:
             return [("hosted", normalized)]
         if " featured " in lower or " features " in lower:

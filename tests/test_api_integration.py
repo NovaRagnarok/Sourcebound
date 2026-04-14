@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import time
+
 from fastapi.testclient import TestClient
 
 from source_aware_worldbuilding.api.dependencies import (
@@ -27,6 +29,18 @@ from source_aware_worldbuilding.domain.models import (
 )
 from source_aware_worldbuilding.domain.enums import ClaimKind, ClaimStatus
 from source_aware_worldbuilding.storage.json_store import JsonListStore
+
+
+def wait_for_job(client: TestClient, job_id: str, *, attempts: int = 40) -> dict:
+    last_body: dict = {}
+    for _ in range(attempts):
+        response = client.get(f"/v1/jobs/{job_id}")
+        assert response.status_code == 200
+        last_body = response.json()
+        if last_body.get("status_label") in {"completed", "failed", "cancelled", "partial"} or last_body["status"] in {"completed", "failed", "cancelled"}:
+            return last_body
+        time.sleep(0.05)
+    return last_body
 
 
 def populate_lore_packet_fixtures(data_dir) -> None:
@@ -124,12 +138,23 @@ def test_openapi_includes_operator_mvp_routes() -> None:
     paths = set(app.openapi()["paths"])
     assert {
         "/health",
+        "/v1/bible/profiles",
+        "/v1/bible/profiles/{project_id}",
+        "/v1/bible/sections",
+        "/v1/bible/sections/{section_id}",
+        "/v1/bible/sections/{section_id}/regenerate",
+        "/v1/bible/sections/{section_id}/provenance",
+        "/v1/bible/exports/{project_id}",
+        "/v1/jobs/{job_id}/cancel",
+        "/v1/jobs/{job_id}/retry",
         "/v1/ingest/zotero/pull",
         "/v1/ingest/normalize-documents",
         "/v1/ingest/extract-candidates",
         "/v1/intake/text",
         "/v1/intake/url",
         "/v1/intake/file",
+        "/v1/jobs",
+        "/v1/jobs/{job_id}",
         "/v1/sources",
         "/v1/sources/{source_id}",
         "/v1/extraction-runs",
@@ -155,7 +180,11 @@ def test_operator_flow_routes_share_file_backed_state(temp_data_dir) -> None:
     with TestClient(app) as client:
         sources_before = client.get("/v1/sources")
         assert sources_before.status_code == 200
-        assert len(sources_before.json()) == 2
+        assert len(sources_before.json()) == 10
+        claims_before = client.get("/v1/claims")
+        assert claims_before.status_code == 200
+        initial_claim_count = len(claims_before.json())
+        assert initial_claim_count == 9
 
         pull_response = client.post("/v1/ingest/zotero/pull")
         assert pull_response.status_code == 200
@@ -186,10 +215,11 @@ def test_operator_flow_routes_share_file_backed_state(temp_data_dir) -> None:
         )
         assert approve_response.status_code == 200
         assert approve_response.json()["status"] == "approved"
+        approved_claim_id = approve_response.json()["claim"]["claim_id"]
 
-        source_detail = client.get("/v1/sources/src-1")
+        source_detail = client.get("/v1/sources/src-price-ledger")
         assert source_detail.status_code == 200
-        assert source_detail.json()["source"]["source_id"] == "src-1"
+        assert source_detail.json()["source"]["source_id"] == "src-price-ledger"
         assert source_detail.json()["text_units"]
 
         candidate_detail = client.get(f"/v1/candidates/{first_candidate_id}")
@@ -198,11 +228,9 @@ def test_operator_flow_routes_share_file_backed_state(temp_data_dir) -> None:
 
         claims_response = client.get("/v1/claims")
         assert claims_response.status_code == 200
-        assert len(claims_response.json()) == 1
+        assert len(claims_response.json()) == initial_claim_count + 1
 
-        relationships_before = client.get(
-            f"/v1/claims/{claims_response.json()[0]['claim_id']}/relationships"
-        )
+        relationships_before = client.get(f"/v1/claims/{approved_claim_id}/relationships")
         assert relationships_before.status_code == 200
         assert relationships_before.json() == []
 
@@ -231,7 +259,7 @@ def test_review_route_surfaces_wikibase_sync_failures(temp_data_dir) -> None:
 
     with TestClient(app) as client:
         response = client.post(
-            "/v1/candidates/cand-1/review",
+            "/v1/candidates/cand-grain-bell-beadles/review",
             json={"decision": "approve"},
         )
 
@@ -255,6 +283,76 @@ def test_lore_packet_export_route_returns_markdown_packet(temp_data_dir) -> None
     assert body["metadata"]["claim_count"] == 5
     assert "Basic Lore" in body["files"][0]["content"]
     assert "Timeline" in body["files"][1]["content"]
+
+
+def test_bible_workspace_routes_support_profile_section_and_export(temp_data_dir) -> None:
+    populate_lore_packet_fixtures(temp_data_dir)
+
+    with TestClient(app) as client:
+        profile = client.put(
+            "/v1/bible/profiles/project-greyport",
+            json={
+                "project_name": "Greyport Bible",
+                "era": "1201",
+                "geography": "Greyport",
+                "composition_defaults": {"include_statuses": ["verified", "probable"]},
+            },
+        )
+        assert profile.status_code == 200
+        assert profile.json()["project_name"] == "Greyport Bible"
+
+        section = client.post(
+            "/v1/bible/sections",
+            json={
+                "project_id": "project-greyport",
+                "section_type": "setting_overview",
+                "filters": {"place": "Greyport"},
+            },
+        )
+        assert section.status_code == 202
+        section_job = wait_for_job(client, section.json()["job_id"])
+        assert section_job["status"] == "completed"
+        section_id = section_job["result_ref"]["section_id"]
+        section_record = client.get(f"/v1/bible/sections/{section_id}")
+        assert section_record.status_code == 200
+        assert section_record.json()["references"]["claim_ids"]
+
+        edited = client.put(
+            f"/v1/bible/sections/{section_id}",
+            json={"title": "Setting Notes", "content": "Manual setting notes"},
+        )
+        assert edited.status_code == 200
+        assert edited.json()["has_manual_edits"] is True
+
+        regenerated = client.post(
+            f"/v1/bible/sections/{section_id}/regenerate",
+            json={"filters": {"place": "Greyport"}},
+        )
+        assert regenerated.status_code == 202
+        regenerate_job = wait_for_job(client, regenerated.json()["job_id"])
+        assert regenerate_job["status"] == "completed"
+        refreshed = client.get(f"/v1/bible/sections/{section_id}")
+        assert refreshed.status_code == 200
+        assert refreshed.json()["content"] == "Manual setting notes"
+        assert refreshed.json()["generated_markdown"]
+
+        provenance = client.get(f"/v1/bible/sections/{section_id}/provenance")
+        assert provenance.status_code == 200
+        assert provenance.json()["paragraphs"]
+        assert provenance.json()["paragraphs"][0]["why_this_paragraph_exists"]
+        assert provenance.json()["paragraphs"][0]["claim_details"]
+        assert provenance.json()["paragraphs"][0]["evidence_details"]
+
+        exported = client.get("/v1/bible/exports/project-greyport")
+        assert exported.status_code == 200
+        assert exported.json()["profile"]["project_name"] == "Greyport Bible"
+        assert len(exported.json()["sections"]) == 1
+
+        export_job = client.post("/v1/bible/exports/project-greyport")
+        assert export_job.status_code == 202
+        completed_export = wait_for_job(client, export_job.json()["job_id"])
+        assert completed_export["status"] == "completed"
+        assert completed_export["result_payload"]["profile"]["project_name"] == "Greyport Bible"
 
 
 def test_lore_packet_route_surfaces_canon_unavailable_errors(temp_data_dir) -> None:
@@ -303,19 +401,171 @@ def test_research_routes_accept_nested_execution_policy_and_curated_inputs(temp_
                 }
             },
         )
+        assert response.status_code == 202
+        job = wait_for_job(client, response.json()["job_id"])
+        assert job["status"] == "completed"
+        detail = client.get(f"/v1/research/runs/{job['result_ref']['run_id']}")
+        assert detail.status_code == 200
+        body = detail.json()
+        assert body["run"]["status"] in {"completed", "degraded_fallback"}
+        assert body["run"]["brief"]["adapter_id"] == "curated_inputs"
+        assert body["run"]["telemetry"]["total_queries"] == 0
+        assert body["findings"]
+        assert body["findings"][0]["provenance"]["fetch_outcome"] == "curated_text"
+        assert "normalized_title" in body["findings"][0]["provenance"]["scoring"]
+        assert "semantic_novelty_score" in body["findings"][0]["provenance"]["scoring"]
+        assert body["facet_coverage"]
+        assert "diagnostic_summary" in body["facet_coverage"][0]
+        assert "semantic" in body["run"]["telemetry"]
 
-    assert response.status_code == 200
-    body = response.json()
-    assert body["run"]["status"] == "completed"
-    assert body["run"]["brief"]["adapter_id"] == "curated_inputs"
-    assert body["run"]["telemetry"]["total_queries"] == 0
-    assert body["findings"]
-    assert body["findings"][0]["provenance"]["fetch_outcome"] == "curated_text"
-    assert "normalized_title" in body["findings"][0]["provenance"]["scoring"]
-    assert "semantic_novelty_score" in body["findings"][0]["provenance"]["scoring"]
-    assert body["facet_coverage"]
-    assert "diagnostic_summary" in body["facet_coverage"][0]
-    assert "semantic" in body["run"]["telemetry"]
+
+def test_async_author_flow_uses_background_jobs_end_to_end(temp_data_dir) -> None:
+    project_id = "project-author-flow"
+
+    with TestClient(app) as client:
+        profile = client.put(
+            f"/v1/bible/profiles/{project_id}",
+                json={
+                    "project_name": "Author Flow Demo",
+                    "era": "1421-1422 winter shortage",
+                    "geography": "Rouen",
+                    "narrative_focus": "market control and winter scarcity",
+                    "desired_facets": ["economics", "institutions"],
+                    "composition_defaults": {"include_statuses": ["verified", "probable"]},
+                },
+            )
+        assert profile.status_code == 200
+
+        create_run = client.post(
+            "/v1/research/runs",
+            json={
+                "program_id": "historical-daily-life",
+                    "brief": {
+                        "topic": "Rouen winter shortage daily life",
+                        "focal_year": "1422",
+                        "time_start": "1421-12-01",
+                        "time_end": "1422-02-28",
+                        "locale": "Rouen",
+                        "audience": "historical fiction authors",
+                        "adapter_id": "curated_inputs",
+                        "desired_facets": ["practices"],
+                        "curated_inputs": [
+                            {
+                                "input_type": "text",
+                                "title": "Archive workflow note on bread scrip distribution",
+                                "text": (
+                                    "Rouen bakers described the routine workflow for stamped bread scrip "
+                                    "distribution at the market gate in 1422, and neighbors compared "
+                                    "the tokens before dawn. "
+                                    "Rouen bakers were paid in bread scrip during the winter of 1422, "
+                                    "and neighbors compared the stamped tokens at the market gate."
+                                ),
+                                "source_type": "archive",
+                                "published_at": "1422-01-18",
+                            }
+                        ],
+                },
+            },
+        )
+        assert create_run.status_code == 202
+        create_job = wait_for_job(client, create_run.json()["job_id"])
+        assert create_job["status"] == "completed"
+        run_id = create_job["result_ref"]["run_id"]
+
+        run_detail = client.get(f"/v1/research/runs/{run_id}")
+        assert run_detail.status_code == 200
+        detail_body = run_detail.json()
+        assert detail_body["findings"]
+        assert detail_body["facet_coverage"]
+        assert detail_body["run"]["latest_job"]["job_id"] == create_job["job_id"]
+
+        stage_response = client.post(f"/v1/research/runs/{run_id}/stage")
+        assert stage_response.status_code == 202
+        stage_job = wait_for_job(client, stage_response.json()["job_id"])
+        assert stage_job["status"] == "completed"
+
+        staged_detail = client.get(f"/v1/research/runs/{run_id}")
+        assert staged_detail.status_code == 200
+        staged_findings = staged_detail.json()["findings"]
+        accepted_findings = [item for item in staged_findings if item["decision"] == "accepted"]
+        assert accepted_findings
+        assert all(item["staged_source_id"] for item in accepted_findings)
+        assert all(item["staged_document_id"] for item in accepted_findings)
+
+        extract_response = client.post(f"/v1/research/runs/{run_id}/extract")
+        assert extract_response.status_code == 202
+        extract_job = wait_for_job(client, extract_response.json()["job_id"])
+        assert extract_job["status"] == "completed"
+
+        extracted_detail = client.get(f"/v1/research/runs/{run_id}")
+        assert extracted_detail.status_code == 200
+        extracted_body = extracted_detail.json()
+        extraction_run_id = extracted_body["run"]["extraction_run_id"]
+        assert extraction_run_id
+
+        pending_candidates = client.get("/v1/candidates?review_state=pending")
+        assert pending_candidates.status_code == 200
+        new_candidates = [
+            item
+            for item in pending_candidates.json()
+            if item["extractor_run_id"] == extraction_run_id
+        ]
+        assert new_candidates
+        candidate_to_approve = next(
+            (
+                item
+                for item in new_candidates
+                if item["claim_kind"] in {"practice", "object"}
+            ),
+            new_candidates[0],
+        )
+
+        approve_response = client.post(
+            f"/v1/candidates/{candidate_to_approve['candidate_id']}/review",
+            json={"decision": "approve"},
+        )
+        assert approve_response.status_code == 200
+        approved_claim_id = approve_response.json()["claim"]["claim_id"]
+
+        compose_section = client.post(
+            "/v1/bible/sections",
+            json={
+                "project_id": project_id,
+                "section_type": "economics_and_material_culture",
+                "filters": {
+                    "statuses": ["verified", "probable"],
+                },
+            },
+        )
+        assert compose_section.status_code == 202
+        section_job = wait_for_job(client, compose_section.json()["job_id"])
+        assert section_job["status"] == "completed"
+        section_id = section_job["result_ref"]["section_id"]
+
+        section = client.get(f"/v1/bible/sections/{section_id}")
+        assert section.status_code == 200
+        section_body = section.json()
+        assert section_body["references"]["claim_ids"]
+        assert approved_claim_id in section_body["references"]["claim_ids"]
+        assert section_body["latest_job"]["job_id"] == section_job["job_id"]
+
+        provenance = client.get(f"/v1/bible/sections/{section_id}/provenance")
+        assert provenance.status_code == 200
+        provenance_body = provenance.json()
+        assert provenance_body["paragraphs"]
+        assert any(
+            approved_claim_id in item["paragraph"]["claim_ids"]
+            for item in provenance_body["paragraphs"]
+        )
+        assert any(item["sources"] for item in provenance_body["paragraphs"])
+
+        export_job_response = client.post(f"/v1/bible/exports/{project_id}")
+        assert export_job_response.status_code == 202
+        export_job = wait_for_job(client, export_job_response.json()["job_id"])
+        assert export_job["status"] == "completed"
+        export_body = export_job["result_payload"]
+        assert export_body["profile"]["project_id"] == project_id
+        assert any(item["section_id"] == section_id for item in export_body["sections"])
 
 
 def test_intake_routes_return_shared_result_shapes(temp_data_dir) -> None:

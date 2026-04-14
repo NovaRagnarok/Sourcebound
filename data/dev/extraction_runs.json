@@ -1,13 +1,24 @@
 [
   {
-    "run_id": "seed-run",
+    "run_id": "extract-rouen-core",
+    "status": "completed",
+    "source_count": 8,
+    "text_unit_count": 8,
+    "candidate_count": 4,
+    "started_at": "2026-04-12T08:05:00+00:00",
+    "completed_at": "2026-04-12T08:07:00+00:00",
+    "error": null,
+    "notes": "Core offline fixture extraction across the historical source pack."
+  },
+  {
+    "run_id": "extract-research-rouen",
     "status": "completed",
     "source_count": 2,
     "text_unit_count": 2,
     "candidate_count": 2,
-    "started_at": "2026-04-12T00:00:00+00:00",
-    "completed_at": "2026-04-12T00:00:00+00:00",
+    "started_at": "2026-04-12T10:55:00+00:00",
+    "completed_at": "2026-04-12T10:57:00+00:00",
     "error": null,
-    "notes": "Seeded development run."
+    "notes": "Extraction of staged findings from the accepted research run."
   }
 ]

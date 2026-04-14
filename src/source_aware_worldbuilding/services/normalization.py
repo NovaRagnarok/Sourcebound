@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from hashlib import sha1
 
 from source_aware_worldbuilding.domain.models import SourceDocumentRecord, TextUnit
@@ -20,6 +21,7 @@ class NormalizationService:
         *,
         document_ids: list[str] | None = None,
         source_ids: list[str] | None = None,
+        checkpoint: Callable[[], None] | None = None,
     ) -> dict[str, object]:
         documents = self.source_document_store.list_source_documents(raw_text_status="ready")
         document_id_filter = set(document_ids or [])
@@ -33,6 +35,8 @@ class NormalizationService:
         warnings: list[str] = []
 
         for document in documents:
+            if checkpoint is not None:
+                checkpoint()
             if document.claim_extraction_status not in {"queued", "failed"}:
                 continue
             if not document.raw_text:

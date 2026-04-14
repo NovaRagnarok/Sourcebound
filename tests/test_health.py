@@ -43,6 +43,10 @@ def test_runtime_health_reports_local_mvp_mode(monkeypatch) -> None:
         service["name"] == "projection" and service["mode"] == "disabled"
         for service in body["services"]
     )
+    assert any(
+        service["name"] == "bible_export" and service["mode"] == "job_backed"
+        for service in body["services"]
+    )
     assert any("ZOTERO_LIBRARY_ID" in step for step in body["next_steps"])
     assert not any("WIKIBASE_API_URL" in step for step in body["next_steps"])
 

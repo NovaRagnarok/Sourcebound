@@ -6,9 +6,12 @@ from typing import Literal
 from pydantic import BaseModel, Field, model_validator
 
 from source_aware_worldbuilding.domain.enums import (
+    BibleSectionType,
+    BibleTone,
     ClaimKind,
     ClaimStatus,
     ExtractionRunStatus,
+    JobStatus,
     QueryMode,
     ResearchCoverageStatus,
     ResearchFindingDecision,
@@ -200,9 +203,16 @@ class ReviewRequest(BaseModel):
 
 class QueryFilter(BaseModel):
     status: ClaimStatus | None = None
+    include_statuses: list[ClaimStatus] = Field(default_factory=list)
     claim_kind: ClaimKind | None = None
     place: str | None = None
     viewpoint_scope: str | None = None
+    source_types: list[str] = Field(default_factory=list)
+    time_start: str | None = None
+    time_end: str | None = None
+    relationship_types: list[
+        Literal["supports", "contradicts", "supersedes", "superseded_by"]
+    ] = Field(default_factory=list)
 
 
 class QueryRequest(BaseModel):
@@ -249,6 +259,7 @@ class QueryResultMetadata(BaseModel):
     retrieval_backend: Literal["memory", "qdrant"] = "memory"
     fallback_used: bool = False
     fallback_reason: str | None = None
+    ranking_strategy: Literal["lexical", "blended", "projection_only"] = "lexical"
 
 
 class ProjectionSearchResult(BaseModel):
@@ -327,7 +338,275 @@ class QueryResult(BaseModel):
     evidence: list[EvidenceSnippet] = Field(default_factory=list)
     sources: list[SourceRecord] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
+    certainty_summary: dict[str, int] = Field(default_factory=dict)
+    coverage_gaps: list[str] = Field(default_factory=list)
+    contradiction_flags: list[str] = Field(default_factory=list)
+    recommended_next_research: list[str] = Field(default_factory=list)
     metadata: QueryResultMetadata = Field(default_factory=QueryResultMetadata)
+
+
+class BibleCompositionDefaults(BaseModel):
+    include_statuses: list[ClaimStatus] = Field(
+        default_factory=lambda: [ClaimStatus.VERIFIED, ClaimStatus.PROBABLE]
+    )
+    source_types: list[str] = Field(default_factory=list)
+    focus: str | None = None
+
+
+class BibleProjectProfile(BaseModel):
+    project_id: str
+    project_name: str
+    era: str | None = None
+    time_start: str | None = None
+    time_end: str | None = None
+    geography: str | None = None
+    social_lens: str | None = None
+    narrative_focus: str | None = None
+    taboo_topics: list[str] = Field(default_factory=list)
+    desired_facets: list[str] = Field(default_factory=list)
+    tone: BibleTone = BibleTone.GROUNDED_LITERARY
+    composition_defaults: BibleCompositionDefaults = Field(
+        default_factory=BibleCompositionDefaults
+    )
+    created_at: str = Field(default_factory=utc_now)
+    updated_at: str = Field(default_factory=utc_now)
+
+
+class BibleProjectProfileUpdateRequest(BaseModel):
+    project_name: str
+    era: str | None = None
+    time_start: str | None = None
+    time_end: str | None = None
+    geography: str | None = None
+    social_lens: str | None = None
+    narrative_focus: str | None = None
+    taboo_topics: list[str] = Field(default_factory=list)
+    desired_facets: list[str] = Field(default_factory=list)
+    tone: BibleTone = BibleTone.GROUNDED_LITERARY
+    composition_defaults: BibleCompositionDefaults = Field(
+        default_factory=BibleCompositionDefaults
+    )
+
+
+class BibleSectionReference(BaseModel):
+    claim_ids: list[str] = Field(default_factory=list)
+    evidence_ids: list[str] = Field(default_factory=list)
+    source_ids: list[str] = Field(default_factory=list)
+    certainty_buckets: list[ClaimStatus] = Field(default_factory=list)
+
+
+class BibleCoverageBucket(BaseModel):
+    label: str
+    count: int = 0
+
+
+class BibleCoverageAnalysis(BaseModel):
+    desired_facets: list[str] = Field(default_factory=list)
+    facet_distribution: dict[str, int] = Field(default_factory=dict)
+    missing_facets: list[str] = Field(default_factory=list)
+    certainty_mix: dict[str, int] = Field(default_factory=dict)
+    time_coverage: list[BibleCoverageBucket] = Field(default_factory=list)
+    place_coverage: list[BibleCoverageBucket] = Field(default_factory=list)
+    missing_named_actors: bool = False
+    missing_material_detail: bool = False
+    missing_dated_anchors: bool = False
+    diagnostic_summary: str | None = None
+
+
+class BibleSectionParagraph(BaseModel):
+    paragraph_id: str
+    heading: str | None = None
+    text: str
+    paragraph_kind: str = "summary"
+    claim_ids: list[str] = Field(default_factory=list)
+    evidence_ids: list[str] = Field(default_factory=list)
+    source_ids: list[str] = Field(default_factory=list)
+    contradiction_flags: list[str] = Field(default_factory=list)
+    supersession_flags: list[str] = Field(default_factory=list)
+
+
+class BibleParagraphProvenance(BaseModel):
+    paragraph: BibleSectionParagraph
+    claims: list[ApprovedClaim] = Field(default_factory=list)
+    evidence: list[EvidenceSnippet] = Field(default_factory=list)
+    sources: list[SourceRecord] = Field(default_factory=list)
+    contradiction_context: list[str] = Field(default_factory=list)
+    supersession_context: list[str] = Field(default_factory=list)
+    provenance_scope: Literal["canon_support", "contested_context", "author_guidance"] = (
+        "canon_support"
+    )
+    why_this_paragraph_exists: str | None = None
+    claim_details: list[dict[str, object]] = Field(default_factory=list)
+    evidence_details: list[dict[str, object]] = Field(default_factory=list)
+    contradiction_details: list[dict[str, object]] = Field(default_factory=list)
+    supersession_details: list[dict[str, object]] = Field(default_factory=list)
+
+
+class BibleSectionProvenanceDetail(BaseModel):
+    section_id: str
+    title: str
+    section_type: BibleSectionType
+    references: BibleSectionReference = Field(default_factory=BibleSectionReference)
+    paragraphs: list[BibleParagraphProvenance] = Field(default_factory=list)
+    relationships: list[str] = Field(default_factory=list)
+
+
+class BibleSectionFilters(BaseModel):
+    focus: str | None = None
+    statuses: list[ClaimStatus] = Field(default_factory=list)
+    source_types: list[str] = Field(default_factory=list)
+    place: str | None = None
+    viewpoint_scope: str | None = None
+    claim_kind: ClaimKind | None = None
+    time_start: str | None = None
+    time_end: str | None = None
+    relationship_types: list[
+        Literal["supports", "contradicts", "supersedes", "superseded_by"]
+    ] = Field(default_factory=list)
+
+
+class BibleSectionDraft(BaseModel):
+    section_type: BibleSectionType
+    title: str
+    generated_markdown: str
+    paragraphs: list[BibleSectionParagraph] = Field(default_factory=list)
+    references: BibleSectionReference = Field(default_factory=BibleSectionReference)
+    certainty_summary: dict[str, int] = Field(default_factory=dict)
+    coverage_gaps: list[str] = Field(default_factory=list)
+    contradiction_flags: list[str] = Field(default_factory=list)
+    recommended_next_research: list[str] = Field(default_factory=list)
+    coverage_analysis: BibleCoverageAnalysis = Field(default_factory=BibleCoverageAnalysis)
+    retrieval_metadata: dict[str, object] = Field(default_factory=dict)
+
+
+class BibleSection(BaseModel):
+    section_id: str
+    project_id: str
+    section_type: BibleSectionType
+    title: str
+    content: str
+    generated_markdown: str
+    manual_markdown: str | None = None
+    paragraphs: list[BibleSectionParagraph] = Field(default_factory=list)
+    generation_filters: BibleSectionFilters = Field(default_factory=BibleSectionFilters)
+    references: BibleSectionReference = Field(default_factory=BibleSectionReference)
+    certainty_summary: dict[str, int] = Field(default_factory=dict)
+    coverage_gaps: list[str] = Field(default_factory=list)
+    contradiction_flags: list[str] = Field(default_factory=list)
+    recommended_next_research: list[str] = Field(default_factory=list)
+    coverage_analysis: BibleCoverageAnalysis = Field(default_factory=BibleCoverageAnalysis)
+    retrieval_metadata: dict[str, object] = Field(default_factory=dict)
+    has_manual_edits: bool = False
+    latest_job: JobSummary | None = None
+    created_at: str = Field(default_factory=utc_now)
+    updated_at: str = Field(default_factory=utc_now)
+    last_generated_at: str | None = None
+    last_edited_at: str | None = None
+
+
+class BibleSectionCreateRequest(BaseModel):
+    project_id: str
+    section_type: BibleSectionType
+    title: str | None = None
+    filters: BibleSectionFilters = Field(default_factory=BibleSectionFilters)
+
+
+class BibleSectionUpdateRequest(BaseModel):
+    title: str | None = None
+    content: str
+
+
+class BibleSectionRegenerateRequest(BaseModel):
+    filters: BibleSectionFilters | None = None
+
+
+class BibleProjectExportResponse(BaseModel):
+    profile: BibleProjectProfile
+    sections: list[BibleSection] = Field(default_factory=list)
+    generated_at: str = Field(default_factory=utc_now)
+
+
+class JobResultRef(BaseModel):
+    run_id: str | None = None
+    section_id: str | None = None
+    project_id: str | None = None
+
+
+class JobRecord(BaseModel):
+    job_id: str
+    job_type: Literal[
+        "research_run_create",
+        "research_run_stage",
+        "research_run_extract",
+        "bible_section_compose",
+        "bible_section_regenerate",
+        "bible_project_export",
+    ]
+    status: JobStatus = JobStatus.PENDING
+    status_label: str | None = None
+    completion_state: Literal["completed", "partial"] | None = None
+    payload: dict[str, object] = Field(default_factory=dict)
+    result_payload: dict[str, object] | None = None
+    progress_stage: str = "queued"
+    progress_current: int = 0
+    progress_total: int = 100
+    result_ref: JobResultRef = Field(default_factory=JobResultRef)
+    error: str | None = None
+    error_code: str | None = None
+    error_detail: str | None = None
+    warnings: list[str] = Field(default_factory=list)
+    retryable: bool = False
+    attempt_count: int = 1
+    max_attempts: int = 1
+    retry_of_job_id: str | None = None
+    cancel_requested_at: str | None = None
+    last_heartbeat_at: str | None = None
+    created_at: str = Field(default_factory=utc_now)
+    started_at: str | None = None
+    completed_at: str | None = None
+    updated_at: str = Field(default_factory=utc_now)
+
+    @model_validator(mode="after")
+    def populate_status_label(self) -> "JobRecord":
+        if not self.status_label:
+            if self.completion_state == "partial":
+                self.status_label = "partial"
+            elif self.status == JobStatus.PARTIAL:
+                self.status_label = "partial"
+            elif self.status == JobStatus.PENDING:
+                self.status_label = "queued"
+            else:
+                self.status_label = self.status.value
+        if self.error_detail is None and self.error is not None:
+            self.error_detail = self.error
+        return self
+
+
+class JobSummary(BaseModel):
+    job_id: str
+    job_type: str
+    status: JobStatus
+    status_label: str | None = None
+    completion_state: Literal["completed", "partial"] | None = None
+    progress_stage: str = "queued"
+    progress_current: int = 0
+    progress_total: int = 100
+    updated_at: str = Field(default_factory=utc_now)
+    retryable: bool = False
+    warnings: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def populate_status_label(self) -> "JobSummary":
+        if not self.status_label:
+            if self.completion_state == "partial":
+                self.status_label = "partial"
+            elif self.status == JobStatus.PARTIAL:
+                self.status_label = "partial"
+            elif self.status == JobStatus.PENDING:
+                self.status_label = "queued"
+            else:
+                self.status_label = self.status.value
+        return self
 
 
 class ResearchFacet(BaseModel):
@@ -425,6 +704,8 @@ class ResearchFindingScoring(BaseModel):
     anchor_score: float = 0.0
     concreteness_score: float = 0.0
     shape_score: float = 0.0
+    facet_fit_score: float = 0.0
+    source_saturation_score: float = 0.0
     coverage_score: float = 0.0
     quality_threshold: float = 0.0
     threshold_passed: bool = False
@@ -432,6 +713,10 @@ class ResearchFindingScoring(BaseModel):
     source_class_boost_applied: float = 0.0
     source_class_penalty_applied: float = 0.0
     near_era_bias_applied: bool = False
+    era_band: str | None = None
+    period_native: bool = False
+    period_evidenced: bool = False
+    historical_contextual: bool = False
     normalized_title: str | None = None
     canonical_host: str | None = None
     semantic_score: float = 0.0
@@ -527,6 +812,7 @@ class ResearchRun(BaseModel):
     telemetry: ResearchRunTelemetry = Field(default_factory=ResearchRunTelemetry)
     warnings: list[str] = Field(default_factory=list)
     logs: list[str] = Field(default_factory=list)
+    latest_job: JobSummary | None = None
     started_at: str = Field(default_factory=utc_now)
     completed_at: str | None = None
     error: str | None = None

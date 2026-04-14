@@ -4,10 +4,13 @@ from pathlib import Path
 
 from source_aware_worldbuilding.domain.models import (
     ApprovedClaim,
+    BibleProjectProfile,
+    BibleSection,
     CandidateClaim,
     ClaimRelationship,
     EvidenceSnippet,
     ExtractionRun,
+    JobRecord,
     ResearchFinding,
     ResearchProgram,
     ResearchRun,
@@ -245,6 +248,66 @@ class FileResearchProgramStore:
     def save_program(self, program: ResearchProgram) -> None:
         existing = {item.program_id: item for item in self.store.read_models(ResearchProgram)}
         existing[program.program_id] = program
+        self.store.write_models(existing.values())
+
+
+class FileJobStore:
+    def __init__(self, data_dir: Path):
+        self.store = JsonListStore(data_dir / "jobs.json")
+
+    def list_jobs(self, *, status: str | None = None) -> list[JobRecord]:
+        jobs = list(reversed(self.store.read_models(JobRecord)))
+        if status is None:
+            return jobs
+        return [item for item in jobs if item.status.value == status]
+
+    def get_job(self, job_id: str) -> JobRecord | None:
+        return next((item for item in self.store.read_models(JobRecord) if item.job_id == job_id), None)
+
+    def save_job(self, job: JobRecord) -> None:
+        self.update_job(job)
+
+    def update_job(self, job: JobRecord) -> None:
+        existing = {item.job_id: item for item in self.store.read_models(JobRecord)}
+        existing[job.job_id] = job
+        self.store.write_models(existing.values())
+
+
+class FileBibleProjectProfileStore:
+    def __init__(self, data_dir: Path):
+        self.store = JsonListStore(data_dir / "bible_project_profiles.json")
+
+    def list_profiles(self) -> list[BibleProjectProfile]:
+        return self.store.read_models(BibleProjectProfile)
+
+    def get_profile(self, project_id: str) -> BibleProjectProfile | None:
+        return next(
+            (item for item in self.store.read_models(BibleProjectProfile) if item.project_id == project_id),
+            None,
+        )
+
+    def save_profile(self, profile: BibleProjectProfile) -> None:
+        existing = {item.project_id: item for item in self.store.read_models(BibleProjectProfile)}
+        existing[profile.project_id] = profile
+        self.store.write_models(existing.values())
+
+
+class FileBibleSectionStore:
+    def __init__(self, data_dir: Path):
+        self.store = JsonListStore(data_dir / "bible_sections.json")
+
+    def list_sections(self, project_id: str | None = None) -> list[BibleSection]:
+        sections = self.store.read_models(BibleSection)
+        if project_id is None:
+            return sections
+        return [item for item in sections if item.project_id == project_id]
+
+    def get_section(self, section_id: str) -> BibleSection | None:
+        return next((item for item in self.store.read_models(BibleSection) if item.section_id == section_id), None)
+
+    def save_section(self, section: BibleSection) -> None:
+        existing = {item.section_id: item for item in self.store.read_models(BibleSection)}
+        existing[section.section_id] = section
         self.store.write_models(existing.values())
 
 

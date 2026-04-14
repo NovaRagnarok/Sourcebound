@@ -7,8 +7,16 @@ from source_aware_worldbuilding.cli import seed_dev_data
 from source_aware_worldbuilding.domain.enums import ReviewState
 from source_aware_worldbuilding.domain.models import (
     ApprovedClaim,
+    BibleProjectProfile,
+    BibleSection,
     CandidateClaim,
+    ClaimRelationship,
     EvidenceSnippet,
+    JobRecord,
+    ResearchFinding,
+    ResearchRun,
+    ReviewEvent,
+    SourceDocumentRecord,
     SourceRecord,
     TextUnit,
 )
@@ -74,6 +82,10 @@ def test_repository_fixtures_match_domain_models() -> None:
     sources = [
         SourceRecord.model_validate(item) for item in load_json_list(DATA_DIR / "sources.json")
     ]
+    source_documents = [
+        SourceDocumentRecord.model_validate(item)
+        for item in load_json_list(DATA_DIR / "source_documents.json")
+    ]
     text_units = [
         TextUnit.model_validate(item) for item in load_json_list(DATA_DIR / "text_units.json")
     ]
@@ -83,28 +95,81 @@ def test_repository_fixtures_match_domain_models() -> None:
     candidates = [
         CandidateClaim.model_validate(item) for item in load_json_list(DATA_DIR / "candidates.json")
     ]
+    claims = [
+        ApprovedClaim.model_validate(item) for item in load_json_list(DATA_DIR / "claims.json")
+    ]
+    relationships = [
+        ClaimRelationship.model_validate(item)
+        for item in load_json_list(DATA_DIR / "claim_relationships.json")
+    ]
+    review_events = [
+        ReviewEvent.model_validate(item) for item in load_json_list(DATA_DIR / "review_events.json")
+    ]
+    research_runs = [
+        ResearchRun.model_validate(item) for item in load_json_list(DATA_DIR / "research_runs.json")
+    ]
+    research_findings = [
+        ResearchFinding.model_validate(item)
+        for item in load_json_list(DATA_DIR / "research_findings.json")
+    ]
+    jobs = [JobRecord.model_validate(item) for item in load_json_list(DATA_DIR / "jobs.json")]
+    profiles = [
+        BibleProjectProfile.model_validate(item)
+        for item in load_json_list(DATA_DIR / "bible_project_profiles.json")
+    ]
+    sections = [
+        BibleSection.model_validate(item) for item in load_json_list(DATA_DIR / "bible_sections.json")
+    ]
 
-    assert len(sources) == 2
-    assert len(text_units) == 2
-    assert len(evidence) == 2
-    assert len(candidates) == 2
+    assert len(sources) == 10
+    assert len(source_documents) == 10
+    assert len(text_units) == 10
+    assert len(evidence) == 10
+    assert len(candidates) == 6
+    assert len(claims) == 9
+    assert len(relationships) == 5
+    assert len(review_events) == 4
+    assert len(research_runs) == 1
+    assert len(research_findings) == 4
+    assert len(jobs) == 5
+    assert len(profiles) == 1
+    assert len(sections) == 2
 
     evidence_ids = {item.evidence_id for item in evidence}
     source_ids = {item.source_id for item in sources}
+    claim_ids = {item.claim_id for item in claims}
 
+    assert all(item.source_id in source_ids for item in source_documents)
     assert all(item.source_id in source_ids for item in text_units)
     assert all(item.source_id in source_ids for item in evidence)
     assert all(set(item.evidence_ids) <= evidence_ids for item in candidates)
-    assert {item.review_state for item in candidates} == {ReviewState.PENDING}
+    assert all(set(item.evidence_ids) <= evidence_ids for item in claims)
+    assert all(item.claim_id in claim_ids and item.related_claim_id in claim_ids for item in relationships)
+    assert all(item.run_id == "research-rouen-winter" for item in research_findings)
+    assert profiles[0].project_id == "project-rouen-winter"
+    assert {item.project_id for item in sections} == {"project-rouen-winter"}
+    assert {item.review_state for item in candidates} == {
+        ReviewState.APPROVED,
+        ReviewState.PENDING,
+        ReviewState.REJECTED,
+    }
+    assert any(section.has_manual_edits for section in sections)
+    assert any(not section.has_manual_edits for section in sections)
 
 
 def test_seed_dev_data_writes_reproducible_temp_fixtures(temp_data_dir) -> None:
     seed_dev_data()
 
-    assert len(load_json_list(temp_data_dir / "sources.json")) == 2
-    assert len(load_json_list(temp_data_dir / "text_units.json")) == 2
-    assert len(load_json_list(temp_data_dir / "evidence.json")) == 2
-    assert len(load_json_list(temp_data_dir / "candidates.json")) == 2
-    assert len(load_json_list(temp_data_dir / "claims.json")) == 0
-    assert len(load_json_list(temp_data_dir / "claim_relationships.json")) == 0
-    assert len(load_json_list(temp_data_dir / "source_documents.json")) == 0
+    assert len(load_json_list(temp_data_dir / "sources.json")) == 10
+    assert len(load_json_list(temp_data_dir / "source_documents.json")) == 10
+    assert len(load_json_list(temp_data_dir / "text_units.json")) == 10
+    assert len(load_json_list(temp_data_dir / "evidence.json")) == 10
+    assert len(load_json_list(temp_data_dir / "candidates.json")) == 6
+    assert len(load_json_list(temp_data_dir / "review_events.json")) == 4
+    assert len(load_json_list(temp_data_dir / "claims.json")) == 9
+    assert len(load_json_list(temp_data_dir / "claim_relationships.json")) == 5
+    assert len(load_json_list(temp_data_dir / "research_runs.json")) == 1
+    assert len(load_json_list(temp_data_dir / "research_findings.json")) == 4
+    assert len(load_json_list(temp_data_dir / "jobs.json")) == 7
+    assert len(load_json_list(temp_data_dir / "bible_project_profiles.json")) == 1
+    assert len(load_json_list(temp_data_dir / "bible_sections.json")) == 3

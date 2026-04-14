@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from uuid import uuid4
 
 from source_aware_worldbuilding.domain.enums import ExtractionRunStatus
@@ -59,8 +60,15 @@ class IngestionService:
     def list_runs(self) -> list[ExtractionRun]:
         return self.run_store.list_runs()
 
-    def extract_candidates(self, *, source_ids: list[str] | None = None) -> ExtractionOutput:
+    def extract_candidates(
+        self,
+        *,
+        source_ids: list[str] | None = None,
+        checkpoint: Callable[[], None] | None = None,
+    ) -> ExtractionOutput:
         source_id_filter = set(source_ids or [])
+        if checkpoint is not None:
+            checkpoint()
         sources = self.source_store.list_sources()
         if source_id_filter:
             sources = [item for item in sources if item.source_id in source_id_filter]
@@ -70,6 +78,8 @@ class IngestionService:
         if source_id_filter:
             text_units: list[TextUnit] = []
             for source_id in source_id_filter:
+                if checkpoint is not None:
+                    checkpoint()
                 text_units.extend(self.text_unit_store.list_text_units(source_id=source_id))
         else:
             text_units = self.text_unit_store.list_text_units()
@@ -78,6 +88,8 @@ class IngestionService:
         self.run_store.save_run(run)
         self._mark_document_extraction_status(text_units, "running")
         try:
+            if checkpoint is not None:
+                checkpoint()
             output = self.extractor.extract_candidates(
                 run=run,
                 sources=sources,

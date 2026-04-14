@@ -1,0 +1,39 @@
+[
+  {
+    "project_id": "project-rouen-winter",
+    "project_name": "Rouen Winter Shortage Bible",
+    "era": "1421-1422 winter shortage",
+    "time_start": "1421-12-01",
+    "time_end": "1422-02-28",
+    "geography": "Rouen",
+    "social_lens": "bakers, porters, clerks, and households waiting on ration lines",
+    "narrative_focus": "market control, winter scarcity, rumor, and ritualized public order",
+    "taboo_topics": [
+      "modern slang",
+      "clean heroic famine myths"
+    ],
+    "desired_facets": [
+      "economics",
+      "daily life",
+      "institutions",
+      "ritual",
+      "rumor"
+    ],
+    "tone": "grounded_literary",
+    "composition_defaults": {
+      "include_statuses": [
+        "verified",
+        "probable"
+      ],
+      "source_types": [
+        "record",
+        "petition",
+        "archive",
+        "account_book"
+      ],
+      "focus": "bread prices, ration tokens, and bell-controlled market flow"
+    },
+    "created_at": "2026-04-12T08:00:00+00:00",
+    "updated_at": "2026-04-12T13:15:00+00:00"
+  }
+]

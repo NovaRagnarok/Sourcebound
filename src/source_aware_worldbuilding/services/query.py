@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from collections import defaultdict
+from collections import Counter, defaultdict
 from hashlib import sha1
 
 from source_aware_worldbuilding.domain.enums import QueryMode
@@ -73,34 +73,27 @@ class QueryService:
 
     def answer(self, request: QueryRequest) -> QueryResult:
         claims = self.truth_store.list_claims()
-        if request.filters:
-            if request.filters.status:
-                claims = [c for c in claims if c.status == request.filters.status]
-            if request.filters.claim_kind:
-                claims = [c for c in claims if c.claim_kind == request.filters.claim_kind]
-            if request.filters.place:
-                claims = [c for c in claims if c.place == request.filters.place]
-            if request.filters.viewpoint_scope:
-                claims = [c for c in claims if c.viewpoint_scope == request.filters.viewpoint_scope]
+        claims = self._apply_filters(claims, request.filters)
         relationship_index = self._relationship_index(claims)
 
         projection_result = self._search_projection(request.question, claims)
-        if projection_result is not None and not projection_result.fallback_used:
-            matched = self._claims_from_projection(claims, projection_result.claim_ids)
-        else:
-            matched = self._rank_claims(request.question, claims, relationship_index)
+        matched = self._rank_claims(request.question, claims, relationship_index, projection_result)
         if not matched:
             matched = claims[:5]
 
         warnings: list[str] = []
-        metadata = QueryResultMetadata(retrieval_backend="memory")
+        metadata = QueryResultMetadata(retrieval_backend="memory", ranking_strategy="lexical")
         if projection_result is not None and not projection_result.fallback_used:
-            metadata = QueryResultMetadata(retrieval_backend="qdrant")
+            metadata = QueryResultMetadata(
+                retrieval_backend="qdrant",
+                ranking_strategy="blended",
+            )
         elif projection_result is not None and projection_result.fallback_used:
             metadata = QueryResultMetadata(
                 retrieval_backend="memory",
                 fallback_used=True,
                 fallback_reason=projection_result.fallback_reason,
+                ranking_strategy="lexical",
             )
             if projection_result.fallback_reason:
                 warnings.append(f"Qdrant fallback: {projection_result.fallback_reason}")
@@ -120,6 +113,29 @@ class QueryService:
             )
         else:
             warnings.append("Open exploration mode may include mixed-certainty material.")
+        if self._is_disagreement_question(request.question):
+            contradictory_ids = {
+                relationship.claim_id
+                for relationship in self.truth_store.list_relationships()
+                if relationship.relationship_type == "contradicts"
+            } | {
+                relationship.related_claim_id
+                for relationship in self.truth_store.list_relationships()
+                if relationship.relationship_type == "contradicts"
+            }
+            contested_pool = [
+                c for c in claims if c.status.value == "contested" or c.claim_id in contradictory_ids
+            ]
+            contested_matches = self._rank_claims(request.question, contested_pool, relationship_index)
+            disagreement_first = contested_matches or [
+                c for c in matched if c.status.value == "contested" or c.claim_id in contradictory_ids
+            ]
+            if disagreement_first:
+                matched = disagreement_first + [
+                    c
+                    for c in matched
+                    if c.claim_id not in {item.claim_id for item in disagreement_first}
+                ]
 
         cluster_seed_claims = matched[: self._CLUSTER_MATCH_LIMIT]
         related_claims = self._related_claims_for(cluster_seed_claims)
@@ -136,6 +152,13 @@ class QueryService:
             warnings.append("Some returned claims supersede earlier canonical claims.")
 
         surfaced_claims = self._claims_for_clusters(cluster_seed_claims, claim_clusters)
+        contradiction_flags = [
+            f"{claim.subject} contradicts claim {relationship.related_claim_id}"
+            for relationship in related_claims
+            if relationship.relationship_type == "contradicts"
+            for claim in surfaced_claims
+            if claim.claim_id == relationship.claim_id
+        ]
         evidence = self._evidence_for_claims(surfaced_claims)
         source_ids = {item.source_id for item in evidence}
         sources = [
@@ -151,6 +174,9 @@ class QueryService:
                 "No approved claims matched the request. Treat this as a research gap, "
                 "not as permission to guess."
             )
+        certainty_summary = dict(Counter(claim.status.value for claim in matched))
+        coverage_gaps = self._coverage_gaps(matched, request)
+        recommended_next_research = self._recommended_next_research(coverage_gaps, request)
 
         return QueryResult(
             question=request.question,
@@ -163,8 +189,75 @@ class QueryService:
             evidence=evidence[:10],
             sources=sources,
             warnings=warnings,
+            certainty_summary=certainty_summary,
+            coverage_gaps=coverage_gaps,
+            contradiction_flags=contradiction_flags,
+            recommended_next_research=recommended_next_research,
             metadata=metadata,
         )
+
+    def _apply_filters(self, claims, filters):
+        if filters is None:
+            return claims
+        filtered = list(claims)
+        if filters.status:
+            filtered = [c for c in filtered if c.status == filters.status]
+        if filters.include_statuses:
+            allowed = set(filters.include_statuses)
+            filtered = [c for c in filtered if c.status in allowed]
+        if filters.claim_kind:
+            filtered = [c for c in filtered if c.claim_kind == filters.claim_kind]
+        if filters.place:
+            filtered = [c for c in filtered if c.place == filters.place]
+        if filters.viewpoint_scope:
+            filtered = [c for c in filtered if c.viewpoint_scope == filters.viewpoint_scope]
+        if filters.time_start:
+            filtered = [c for c in filtered if not c.time_end or c.time_end >= filters.time_start]
+        if filters.time_end:
+            filtered = [c for c in filtered if not c.time_start or c.time_start <= filters.time_end]
+        if filters.relationship_types:
+            allowed_ids = {
+                item.claim_id
+                for item in self.truth_store.list_relationships()
+                if item.relationship_type in filters.relationship_types
+            }
+            filtered = [c for c in filtered if c.claim_id in allowed_ids]
+        if filters.source_types:
+            filtered = [
+                c
+                for c in filtered
+                if any(
+                    (source := self.source_store.get_source(snippet.source_id)) and source.source_type in filters.source_types
+                    for evidence_id in c.evidence_ids
+                    if (snippet := self.evidence_store.get_evidence(evidence_id)) is not None
+                )
+            ]
+        return filtered
+
+    def _coverage_gaps(self, claims, request: QueryRequest) -> list[str]:
+        gaps: list[str] = []
+        if not claims:
+            return ["No approved claims matched the question."]
+        if request.mode == QueryMode.STRICT_FACTS and not any(
+            claim.status.value == "verified" for claim in claims
+        ):
+            gaps.append("No verified claims matched; answer relies on probable canon.")
+        if not any(claim.evidence_ids for claim in claims):
+            gaps.append("Matching claims lack linked evidence.")
+        if not any(claim.time_start or claim.time_end for claim in claims):
+            gaps.append("Matching claims are weakly anchored in time.")
+        return gaps
+
+    def _recommended_next_research(self, gaps: list[str], request: QueryRequest) -> list[str]:
+        prompts: list[str] = []
+        for gap in gaps:
+            if "verified" in gap.lower():
+                prompts.append(f"Find record-like or archival sources that verify: {request.question}")
+            elif "time" in gap.lower():
+                prompts.append(f"Find dated sources that anchor: {request.question}")
+            elif "evidence" in gap.lower():
+                prompts.append(f"Find better-cited sources for: {request.question}")
+        return prompts
 
     def _search_projection(self, question: str, claims) -> ProjectionSearchResult | None:
         if self.projection is None or not claims:
@@ -175,20 +268,27 @@ class QueryService:
             limit=min(10, len(claims)),
         )
 
-    def _claims_from_projection(self, claims, claim_ids: list[str]):
-        claim_by_id = {claim.claim_id: claim for claim in claims}
-        ordered = [claim_by_id[claim_id] for claim_id in claim_ids if claim_id in claim_by_id]
-        if ordered:
-            return ordered
-        return self._rank_claims("", claims, {})
-
-    def _rank_claims(self, question: str, claims, relationship_index):
+    def _rank_claims(self, question: str, claims, relationship_index, projection_result=None):
         question_lower = self._normalize_text(question)
         tokens = self._question_tokens(question)
+        mentioned_places = {
+            self._normalize_text(claim.place)
+            for claim in claims
+            if claim.place and self._normalize_text(claim.place) in question_lower
+        }
+        projection_order = (
+            {
+                claim_id: len(projection_result.claim_ids) - index
+                for index, claim_id in enumerate(projection_result.claim_ids)
+            }
+            if projection_result is not None and not projection_result.fallback_used
+            else {}
+        )
         if not tokens:
             return sorted(
                 claims,
                 key=lambda claim: (
+                    projection_order.get(claim.claim_id, 0),
                     self._relationship_score(claim.claim_id, relationship_index),
                     claim.claim_id,
                 ),
@@ -213,19 +313,44 @@ class QueryService:
             for token in tokens:
                 if token in haystack_normalized:
                     scores[claim.claim_id] += 1
+                    if token in self._normalize_text(claim.value):
+                        scores[claim.claim_id] += 1
+                    if token in self._normalize_text(claim.notes or ""):
+                        scores[claim.claim_id] += 1
+            if claim.place and self._normalize_text(claim.place) in question_lower:
+                scores[claim.claim_id] += 2
+            elif mentioned_places and claim.place:
+                scores[claim.claim_id] -= 2
+            if claim.time_start and self._normalize_text(claim.time_start) in question_lower:
+                scores[claim.claim_id] += 2
         ranked = sorted(
             claims,
             key=lambda claim: (
+                projection_order.get(claim.claim_id, 0),
                 scores[claim.claim_id],
+                self._CERTAINTY_RANK.get(claim.status.value, 0),
+                1 if claim.evidence_ids else 0,
                 self._relationship_score(claim.claim_id, relationship_index),
                 claim.claim_id,
             ),
             reverse=True,
         )
         strongest_score = max((scores[claim.claim_id] for claim in ranked), default=0)
-        if strongest_score <= 0:
+        if strongest_score <= 0 and not projection_order:
             return []
-        return [claim for claim in ranked if scores[claim.claim_id] == strongest_score]
+        if strongest_score <= 0 and projection_order:
+            return ranked
+        threshold = strongest_score if len(tokens) <= 3 else max(2, strongest_score - 3)
+        relevant_claims = [
+            claim for claim in ranked if scores[claim.claim_id] >= threshold
+        ]
+        if len(relevant_claims) < 2:
+            if len(tokens) > 4:
+                return ranked[:2]
+            return relevant_claims or ranked[:1]
+        if len(tokens) > 3 and len(relevant_claims) < 5:
+            return ranked[:5]
+        return relevant_claims[:8]
 
     def _relationship_index(self, claims) -> dict[str, list[ClaimRelationship]]:
         if not claims:
@@ -729,6 +854,10 @@ class QueryService:
             for token in re.findall(r"[a-z0-9]+", text.lower())
             if token not in self._QUESTION_STOPWORDS
         ]
+
+    def _is_disagreement_question(self, text: str) -> bool:
+        normalized = text.lower()
+        return any(token in normalized for token in {"disagree", "contradict", "conflict", "versus", "vs", "debate"})
 
     def _normalize_text(self, text: str) -> str:
         return " ".join(re.findall(r"[a-z0-9]+", text.lower()))

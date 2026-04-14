@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import statistics
 from datetime import UTC, datetime
 from pathlib import Path
@@ -8,34 +9,54 @@ from urllib.parse import urlparse
 
 import typer
 import uvicorn
+from psycopg import connect
+from psycopg.sql import SQL, Identifier
 from rich import print
 from rich.table import Table
 
 from source_aware_worldbuilding.adapters.file_backed import (
+    FileBibleProjectProfileStore,
+    FileBibleSectionStore,
     FileCandidateStore,
     FileEvidenceStore,
     FileExtractionRunStore,
+    FileJobStore,
     FileResearchFindingStore,
     FileResearchProgramStore,
     FileResearchRunStore,
+    FileReviewStore,
     FileSourceDocumentStore,
     FileSourceStore,
     FileTextUnitStore,
+    FileTruthStore,
 )
 from source_aware_worldbuilding.adapters.heuristic_extraction import HeuristicExtractionAdapter
 from source_aware_worldbuilding.adapters.postgres_backed import (
+    PostgresBibleProjectProfileStore,
+    PostgresBibleSectionStore,
     PostgresCandidateStore,
     PostgresEvidenceStore,
     PostgresExtractionRunStore,
+    PostgresJobStore,
+    PostgresResearchFindingStore,
+    PostgresResearchProgramStore,
+    PostgresResearchRunStore,
     PostgresReviewStore,
     PostgresSourceDocumentStore,
     PostgresSourceStore,
     PostgresTextUnitStore,
+    PostgresTruthStore,
 )
 from source_aware_worldbuilding.adapters.sqlite_backed import (
+    SqliteBibleProjectProfileStore,
+    SqliteBibleSectionStore,
     SqliteCandidateStore,
     SqliteEvidenceStore,
     SqliteExtractionRunStore,
+    SqliteJobStore,
+    SqliteResearchFindingStore,
+    SqliteResearchProgramStore,
+    SqliteResearchRunStore,
     SqliteReviewStore,
     SqliteSourceDocumentStore,
     SqliteSourceStore,
@@ -55,26 +76,50 @@ from source_aware_worldbuilding.api.dependencies import (
     get_normalization_service,
 )
 from source_aware_worldbuilding.domain.enums import (
+    BibleSectionType,
+    BibleTone,
     ClaimKind,
     ClaimStatus,
     ExtractionRunStatus,
+    JobStatus,
     ResearchFindingDecision,
+    ResearchFindingReason,
     ResearchFetchOutcome,
+    ResearchRunStatus,
+    ReviewDecision,
     ReviewState,
 )
 from source_aware_worldbuilding.domain.models import (
+    ApprovedClaim,
+    BibleCompositionDefaults,
+    BibleProjectProfile,
+    BibleSection,
+    BibleSectionFilters,
     CandidateClaim,
+    ClaimRelationship,
     EvidenceSnippet,
     ExtractionRun,
     IntakeTextRequest,
     IntakeUrlRequest,
+    JobRecord,
+    JobResultRef,
     ResearchBrief,
     ResearchExecutionPolicy,
+    ResearchFacet,
+    ResearchFinding,
+    ResearchFindingProvenance,
+    ResearchFindingScoring,
+    ResearchProgram,
+    ResearchRun,
     ResearchRunRequest,
+    ResearchRunTelemetry,
+    ReviewEvent,
     RuntimeStatus,
+    SourceDocumentRecord,
     SourceRecord,
     TextUnit,
 )
+from source_aware_worldbuilding.services.bible import BibleWorkspaceService
 from source_aware_worldbuilding.services.ingestion import IngestionService
 from source_aware_worldbuilding.services.research import ResearchService
 from source_aware_worldbuilding.services.status import build_runtime_status
@@ -106,71 +151,443 @@ class _BenchmarkCorpus:
         return []
 
 
+_SEED_PROJECT_ID = "project-rouen-winter"
+_SEED_CORE_RUN_ID = "extract-rouen-core"
+_SEED_RESEARCH_RUN_ID = "research-rouen-winter"
+_SEED_RESEARCH_EXTRACT_RUN_ID = "extract-research-rouen"
+_SEED_ECON_SECTION_ID = "section-rouen-economics"
+_SEED_RUMOR_SECTION_ID = "section-rouen-rumors"
+_SEED_AUTHOR_SECTION_ID = "section-rouen-author-decisions"
+_SEED_CREATED_AT = "2026-04-12T08:00:00+00:00"
+_SEED_UPDATED_AT = "2026-04-12T13:15:00+00:00"
+
+
 def _seed_sources() -> list[SourceRecord]:
     return [
         SourceRecord(
-            source_id="src-1",
-            title="Municipal price records of Rouen",
-            author="City clerk",
+            source_id="src-price-ledger",
+            title="Municipal price ledger of Rouen",
+            author="Bread office clerks",
             year="1421",
             source_type="record",
-            locator_hint="folios 10-14",
-            abstract="Bread prices rose sharply during the winter shortage.",
+            locator_hint="folio 12r",
+            abstract="Clerks tracked the winter rise in bread prices at the Rouen market.",
+            sync_status="ready_for_extraction",
         ),
         SourceRecord(
-            source_id="src-2",
-            title="Later chronicle of unrest",
+            source_id="src-bakers-petition",
+            title="Petition of the Rouen bakers",
+            author="Guild wardens",
+            year="1422",
+            source_type="petition",
+            locator_hint="petition 3",
+            abstract="Bakers described household bread tokens and ration loaves during the shortage.",
+            sync_status="ready_for_extraction",
+        ),
+        SourceRecord(
+            source_id="src-port-roll",
+            title="Saint Sever customs roll",
+            author="River toll collector",
+            year="1422",
+            source_type="record",
+            locator_hint="gate roll 4",
+            abstract="Night barges unloaded grain outside Saint Sever gate before dawn.",
+            sync_status="ready_for_extraction",
+        ),
+        SourceRecord(
+            source_id="src-council-ordinance",
+            title="Council grain ordinance",
+            author="Rouen council",
+            year="1422",
+            source_type="ordinance",
+            locator_hint="article 7",
+            abstract="The grain bell schedule was recorded for January market control.",
+            sync_status="ready_for_extraction",
+        ),
+        SourceRecord(
+            source_id="src-council-addendum",
+            title="Council addendum on the grain bell",
+            author="Rouen council",
+            year="1422",
+            source_type="ordinance",
+            locator_hint="addendum 2",
+            abstract="A later ordinance revised the hour of the grain bell.",
+            sync_status="ready_for_extraction",
+        ),
+        SourceRecord(
+            source_id="src-chronicle",
+            title="Later chronicle of the shortage winter",
             author="Anonymous chronicler",
             year="1450",
             source_type="chronicle",
             locator_hint="chapter 7",
-            abstract="Townspeople whispered that merchants were withholding grain.",
+            abstract="Citizens whispered that merchants hid grain behind shuttered lofts.",
+            sync_status="ready_for_extraction",
+        ),
+        SourceRecord(
+            source_id="src-abbey-accounts",
+            title="Abbey barley accounts",
+            author="Abbey bursar",
+            year="1422",
+            source_type="account_book",
+            locator_hint="leaf 9v",
+            abstract="Wax tally tablets tracked barley and salt debts by household.",
+            sync_status="ready_for_extraction",
+        ),
+        SourceRecord(
+            source_id="src-ballad",
+            title="Dockside ballad of Saint Romain",
+            author="Unknown singer",
+            year="1435",
+            source_type="broadside",
+            locator_hint="verse 4",
+            abstract="Sailors said shrine lanterns burned blue before the thaw.",
+            sync_status="ready_for_extraction",
+        ),
+        SourceRecord(
+            source_id="research-source-bread-scrip",
+            external_source="research_scout",
+            external_id="finding-bread-scrip",
+            title="Curated archive note on bakers' scrip",
+            author="Archive clerk",
+            year="1422",
+            source_type="archive",
+            locator_hint="curated input",
+            abstract="A curated note described bread scrip circulating at the market gate.",
+            url="https://demo.sourcebound.test/archive/bread-scrip",
+            sync_status="ready_for_extraction",
+        ),
+        SourceRecord(
+            source_id="research-source-grain-bell",
+            external_source="research_scout",
+            external_id="finding-grain-bell",
+            title="Curated parish note on grain bell beadles",
+            author="Parish clerk",
+            year="1422",
+            source_type="archive",
+            locator_hint="curated input",
+            abstract="A curated note described beadles counting households at the grain bell.",
+            url="https://demo.sourcebound.test/archive/grain-bell",
+            sync_status="ready_for_extraction",
+        ),
+    ]
+
+
+def _seed_source_documents() -> list[SourceDocumentRecord]:
+    return [
+        SourceDocumentRecord(
+            document_id="doc-price-ledger",
+            source_id="src-price-ledger",
+            document_kind="attachment",
+            filename="price-ledger.txt",
+            mime_type="text/plain",
+            ingest_status="imported",
+            raw_text_status="ready",
+            claim_extraction_status="completed",
+            locator="folio 12r",
+            raw_text=(
+                "Rouen bread prices rose during the winter shortage in Rouen in 1421, "
+                "and clerks marked the increase in the municipal ledger."
+            ),
+        ),
+        SourceDocumentRecord(
+            document_id="doc-bakers-petition",
+            source_id="src-bakers-petition",
+            document_kind="attachment",
+            filename="bakers-petition.txt",
+            mime_type="text/plain",
+            ingest_status="imported",
+            raw_text_status="ready",
+            claim_extraction_status="completed",
+            locator="petition 3",
+            raw_text=(
+                "Bakers in Rouen used household bread tokens during January 1422, "
+                "and each token marked one ration loaf for a registered hearth."
+            ),
+        ),
+        SourceDocumentRecord(
+            document_id="doc-port-roll",
+            source_id="src-port-roll",
+            document_kind="attachment",
+            filename="port-roll.txt",
+            mime_type="text/plain",
+            ingest_status="imported",
+            raw_text_status="ready",
+            claim_extraction_status="completed",
+            locator="gate roll 4",
+            raw_text=(
+                "Night barges unloaded grain outside Rouen near Saint Sever gate in 1422, "
+                "and porters moved sacks before dawn to avoid crowding."
+            ),
+        ),
+        SourceDocumentRecord(
+            document_id="doc-council-ordinance",
+            source_id="src-council-ordinance",
+            document_kind="attachment",
+            filename="grain-ordinance.txt",
+            mime_type="text/plain",
+            ingest_status="imported",
+            raw_text_status="ready",
+            claim_extraction_status="completed",
+            locator="article 7",
+            raw_text=(
+                "The council ordinance in Rouen recorded that the grain bell was rung after "
+                "prime in early January 1422."
+            ),
+        ),
+        SourceDocumentRecord(
+            document_id="doc-council-addendum",
+            source_id="src-council-addendum",
+            document_kind="attachment",
+            filename="grain-addendum.txt",
+            mime_type="text/plain",
+            ingest_status="imported",
+            raw_text_status="ready",
+            claim_extraction_status="completed",
+            locator="addendum 2",
+            raw_text=(
+                "A revised council ordinance in Rouen recorded that the grain bell was rung "
+                "after terce in late January 1422."
+            ),
+        ),
+        SourceDocumentRecord(
+            document_id="doc-chronicle",
+            source_id="src-chronicle",
+            document_kind="attachment",
+            filename="later-chronicle.txt",
+            mime_type="text/plain",
+            ingest_status="imported",
+            raw_text_status="ready",
+            claim_extraction_status="completed",
+            locator="chapter 7",
+            raw_text=(
+                "Citizens in Rouen whispered that merchants withheld grain behind shuttered lofts "
+                "during the winter of 1422."
+            ),
+        ),
+        SourceDocumentRecord(
+            document_id="doc-abbey-accounts",
+            source_id="src-abbey-accounts",
+            document_kind="attachment",
+            filename="abbey-accounts.txt",
+            mime_type="text/plain",
+            ingest_status="imported",
+            raw_text_status="ready",
+            claim_extraction_status="completed",
+            locator="leaf 9v",
+            raw_text=(
+                "Abbey clerks in Rouen recorded wax tally tablets for barley and salt in "
+                "February 1422, keeping each market debt by household mark."
+            ),
+        ),
+        SourceDocumentRecord(
+            document_id="doc-ballad",
+            source_id="src-ballad",
+            document_kind="attachment",
+            filename="dockside-ballad.txt",
+            mime_type="text/plain",
+            ingest_status="imported",
+            raw_text_status="ready",
+            claim_extraction_status="queued",
+            locator="verse 4",
+            raw_text=(
+                "Sailors in Rouen said the Saint Romain shrine lanterns burned blue before "
+                "the thaw of 1422."
+            ),
+        ),
+        SourceDocumentRecord(
+            document_id="research-doc-bread-scrip",
+            source_id="research-source-bread-scrip",
+            document_kind="manual_text",
+            external_id="https://demo.sourcebound.test/archive/bread-scrip",
+            filename="bread-scrip.txt",
+            mime_type="text/plain",
+            ingest_status="imported",
+            raw_text_status="ready",
+            claim_extraction_status="completed",
+            locator="curated input",
+            raw_text=(
+                "Rouen bakers were paid in bread scrip during the winter of 1422, "
+                "and neighbors compared the stamped tokens at the market gate."
+            ),
+        ),
+        SourceDocumentRecord(
+            document_id="research-doc-grain-bell",
+            source_id="research-source-grain-bell",
+            document_kind="manual_text",
+            external_id="https://demo.sourcebound.test/archive/grain-bell",
+            filename="grain-bell.txt",
+            mime_type="text/plain",
+            ingest_status="imported",
+            raw_text_status="ready",
+            claim_extraction_status="completed",
+            locator="curated input",
+            raw_text=(
+                "Rouen parish beadles were posted at the grain bell in 1422, and witnesses "
+                "described how they counted households before opening the market."
+            ),
         ),
     ]
 
 
 def _seed_text_units() -> list[TextUnit]:
+    documents = {item.document_id: item for item in _seed_source_documents()}
+    mapping = [
+        ("txt-price-ledger", "src-price-ledger", documents["doc-price-ledger"].locator, documents["doc-price-ledger"].raw_text),
+        ("txt-bakers-petition", "src-bakers-petition", documents["doc-bakers-petition"].locator, documents["doc-bakers-petition"].raw_text),
+        ("txt-port-roll", "src-port-roll", documents["doc-port-roll"].locator, documents["doc-port-roll"].raw_text),
+        ("txt-council-ordinance", "src-council-ordinance", documents["doc-council-ordinance"].locator, documents["doc-council-ordinance"].raw_text),
+        ("txt-council-addendum", "src-council-addendum", documents["doc-council-addendum"].locator, documents["doc-council-addendum"].raw_text),
+        ("txt-chronicle", "src-chronicle", documents["doc-chronicle"].locator, documents["doc-chronicle"].raw_text),
+        ("txt-abbey-accounts", "src-abbey-accounts", documents["doc-abbey-accounts"].locator, documents["doc-abbey-accounts"].raw_text),
+        ("txt-ballad", "src-ballad", documents["doc-ballad"].locator, documents["doc-ballad"].raw_text),
+        ("txt-research-bread-scrip", "research-source-bread-scrip", documents["research-doc-bread-scrip"].locator, documents["research-doc-bread-scrip"].raw_text),
+        ("txt-research-grain-bell", "research-source-grain-bell", documents["research-doc-grain-bell"].locator, documents["research-doc-grain-bell"].raw_text),
+    ]
     return [
         TextUnit(
-            text_unit_id="txt-1",
-            source_id="src-1",
-            locator="folio 12r",
-            text="Bread prices rose sharply during the winter shortage.",
+            text_unit_id=text_unit_id,
+            source_id=source_id,
+            locator=locator or "unknown",
+            text=text or "",
             ordinal=1,
-            checksum="seed-1",
-        ),
-        TextUnit(
-            text_unit_id="txt-2",
-            source_id="src-2",
-            locator="chapter 7",
-            text="Townspeople whispered that merchants were withholding grain.",
-            ordinal=1,
-            checksum="seed-2",
-        ),
+            checksum=f"seed-{index:02d}",
+        )
+        for index, (text_unit_id, source_id, locator, text) in enumerate(mapping, start=1)
     ]
 
 
 def _seed_evidence() -> list[EvidenceSnippet]:
     return [
         EvidenceSnippet(
-            evidence_id="evi-1",
-            source_id="src-1",
+            evidence_id="evi-price-rise",
+            source_id="src-price-ledger",
             locator="folio 12r",
-            text="Bread prices rose sharply during the winter shortage.",
-            text_unit_id="txt-1",
+            text=(
+                "Rouen bread prices rose during the winter shortage in Rouen in 1421, "
+                "and clerks marked the increase in the municipal ledger."
+            ),
+            text_unit_id="txt-price-ledger",
             span_start=0,
-            span_end=48,
-            notes="Economic record",
+            span_end=117,
+            notes="Core economics evidence.",
         ),
         EvidenceSnippet(
-            evidence_id="evi-2",
-            source_id="src-2",
-            locator="chapter 7",
-            text="Townspeople whispered that merchants were withholding grain.",
-            text_unit_id="txt-2",
+            evidence_id="evi-bread-tokens",
+            source_id="src-bakers-petition",
+            locator="petition 3",
+            text=(
+                "Bakers in Rouen used household bread tokens during January 1422, "
+                "and each token marked one ration loaf for a registered hearth."
+            ),
+            text_unit_id="txt-bakers-petition",
             span_start=0,
-            span_end=59,
-            notes="Later chronicle, lower certainty",
+            span_end=124,
+            notes="Ration-token detail for daily-life and economics sections.",
+        ),
+        EvidenceSnippet(
+            evidence_id="evi-night-barges",
+            source_id="src-port-roll",
+            locator="gate roll 4",
+            text=(
+                "Night barges unloaded grain outside Rouen near Saint Sever gate in 1422, "
+                "and porters moved sacks before dawn to avoid crowding."
+            ),
+            text_unit_id="txt-port-roll",
+            span_start=0,
+            span_end=126,
+            notes="Strong setting and logistics detail.",
+        ),
+        EvidenceSnippet(
+            evidence_id="evi-bell-prime",
+            source_id="src-council-ordinance",
+            locator="article 7",
+            text=(
+                "The council ordinance in Rouen recorded that the grain bell was rung after "
+                "prime in early January 1422."
+            ),
+            text_unit_id="txt-council-ordinance",
+            span_start=0,
+            span_end=103,
+            notes="First bell-time account.",
+        ),
+        EvidenceSnippet(
+            evidence_id="evi-bell-terce",
+            source_id="src-council-addendum",
+            locator="addendum 2",
+            text=(
+                "A revised council ordinance in Rouen recorded that the grain bell was rung "
+                "after terce in late January 1422."
+            ),
+            text_unit_id="txt-council-addendum",
+            span_start=0,
+            span_end=111,
+            notes="Later bell-time revision.",
+        ),
+        EvidenceSnippet(
+            evidence_id="evi-hoarding-rumor",
+            source_id="src-chronicle",
+            locator="chapter 7",
+            text=(
+                "Citizens in Rouen whispered that merchants withheld grain behind shuttered lofts "
+                "during the winter of 1422."
+            ),
+            text_unit_id="txt-chronicle",
+            span_start=0,
+            span_end=110,
+            notes="Later and lower-certainty rumor source.",
+        ),
+        EvidenceSnippet(
+            evidence_id="evi-wax-tablets",
+            source_id="src-abbey-accounts",
+            locator="leaf 9v",
+            text=(
+                "Abbey clerks in Rouen recorded wax tally tablets for barley and salt in "
+                "February 1422, keeping each market debt by household mark."
+            ),
+            text_unit_id="txt-abbey-accounts",
+            span_start=0,
+            span_end=130,
+            notes="Material-culture evidence.",
+        ),
+        EvidenceSnippet(
+            evidence_id="evi-blue-lanterns",
+            source_id="src-ballad",
+            locator="verse 4",
+            text=(
+                "Sailors in Rouen said the Saint Romain shrine lanterns burned blue before "
+                "the thaw of 1422."
+            ),
+            text_unit_id="txt-ballad",
+            span_start=0,
+            span_end=93,
+            notes="Folkloric atmosphere, not settled fact.",
+        ),
+        EvidenceSnippet(
+            evidence_id="evi-bread-scrip",
+            source_id="research-source-bread-scrip",
+            locator="curated input",
+            text=(
+                "Rouen bakers were paid in bread scrip during the winter of 1422, "
+                "and neighbors compared the stamped tokens at the market gate."
+            ),
+            text_unit_id="txt-research-bread-scrip",
+            span_start=0,
+            span_end=125,
+            notes="Seeded accepted research finding staged into canon extraction.",
+        ),
+        EvidenceSnippet(
+            evidence_id="evi-grain-bell-beadles",
+            source_id="research-source-grain-bell",
+            locator="curated input",
+            text=(
+                "Rouen parish beadles were posted at the grain bell in 1422, and witnesses "
+                "described how they counted households before opening the market."
+            ),
+            text_unit_id="txt-research-grain-bell",
+            span_start=0,
+            span_end=137,
+            notes="Accepted research finding awaiting review.",
         ),
     ]
 
@@ -178,50 +595,997 @@ def _seed_evidence() -> list[EvidenceSnippet]:
 def _seed_candidates() -> list[CandidateClaim]:
     return [
         CandidateClaim(
-            candidate_id="cand-1",
+            candidate_id="cand-market-price",
             subject="Rouen bread prices",
             predicate="rose_during",
-            value="winter shortage",
+            value="the winter shortage in Rouen in 1421",
             claim_kind=ClaimKind.PRACTICE,
-            status_suggestion=ClaimStatus.PROBABLE,
-            review_state=ReviewState.PENDING,
+            status_suggestion=ClaimStatus.VERIFIED,
+            review_state=ReviewState.APPROVED,
             place="Rouen",
             time_start="1421-12-01",
             time_end="1422-02-28",
-            evidence_ids=["evi-1"],
-            extractor_run_id="seed-run",
-            notes="Derived from municipal records.",
+            evidence_ids=["evi-price-rise"],
+            extractor_run_id=_SEED_CORE_RUN_ID,
+            notes="Approved from the municipal price ledger.",
         ),
         CandidateClaim(
-            candidate_id="cand-2",
-            subject="Merchant grain hoarding",
-            predicate="rumored_in",
-            value="Rouen",
+            candidate_id="cand-bread-tokens",
+            subject="Bakers in Rouen",
+            predicate="used",
+            value="household bread tokens during January 1422",
+            claim_kind=ClaimKind.PRACTICE,
+            status_suggestion=ClaimStatus.PROBABLE,
+            review_state=ReviewState.APPROVED,
+            place="Rouen",
+            time_start="1422-01-01",
+            time_end="1422-01-31",
+            evidence_ids=["evi-bread-tokens"],
+            extractor_run_id=_SEED_CORE_RUN_ID,
+            notes="Approved because it grounds daily rationing behavior.",
+        ),
+        CandidateClaim(
+            candidate_id="cand-bread-scrip",
+            subject="Rouen bakers",
+            predicate="were_paid_in",
+            value="bread scrip during the winter of 1422",
+            claim_kind=ClaimKind.PRACTICE,
+            status_suggestion=ClaimStatus.PROBABLE,
+            review_state=ReviewState.APPROVED,
+            place="Rouen",
+            time_start="1422-01-01",
+            time_end="1422-02-28",
+            evidence_ids=["evi-bread-scrip"],
+            extractor_run_id=_SEED_RESEARCH_EXTRACT_RUN_ID,
+            notes="Approved from the staged research run.",
+        ),
+        CandidateClaim(
+            candidate_id="cand-hidden-grain",
+            subject="Citizens in Rouen",
+            predicate="rumored_that",
+            value="merchants withheld grain behind shuttered lofts",
+            claim_kind=ClaimKind.BELIEF,
+            status_suggestion=ClaimStatus.RUMOR,
+            review_state=ReviewState.REJECTED,
+            place="Rouen",
+            time_start="1422-01-01",
+            time_end="1422-02-28",
+            viewpoint_scope="citizens",
+            evidence_ids=["evi-hoarding-rumor"],
+            extractor_run_id=_SEED_CORE_RUN_ID,
+            notes="Kept as a rumor note, not approved as canon fact.",
+        ),
+        CandidateClaim(
+            candidate_id="cand-blue-lanterns",
+            subject="Sailors in Rouen",
+            predicate="said",
+            value="the Saint Romain shrine lanterns burned blue before the thaw",
             claim_kind=ClaimKind.BELIEF,
             status_suggestion=ClaimStatus.RUMOR,
             review_state=ReviewState.PENDING,
             place="Rouen",
+            time_start="1422-02-01",
+            time_end="1422-02-28",
+            viewpoint_scope="sailors",
+            evidence_ids=["evi-blue-lanterns"],
+            extractor_run_id=_SEED_CORE_RUN_ID,
+            notes="Pending because it is vivid but folkloric.",
+        ),
+        CandidateClaim(
+            candidate_id="cand-grain-bell-beadles",
+            subject="Rouen parish beadles",
+            predicate="were_posted_at",
+            value="the grain bell in 1422",
+            claim_kind=ClaimKind.INSTITUTION,
+            status_suggestion=ClaimStatus.PROBABLE,
+            review_state=ReviewState.PENDING,
+            place="Rouen",
             time_start="1422-01-01",
-            time_end="1422-01-31",
-            viewpoint_scope="townspeople",
-            evidence_ids=["evi-2"],
-            extractor_run_id="seed-run",
-            notes="Rumor, not a verified economic fact.",
+            time_end="1422-02-28",
+            evidence_ids=["evi-grain-bell-beadles"],
+            extractor_run_id=_SEED_RESEARCH_EXTRACT_RUN_ID,
+            notes="Strong stage/extract result that still needs review.",
         ),
     ]
 
 
-def _seed_run() -> ExtractionRun:
-    return ExtractionRun(
-        run_id="seed-run",
-        status=ExtractionRunStatus.COMPLETED,
-        source_count=2,
-        text_unit_count=2,
-        candidate_count=2,
-        started_at="2026-04-12T00:00:00+00:00",
-        completed_at="2026-04-12T00:00:00+00:00",
-        notes="Seeded development run.",
+def _seed_extraction_runs() -> list[ExtractionRun]:
+    return [
+        ExtractionRun(
+            run_id=_SEED_CORE_RUN_ID,
+            status=ExtractionRunStatus.COMPLETED,
+            source_count=8,
+            text_unit_count=8,
+            candidate_count=4,
+            started_at="2026-04-12T08:05:00+00:00",
+            completed_at="2026-04-12T08:07:00+00:00",
+            notes="Core offline fixture extraction across the historical source pack.",
+        ),
+        ExtractionRun(
+            run_id=_SEED_RESEARCH_EXTRACT_RUN_ID,
+            status=ExtractionRunStatus.COMPLETED,
+            source_count=2,
+            text_unit_count=2,
+            candidate_count=2,
+            started_at="2026-04-12T10:55:00+00:00",
+            completed_at="2026-04-12T10:57:00+00:00",
+            notes="Extraction of staged findings from the accepted research run.",
+        ),
+    ]
+
+
+def _seed_review_events() -> list[ReviewEvent]:
+    return [
+        ReviewEvent(
+            review_id="review-market-price",
+            candidate_id="cand-market-price",
+            decision=ReviewDecision.APPROVE,
+            reviewed_at="2026-04-12T08:15:00+00:00",
+            approved_claim_id="claim-market-price",
+            notes="Core economic anchor for the project.",
+        ),
+        ReviewEvent(
+            review_id="review-bread-tokens",
+            candidate_id="cand-bread-tokens",
+            decision=ReviewDecision.APPROVE,
+            reviewed_at="2026-04-12T08:18:00+00:00",
+            override_status=ClaimStatus.PROBABLE,
+            approved_claim_id="claim-bread-tokens",
+            notes="Useful routine detail despite narrow sourcing.",
+        ),
+        ReviewEvent(
+            review_id="review-bread-scrip",
+            candidate_id="cand-bread-scrip",
+            decision=ReviewDecision.APPROVE,
+            reviewed_at="2026-04-12T11:02:00+00:00",
+            override_status=ClaimStatus.PROBABLE,
+            approved_claim_id="claim-bread-scrip",
+            notes="Accepted from staged research because it reinforces the token economy.",
+        ),
+        ReviewEvent(
+            review_id="review-hidden-grain",
+            candidate_id="cand-hidden-grain",
+            decision=ReviewDecision.REJECT,
+            reviewed_at="2026-04-12T08:21:00+00:00",
+            notes="Keep as rumor texture only; do not turn into settled canon.",
+        ),
+    ]
+
+
+def _seed_claims() -> list[ApprovedClaim]:
+    return [
+        ApprovedClaim(
+            claim_id="claim-market-price",
+            subject="Rouen bread prices",
+            predicate="rose_during",
+            value="the winter shortage",
+            claim_kind=ClaimKind.PRACTICE,
+            status=ClaimStatus.VERIFIED,
+            place="Rouen",
+            time_start="1421-12-01",
+            time_end="1422-02-28",
+            evidence_ids=["evi-price-rise"],
+            created_from_run_id=_SEED_CORE_RUN_ID,
+            notes="Strong anchor from the municipal ledger.",
+        ),
+        ApprovedClaim(
+            claim_id="claim-bread-tokens",
+            subject="Bakers in Rouen",
+            predicate="used",
+            value="household bread tokens",
+            claim_kind=ClaimKind.PRACTICE,
+            status=ClaimStatus.PROBABLE,
+            place="Rouen",
+            time_start="1422-01-01",
+            time_end="1422-01-31",
+            evidence_ids=["evi-bread-tokens"],
+            created_from_run_id=_SEED_CORE_RUN_ID,
+            notes="Grounds rationing scenes but still comes from a narrow petition source.",
+        ),
+        ApprovedClaim(
+            claim_id="claim-bread-scrip",
+            subject="Rouen bakers",
+            predicate="were_paid_in",
+            value="bread scrip",
+            claim_kind=ClaimKind.PRACTICE,
+            status=ClaimStatus.PROBABLE,
+            place="Rouen",
+            time_start="1422-01-01",
+            time_end="1422-02-28",
+            evidence_ids=["evi-bread-scrip"],
+            created_from_run_id=_SEED_RESEARCH_EXTRACT_RUN_ID,
+            notes="Accepted from the staged research run to deepen the local economy.",
+        ),
+        ApprovedClaim(
+            claim_id="claim-night-barges",
+            subject="Night barges",
+            predicate="unloaded_at",
+            value="Saint Sever gate before dawn",
+            claim_kind=ClaimKind.EVENT,
+            status=ClaimStatus.VERIFIED,
+            place="Rouen",
+            time_start="1422-01-01",
+            time_end="1422-02-28",
+            evidence_ids=["evi-night-barges"],
+            created_from_run_id=_SEED_CORE_RUN_ID,
+            notes="Supports setting logistics and harbor movement.",
+        ),
+        ApprovedClaim(
+            claim_id="claim-bell-prime",
+            subject="Rouen grain bell",
+            predicate="rang_after",
+            value="prime",
+            claim_kind=ClaimKind.INSTITUTION,
+            status=ClaimStatus.CONTESTED,
+            place="Rouen",
+            time_start="1422-01-01",
+            time_end="1422-01-15",
+            evidence_ids=["evi-bell-prime"],
+            created_from_run_id=_SEED_CORE_RUN_ID,
+            notes="Earlier ordinance reading kept as contested context.",
+        ),
+        ApprovedClaim(
+            claim_id="claim-bell-terce",
+            subject="Rouen grain bell",
+            predicate="rang_after",
+            value="terce",
+            claim_kind=ClaimKind.INSTITUTION,
+            status=ClaimStatus.PROBABLE,
+            place="Rouen",
+            time_start="1422-01-16",
+            time_end="1422-02-28",
+            evidence_ids=["evi-bell-terce"],
+            created_from_run_id=_SEED_CORE_RUN_ID,
+            notes="Later ordinance appears to supersede the earlier hour.",
+        ),
+        ApprovedClaim(
+            claim_id="claim-wax-tablets",
+            subject="Rouen market debt",
+            predicate="was_tracked_with",
+            value="wax tally tablets",
+            claim_kind=ClaimKind.OBJECT,
+            status=ClaimStatus.VERIFIED,
+            place="Rouen",
+            time_start="1422-02-01",
+            time_end="1422-02-28",
+            evidence_ids=["evi-wax-tablets"],
+            created_from_run_id=_SEED_CORE_RUN_ID,
+            notes="Concrete object detail for material culture.",
+        ),
+        ApprovedClaim(
+            claim_id="claim-blue-lanterns",
+            subject="Saint Romain shrine lanterns",
+            predicate="were_said_to_burn",
+            value="blue before the thaw",
+            claim_kind=ClaimKind.BELIEF,
+            status=ClaimStatus.RUMOR,
+            place="Rouen",
+            time_start="1422-02-01",
+            time_end="1422-02-28",
+            evidence_ids=["evi-blue-lanterns"],
+            created_from_run_id=_SEED_CORE_RUN_ID,
+            notes="Useful atmosphere, still explicitly rumor.",
+        ),
+        ApprovedClaim(
+            claim_id="claim-docks-author-choice",
+            subject="Rouen docks",
+            predicate="should_be_depicted_as",
+            value="narrow, freezing, and lantern-lit",
+            claim_kind=ClaimKind.PLACE,
+            status=ClaimStatus.AUTHOR_CHOICE,
+            author_choice=True,
+            place="Rouen",
+            notes="Author decision to unify harbor scenes even when evidence is thin.",
+        ),
+    ]
+
+
+def _seed_relationships() -> list[ClaimRelationship]:
+    return [
+        ClaimRelationship(
+            relationship_id="rel-bread-tokens-support-price",
+            claim_id="claim-bread-tokens",
+            related_claim_id="claim-market-price",
+            relationship_type="supports",
+            source_kind="derived",
+            notes="Ration tokens reinforce the price-spike reading.",
+        ),
+        ClaimRelationship(
+            relationship_id="rel-bell-prime-contradicts-terce",
+            claim_id="claim-bell-prime",
+            related_claim_id="claim-bell-terce",
+            relationship_type="contradicts",
+            source_kind="derived",
+            notes="The two bell-time accounts cannot both be primary canon without qualification.",
+        ),
+        ClaimRelationship(
+            relationship_id="rel-bell-terce-contradicts-prime",
+            claim_id="claim-bell-terce",
+            related_claim_id="claim-bell-prime",
+            relationship_type="contradicts",
+            source_kind="derived",
+            notes="The later addendum directly contests the earlier ordinance reading.",
+        ),
+        ClaimRelationship(
+            relationship_id="rel-bell-terce-supersedes-prime",
+            claim_id="claim-bell-terce",
+            related_claim_id="claim-bell-prime",
+            relationship_type="supersedes",
+            source_kind="derived",
+            notes="The addendum is treated as the better operational guide for scenes after mid-January.",
+        ),
+        ClaimRelationship(
+            relationship_id="rel-bell-prime-superseded-by-terce",
+            claim_id="claim-bell-prime",
+            related_claim_id="claim-bell-terce",
+            relationship_type="superseded_by",
+            source_kind="derived",
+            notes="The earlier bell hour remains visible for provenance, not as the preferred synthesis.",
+        ),
+    ]
+
+
+def _seed_research_runs() -> list[ResearchRun]:
+    return [
+        ResearchRun(
+            run_id=_SEED_RESEARCH_RUN_ID,
+            status=ResearchRunStatus.COMPLETED,
+            brief=ResearchBrief(
+                topic="Rouen winter shortage daily life",
+                focal_year="1422",
+                time_start="1421-12-01",
+                time_end="1422-02-28",
+                locale="Rouen",
+                audience="historical fiction authors",
+                desired_facets=["practices", "institutions", "regional_context"],
+                preferred_source_types=["archive", "record", "petition"],
+                adapter_id="curated_inputs",
+                max_queries=0,
+                max_results_per_query=0,
+                max_findings=4,
+                max_per_facet=2,
+            ),
+            program_id="historical-daily-life",
+            facets=[
+                ResearchFacet(
+                    facet_id="practices",
+                    label="Practices",
+                    query_hint="routines, household rationing, payment habits",
+                    target_count=1,
+                    queries_attempted=0,
+                    hits_seen=2,
+                    accepted_count=1,
+                    rejected_count=1,
+                    skipped_count=0,
+                ),
+                ResearchFacet(
+                    facet_id="institutions",
+                    label="Institutions",
+                    query_hint="council enforcement, bells, wardens, beadles",
+                    target_count=1,
+                    queries_attempted=0,
+                    hits_seen=1,
+                    accepted_count=1,
+                    rejected_count=0,
+                    skipped_count=0,
+                ),
+                ResearchFacet(
+                    facet_id="regional_context",
+                    label="Region-Specific Context",
+                    query_hint="broader winter context and neighboring market pressure",
+                    target_count=1,
+                    queries_attempted=0,
+                    hits_seen=1,
+                    accepted_count=0,
+                    rejected_count=1,
+                    skipped_count=0,
+                ),
+            ],
+            query_count=0,
+            finding_count=4,
+            accepted_count=2,
+            rejected_count=2,
+            staged_count=2,
+            extraction_run_id=_SEED_RESEARCH_EXTRACT_RUN_ID,
+            telemetry=ResearchRunTelemetry(
+                total_queries=0,
+                queries_attempted=0,
+                fetch_attempts=0,
+                successful_fetches=0,
+                retries=0,
+                elapsed_run_time_ms=4200,
+                elapsed_fetch_time_ms=0,
+            ),
+            warnings=["Regional context is still thin compared with daily-life detail."],
+            logs=[
+                "Queued research program historical-daily-life.",
+                "Using adapter curated_inputs.",
+                "Processing 2 curated input(s).",
+                "Accepted one practice finding and one institutional finding.",
+            ],
+            started_at="2026-04-12T10:45:00+00:00",
+            completed_at="2026-04-12T10:49:00+00:00",
+        )
+    ]
+
+
+def _finding_provenance(
+    *,
+    facet_id: str,
+    facet_label: str,
+    url: str,
+    score: float,
+    relevance: float,
+    quality: float,
+    novelty: float,
+    source_type: str,
+    title: str,
+    decision: ResearchFindingDecision,
+    reason: ResearchFindingReason,
+) -> ResearchFindingProvenance:
+    return ResearchFindingProvenance(
+        adapter_id="curated_inputs",
+        facet_id=facet_id,
+        facet_label=facet_label,
+        originating_query="curated_input",
+        query_profile="curated",
+        search_provider_id="curated_inputs",
+        matched_providers=["curated_inputs"],
+        provider_rank=1,
+        fusion_score=1.0,
+        search_rank=1,
+        hit_url=url,
+        canonical_url=url,
+        fetch_outcome=ResearchFetchOutcome.CURATED_TEXT,
+        fetch_final_url=url,
+        fetch_status="curated_text",
+        acceptance_reason=reason if decision == ResearchFindingDecision.ACCEPTED else None,
+        rejection_reason=reason if decision == ResearchFindingDecision.REJECTED else None,
+        scoring=ResearchFindingScoring(
+            overall_score=score,
+            relevance_score=relevance,
+            quality_score=quality,
+            novelty_score=novelty,
+            quality_threshold=0.45,
+            threshold_passed=decision == ResearchFindingDecision.ACCEPTED,
+            source_type=source_type,
+            normalized_title=title,
+            canonical_host=urlparse(url).netloc,
+        ),
     )
+
+
+def _seed_research_findings() -> list[ResearchFinding]:
+    return [
+        ResearchFinding(
+            finding_id="finding-bread-scrip",
+            run_id=_SEED_RESEARCH_RUN_ID,
+            facet_id="practices",
+            query="curated_input",
+            url="https://demo.sourcebound.test/archive/bread-scrip",
+            title="Curated archive note on bakers' scrip",
+            canonical_url="https://demo.sourcebound.test/archive/bread-scrip",
+            publisher="Archive clerk",
+            published_at="1422-01-18",
+            access_date="2026-04-12T10:45:10+00:00",
+            locator="curated input",
+            snippet_text=(
+                "Rouen bakers were paid in bread scrip during the winter of 1422, "
+                "and neighbors compared the stamped tokens at the market gate."
+            ),
+            page_excerpt=(
+                "Rouen bakers were paid in bread scrip during the winter of 1422. "
+                "Neighbors compared the stamped tokens at the market gate."
+            ),
+            source_type="archive",
+            score=0.84,
+            relevance_score=0.87,
+            quality_score=0.82,
+            novelty_score=0.79,
+            decision=ResearchFindingDecision.ACCEPTED,
+            staged_source_id="research-source-bread-scrip",
+            staged_document_id="research-doc-bread-scrip",
+            provenance=_finding_provenance(
+                facet_id="practices",
+                facet_label="Practices",
+                url="https://demo.sourcebound.test/archive/bread-scrip",
+                score=0.84,
+                relevance=0.87,
+                quality=0.82,
+                novelty=0.79,
+                source_type="archive",
+                title="Curated archive note on bakers' scrip",
+                decision=ResearchFindingDecision.ACCEPTED,
+                reason=ResearchFindingReason.ACCEPTED_QUALITY_THRESHOLD,
+            ),
+        ),
+        ResearchFinding(
+            finding_id="finding-grain-bell",
+            run_id=_SEED_RESEARCH_RUN_ID,
+            facet_id="institutions",
+            query="curated_input",
+            url="https://demo.sourcebound.test/archive/grain-bell",
+            title="Curated parish note on grain bell beadles",
+            canonical_url="https://demo.sourcebound.test/archive/grain-bell",
+            publisher="Parish clerk",
+            published_at="1422-01-22",
+            access_date="2026-04-12T10:45:20+00:00",
+            locator="curated input",
+            snippet_text=(
+                "Rouen parish beadles were posted at the grain bell in 1422, and witnesses "
+                "described how they counted households before opening the market."
+            ),
+            page_excerpt=(
+                "Rouen parish beadles were posted at the grain bell in 1422. "
+                "Witnesses described how they counted households before opening the market."
+            ),
+            source_type="archive",
+            score=0.78,
+            relevance_score=0.8,
+            quality_score=0.76,
+            novelty_score=0.73,
+            decision=ResearchFindingDecision.ACCEPTED,
+            staged_source_id="research-source-grain-bell",
+            staged_document_id="research-doc-grain-bell",
+            provenance=_finding_provenance(
+                facet_id="institutions",
+                facet_label="Institutions",
+                url="https://demo.sourcebound.test/archive/grain-bell",
+                score=0.78,
+                relevance=0.8,
+                quality=0.76,
+                novelty=0.73,
+                source_type="archive",
+                title="Curated parish note on grain bell beadles",
+                decision=ResearchFindingDecision.ACCEPTED,
+                reason=ResearchFindingReason.ACCEPTED_QUALITY_THRESHOLD,
+            ),
+        ),
+        ResearchFinding(
+            finding_id="finding-food-history",
+            run_id=_SEED_RESEARCH_RUN_ID,
+            facet_id="practices",
+            query="curated_input",
+            url="https://demo.sourcebound.test/essays/food-history",
+            title="Retrospective food history of medieval Rouen",
+            canonical_url="https://demo.sourcebound.test/essays/food-history",
+            publisher="Museum essay",
+            published_at="2019-01-01",
+            access_date="2026-04-12T10:45:30+00:00",
+            locator="essay",
+            snippet_text="A retrospective essay repeated the same token economy detail without adding period-specific texture.",
+            page_excerpt="The retrospective essay repeated the same token economy detail without adding new anchors.",
+            source_type="essay",
+            score=0.54,
+            relevance_score=0.68,
+            quality_score=0.49,
+            novelty_score=0.21,
+            decision=ResearchFindingDecision.REJECTED,
+            rejection_reason=ResearchFindingReason.REJECTED_DUPLICATE.value,
+            provenance=_finding_provenance(
+                facet_id="practices",
+                facet_label="Practices",
+                url="https://demo.sourcebound.test/essays/food-history",
+                score=0.54,
+                relevance=0.68,
+                quality=0.49,
+                novelty=0.21,
+                source_type="essay",
+                title="Retrospective food history of medieval Rouen",
+                decision=ResearchFindingDecision.REJECTED,
+                reason=ResearchFindingReason.REJECTED_DUPLICATE,
+            ),
+        ),
+        ResearchFinding(
+            finding_id="finding-regional-overview",
+            run_id=_SEED_RESEARCH_RUN_ID,
+            facet_id="regional_context",
+            query="curated_input",
+            url="https://demo.sourcebound.test/overview/winter-shortage",
+            title="General overview of the winter shortage",
+            canonical_url="https://demo.sourcebound.test/overview/winter-shortage",
+            publisher="Reference overview",
+            published_at="2015-01-01",
+            access_date="2026-04-12T10:45:40+00:00",
+            locator="overview",
+            snippet_text="A broad overview mentioned hardship but offered no local Rouen anchors or operational detail.",
+            page_excerpt="The overview was broad, undated for Rouen, and too generic for scene construction.",
+            source_type="reference",
+            score=0.32,
+            relevance_score=0.4,
+            quality_score=0.35,
+            novelty_score=0.51,
+            decision=ResearchFindingDecision.REJECTED,
+            rejection_reason=ResearchFindingReason.REJECTED_QUALITY_THRESHOLD.value,
+            provenance=_finding_provenance(
+                facet_id="regional_context",
+                facet_label="Region-Specific Context",
+                url="https://demo.sourcebound.test/overview/winter-shortage",
+                score=0.32,
+                relevance=0.4,
+                quality=0.35,
+                novelty=0.51,
+                source_type="reference",
+                title="General overview of the winter shortage",
+                decision=ResearchFindingDecision.REJECTED,
+                reason=ResearchFindingReason.REJECTED_QUALITY_THRESHOLD,
+            ),
+        ),
+    ]
+
+
+def _seed_profile() -> BibleProjectProfile:
+    return BibleProjectProfile(
+        project_id=_SEED_PROJECT_ID,
+        project_name="Rouen Winter Shortage Bible",
+        era="1421-1422 winter shortage",
+        time_start="1421-12-01",
+        time_end="1422-02-28",
+        geography="Rouen",
+        social_lens="bakers, porters, clerks, and households waiting on ration lines",
+        narrative_focus="market control, winter scarcity, rumor, and ritualized public order",
+        taboo_topics=["modern slang", "clean heroic famine myths"],
+        desired_facets=["economics", "daily life", "institutions", "ritual", "rumor"],
+        tone=BibleTone.GROUNDED_LITERARY,
+        composition_defaults=BibleCompositionDefaults(
+            include_statuses=[ClaimStatus.VERIFIED, ClaimStatus.PROBABLE],
+            source_types=["record", "petition", "archive", "account_book"],
+            focus="bread prices, ration tokens, and bell-controlled market flow",
+        ),
+        created_at=_SEED_CREATED_AT,
+        updated_at=_SEED_UPDATED_AT,
+    )
+
+
+def _seed_sections(data_dir: Path, profile: BibleProjectProfile) -> list[BibleSection]:
+    service = BibleWorkspaceService(
+        profile_store=FileBibleProjectProfileStore(data_dir),
+        section_store=FileBibleSectionStore(data_dir),
+        truth_store=FileTruthStore(data_dir),
+        evidence_store=FileEvidenceStore(data_dir),
+        source_store=FileSourceStore(data_dir),
+    )
+
+    economics_filters = BibleSectionFilters(
+        focus="bread prices, ration tokens, debt tracking, and market movement",
+        statuses=[ClaimStatus.VERIFIED, ClaimStatus.PROBABLE],
+        source_types=["record", "petition", "archive", "account_book"],
+        place="Rouen",
+        time_start=profile.time_start,
+        time_end=profile.time_end,
+        relationship_types=["supports"],
+    )
+    economics_draft = service._compose_section(
+        profile.project_id,
+        BibleSectionType.ECONOMICS_AND_MATERIAL_CULTURE,
+        economics_filters,
+    )
+
+    rumor_filters = BibleSectionFilters(
+        focus="grain bell disputes, hoarding stories, and eerie shrine gossip",
+        statuses=[ClaimStatus.CONTESTED, ClaimStatus.RUMOR, ClaimStatus.LEGEND, ClaimStatus.PROBABLE],
+        source_types=["ordinance", "chronicle", "broadside"],
+        place="Rouen",
+        time_start=profile.time_start,
+        time_end=profile.time_end,
+        relationship_types=["contradicts", "supersedes", "superseded_by"],
+    )
+    rumor_draft = service._compose_section(
+        profile.project_id,
+        BibleSectionType.RUMORS_AND_CONTESTED,
+        rumor_filters,
+    )
+    author_filters = BibleSectionFilters(
+        focus="narrative defaults for queues, cold weather, and shrine atmosphere",
+        place="Rouen",
+        time_start=profile.time_start,
+        time_end=profile.time_end,
+    )
+    author_draft = service._compose_section(
+        profile.project_id,
+        BibleSectionType.AUTHOR_DECISIONS,
+        author_filters,
+    )
+
+    manual_rumor_text = (
+        "# What the City Said vs. What the Ledgers Say\n\n"
+        "The working version for the novel keeps the grain-bell timing dispute visible as public confusion, "
+        "not as a solved footnote. The latest generated synthesis stays below as the evidence-backed baseline.\n\n"
+        "- Treat the prime-versus-terce contradiction as a queue-management problem the characters can feel.\n"
+        "- Keep merchant-hoarding talk in dialogue and rumor, never in omniscient narration.\n"
+        "- Use the blue-lantern shrine story for tone, not confirmation."
+    )
+
+    return [
+        BibleSection(
+            section_id=_SEED_ECON_SECTION_ID,
+            project_id=profile.project_id,
+            section_type=BibleSectionType.ECONOMICS_AND_MATERIAL_CULTURE,
+            title="Markets, Tokens, and Grain Flow",
+            content=economics_draft.generated_markdown,
+            generated_markdown=economics_draft.generated_markdown,
+            paragraphs=economics_draft.paragraphs,
+            generation_filters=economics_filters,
+            references=economics_draft.references,
+            certainty_summary=economics_draft.certainty_summary,
+            coverage_gaps=economics_draft.coverage_gaps,
+            contradiction_flags=economics_draft.contradiction_flags,
+            recommended_next_research=economics_draft.recommended_next_research,
+            coverage_analysis=economics_draft.coverage_analysis,
+            has_manual_edits=False,
+            created_at="2026-04-12T12:20:00+00:00",
+            updated_at="2026-04-12T12:20:00+00:00",
+            last_generated_at="2026-04-12T12:20:00+00:00",
+        ),
+        BibleSection(
+            section_id=_SEED_RUMOR_SECTION_ID,
+            project_id=profile.project_id,
+            section_type=BibleSectionType.RUMORS_AND_CONTESTED,
+            title="What the City Said vs. What the Ledgers Say",
+            content=manual_rumor_text,
+            generated_markdown=rumor_draft.generated_markdown,
+            manual_markdown=manual_rumor_text,
+            paragraphs=rumor_draft.paragraphs,
+            generation_filters=rumor_filters,
+            references=rumor_draft.references,
+            certainty_summary=rumor_draft.certainty_summary,
+            coverage_gaps=rumor_draft.coverage_gaps,
+            contradiction_flags=rumor_draft.contradiction_flags,
+            recommended_next_research=rumor_draft.recommended_next_research,
+            coverage_analysis=rumor_draft.coverage_analysis,
+            has_manual_edits=True,
+            created_at="2026-04-12T12:45:00+00:00",
+            updated_at="2026-04-12T13:15:00+00:00",
+            last_generated_at="2026-04-12T13:00:00+00:00",
+            last_edited_at="2026-04-12T13:15:00+00:00",
+        ),
+        BibleSection(
+            section_id=_SEED_AUTHOR_SECTION_ID,
+            project_id=profile.project_id,
+            section_type=BibleSectionType.AUTHOR_DECISIONS,
+            title="House Style Decisions",
+            content=author_draft.generated_markdown,
+            generated_markdown=author_draft.generated_markdown,
+            paragraphs=author_draft.paragraphs,
+            generation_filters=author_filters,
+            references=author_draft.references,
+            certainty_summary=author_draft.certainty_summary,
+            coverage_gaps=author_draft.coverage_gaps,
+            contradiction_flags=author_draft.contradiction_flags,
+            recommended_next_research=author_draft.recommended_next_research,
+            coverage_analysis=author_draft.coverage_analysis,
+            retrieval_metadata=author_draft.retrieval_metadata,
+            has_manual_edits=False,
+            created_at="2026-04-12T13:05:00+00:00",
+            updated_at="2026-04-12T13:05:00+00:00",
+            last_generated_at="2026-04-12T13:05:00+00:00",
+        ),
+    ]
+
+
+def _seed_jobs(sections: list[BibleSection], profile: BibleProjectProfile) -> list[JobRecord]:
+    economics_section = next(
+        item for item in sections if item.section_id == _SEED_ECON_SECTION_ID
+    )
+    rumor_section = next(item for item in sections if item.section_id == _SEED_RUMOR_SECTION_ID)
+    author_section = next(item for item in sections if item.section_id == _SEED_AUTHOR_SECTION_ID)
+    return [
+        JobRecord(
+            job_id="job-research-create",
+            job_type="research_run_create",
+            status=JobStatus.COMPLETED,
+            payload={
+                "run_id": _SEED_RESEARCH_RUN_ID,
+                "request": {
+                    "brief": _seed_research_runs()[0].brief.model_dump(mode="json"),
+                    "program_id": "historical-daily-life",
+                },
+            },
+            progress_stage="completed",
+            progress_current=100,
+            progress_total=100,
+            result_ref=JobResultRef(run_id=_SEED_RESEARCH_RUN_ID),
+            created_at="2026-04-12T10:45:00+00:00",
+            started_at="2026-04-12T10:45:02+00:00",
+            completed_at="2026-04-12T10:49:00+00:00",
+            updated_at="2026-04-12T10:49:00+00:00",
+        ),
+        JobRecord(
+            job_id="job-research-stage",
+            job_type="research_run_stage",
+            status=JobStatus.COMPLETED,
+            payload={"run_id": _SEED_RESEARCH_RUN_ID},
+            progress_stage="completed",
+            progress_current=100,
+            progress_total=100,
+            result_ref=JobResultRef(run_id=_SEED_RESEARCH_RUN_ID),
+            created_at="2026-04-12T10:50:00+00:00",
+            started_at="2026-04-12T10:50:03+00:00",
+            completed_at="2026-04-12T10:52:00+00:00",
+            updated_at="2026-04-12T10:52:00+00:00",
+        ),
+        JobRecord(
+            job_id="job-research-extract",
+            job_type="research_run_extract",
+            status=JobStatus.COMPLETED,
+            payload={"run_id": _SEED_RESEARCH_RUN_ID},
+            progress_stage="completed",
+            progress_current=100,
+            progress_total=100,
+            result_ref=JobResultRef(run_id=_SEED_RESEARCH_RUN_ID),
+            created_at="2026-04-12T10:54:00+00:00",
+            started_at="2026-04-12T10:54:02+00:00",
+            completed_at="2026-04-12T10:57:00+00:00",
+            updated_at="2026-04-12T10:57:00+00:00",
+        ),
+        JobRecord(
+            job_id="job-bible-compose-economics",
+            job_type="bible_section_compose",
+            status=JobStatus.COMPLETED,
+            payload={
+                "section_id": economics_section.section_id,
+                "request": {
+                    "project_id": profile.project_id,
+                    "section_type": economics_section.section_type.value,
+                    "title": economics_section.title,
+                    "filters": economics_section.generation_filters.model_dump(mode="json"),
+                },
+            },
+            progress_stage="completed",
+            progress_current=100,
+            progress_total=100,
+            result_ref=JobResultRef(section_id=economics_section.section_id),
+            created_at="2026-04-12T12:18:00+00:00",
+            started_at="2026-04-12T12:18:03+00:00",
+            completed_at="2026-04-12T12:20:00+00:00",
+            updated_at="2026-04-12T12:20:00+00:00",
+        ),
+        JobRecord(
+            job_id="job-bible-regenerate-rumors",
+            job_type="bible_section_regenerate",
+            status=JobStatus.COMPLETED,
+            payload={
+                "section_id": rumor_section.section_id,
+                "request": {"filters": rumor_section.generation_filters.model_dump(mode="json")},
+            },
+            progress_stage="completed",
+            progress_current=100,
+            progress_total=100,
+            result_ref=JobResultRef(section_id=rumor_section.section_id),
+            created_at="2026-04-12T12:58:00+00:00",
+            started_at="2026-04-12T12:58:04+00:00",
+            completed_at="2026-04-12T13:00:00+00:00",
+            updated_at="2026-04-12T13:00:00+00:00",
+        ),
+        JobRecord(
+            job_id="job-bible-export-latest",
+            job_type="bible_project_export",
+            status=JobStatus.PENDING,
+            payload={"project_id": profile.project_id},
+            progress_stage="queued",
+            progress_current=0,
+            progress_total=100,
+            result_ref=JobResultRef(project_id=profile.project_id),
+            created_at="2026-04-12T13:10:00+00:00",
+            updated_at="2026-04-12T13:10:00+00:00",
+        ),
+        JobRecord(
+            job_id="job-bible-compose-author-failed",
+            job_type="bible_section_compose",
+            status=JobStatus.FAILED,
+            payload={
+                "section_id": author_section.section_id,
+                "request": {
+                    "project_id": profile.project_id,
+                    "section_type": author_section.section_type.value,
+                    "title": author_section.title,
+                    "filters": author_section.generation_filters.model_dump(mode="json"),
+                },
+            },
+            progress_stage="failed",
+            progress_current=40,
+            progress_total=100,
+            result_ref=JobResultRef(section_id=author_section.section_id),
+            error="Background worker restarted before this compose job finished.",
+            error_detail="Background worker restarted before this compose job finished.",
+            retryable=True,
+            warnings=["Retrying this job is safe; author manual text is not involved."],
+            created_at="2026-04-12T13:06:00+00:00",
+            started_at="2026-04-12T13:06:05+00:00",
+            completed_at="2026-04-12T13:07:10+00:00",
+            updated_at="2026-04-12T13:07:10+00:00",
+        ),
+    ]
+
+
+def _seed_research_programs() -> list[dict]:
+    return []
+
+
+def _write_seed_files(
+    *,
+    data_dir: Path,
+    sources: list[SourceRecord],
+    source_documents: list[SourceDocumentRecord],
+    text_units: list[TextUnit],
+    evidence: list[EvidenceSnippet],
+    candidates: list[CandidateClaim],
+    extraction_runs: list[ExtractionRun],
+    review_events: list[ReviewEvent],
+    claims: list[ApprovedClaim],
+    relationships: list[ClaimRelationship],
+    research_runs: list[ResearchRun],
+    research_findings: list[ResearchFinding],
+    jobs: list[JobRecord],
+    profile: BibleProjectProfile,
+    sections: list[BibleSection],
+) -> None:
+    _write_json(data_dir / "sources.json", [item.model_dump(mode="json") for item in sources])
+    _write_json(
+        data_dir / "source_documents.json",
+        [item.model_dump(mode="json") for item in source_documents],
+    )
+    _write_json(data_dir / "text_units.json", [item.model_dump(mode="json") for item in text_units])
+    _write_json(data_dir / "evidence.json", [item.model_dump(mode="json") for item in evidence])
+    _write_json(data_dir / "candidates.json", [item.model_dump(mode="json") for item in candidates])
+    _write_json(
+        data_dir / "extraction_runs.json",
+        [item.model_dump(mode="json") for item in extraction_runs],
+    )
+    _write_json(
+        data_dir / "review_events.json",
+        [item.model_dump(mode="json") for item in review_events],
+    )
+    _write_json(data_dir / "claims.json", [item.model_dump(mode="json") for item in claims])
+    _write_json(
+        data_dir / "claim_relationships.json",
+        [item.model_dump(mode="json") for item in relationships],
+    )
+    _write_json(
+        data_dir / "research_runs.json",
+        [item.model_dump(mode="json") for item in research_runs],
+    )
+    _write_json(
+        data_dir / "research_findings.json",
+        [item.model_dump(mode="json") for item in research_findings],
+    )
+    _write_json(data_dir / "research_programs.json", _seed_research_programs())
+    _write_json(data_dir / "jobs.json", [item.model_dump(mode="json") for item in jobs])
+    _write_json(
+        data_dir / "bible_project_profiles.json",
+        [profile.model_dump(mode="json")],
+    )
+    _write_json(
+        data_dir / "bible_sections.json",
+        [item.model_dump(mode="json") for item in sections],
+    )
+
+
+def _mirror_truth_to_postgres(
+    *,
+    evidence: list[EvidenceSnippet],
+    review_events: list[ReviewEvent],
+    claims: list[ApprovedClaim],
+    relationships: list[ClaimRelationship],
+) -> None:
+    truth_store = PostgresTruthStore(settings.app_postgres_dsn, settings.app_postgres_schema)
+    evidence_by_id = {item.evidence_id: item for item in evidence}
+    reviews_by_claim = {
+        review.approved_claim_id: review
+        for review in review_events
+        if review.approved_claim_id is not None
+    }
+    for claim in claims:
+        claim_evidence = [evidence_by_id[evidence_id] for evidence_id in claim.evidence_ids if evidence_id in evidence_by_id]
+        truth_store.save_claim(claim, evidence=claim_evidence, review=reviews_by_claim.get(claim.claim_id))
+    for relationship in relationships:
+        truth_store.upsert_relationship(
+            relationship.claim_id,
+            relationship.related_claim_id,
+            relationship.relationship_type,
+            notes=relationship.notes,
+            source_kind=relationship.source_kind,
+        )
 
 
 @app.command()
@@ -239,36 +1603,69 @@ def serve(reload: bool = False) -> None:
 def seed_dev_data() -> None:
     data_dir = settings.app_data_dir
     sources = _seed_sources()
+    source_documents = _seed_source_documents()
     text_units = _seed_text_units()
     evidence = _seed_evidence()
     candidates = _seed_candidates()
-    extraction_runs = [_seed_run()]
-    review_events: list[dict] = []
+    extraction_runs = _seed_extraction_runs()
+    review_events = _seed_review_events()
+    claims = _seed_claims()
+    relationships = _seed_relationships()
+    research_runs = _seed_research_runs()
+    research_findings = _seed_research_findings()
+    profile = _seed_profile()
 
-    _write_json(data_dir / "sources.json", [item.model_dump(mode="json") for item in sources])
-    _write_json(data_dir / "text_units.json", [item.model_dump(mode="json") for item in text_units])
-    _write_json(data_dir / "evidence.json", [item.model_dump(mode="json") for item in evidence])
-    _write_json(data_dir / "candidates.json", [item.model_dump(mode="json") for item in candidates])
-    _write_json(
-        data_dir / "extraction_runs.json",
-        [item.model_dump(mode="json") for item in extraction_runs],
+    # Write the canonical JSON fixtures first so the file-backed composition pass can
+    # synthesize deterministic bible sections from the same reviewed canon we ship.
+    _write_seed_files(
+        data_dir=data_dir,
+        sources=sources,
+        source_documents=source_documents,
+        text_units=text_units,
+        evidence=evidence,
+        candidates=candidates,
+        extraction_runs=extraction_runs,
+        review_events=review_events,
+        claims=claims,
+        relationships=relationships,
+        research_runs=research_runs,
+        research_findings=research_findings,
+        jobs=[],
+        profile=profile,
+        sections=[],
     )
-    _write_json(data_dir / "review_events.json", review_events)
-    _write_json(data_dir / "claims.json", [])
-    _write_json(data_dir / "claim_relationships.json", [])
-    _write_json(data_dir / "source_documents.json", [])
+    sections = _seed_sections(data_dir, profile)
+    jobs = _seed_jobs(sections, profile)
+    _write_seed_files(
+        data_dir=data_dir,
+        sources=sources,
+        source_documents=source_documents,
+        text_units=text_units,
+        evidence=evidence,
+        candidates=candidates,
+        extraction_runs=extraction_runs,
+        review_events=review_events,
+        claims=claims,
+        relationships=relationships,
+        research_runs=research_runs,
+        research_findings=research_findings,
+        jobs=jobs,
+        profile=profile,
+        sections=sections,
+    )
+
+    if settings.app_state_backend == "postgres" or settings.app_truth_backend == "postgres":
+        _reset_postgres_schema()
 
     if settings.app_state_backend == "postgres":
-        source_store = PostgresSourceStore(
+        PostgresSourceStore(
             settings.app_postgres_dsn,
             settings.app_postgres_schema,
-        )
-        source_store.store.clear_all()
-        source_store.save_sources(sources)
+        ).save_sources(sources)
         PostgresSourceDocumentStore(
             settings.app_postgres_dsn,
             settings.app_postgres_schema,
-        ).save_source_documents([])
+        ).save_source_documents(source_documents)
         PostgresTextUnitStore(
             settings.app_postgres_dsn,
             settings.app_postgres_schema,
@@ -281,24 +1678,123 @@ def seed_dev_data() -> None:
             settings.app_postgres_dsn,
             settings.app_postgres_schema,
         ).save_candidates(candidates)
-        PostgresExtractionRunStore(
+        extraction_run_store = PostgresExtractionRunStore(
             settings.app_postgres_dsn,
             settings.app_postgres_schema,
-        ).save_run(extraction_runs[0])
-        PostgresReviewStore(settings.app_postgres_dsn, settings.app_postgres_schema)
+        )
+        for run in extraction_runs:
+            extraction_run_store.save_run(run)
+        review_store = PostgresReviewStore(settings.app_postgres_dsn, settings.app_postgres_schema)
+        for review in review_events:
+            review_store.save_review(review)
+        research_run_store = PostgresResearchRunStore(
+            settings.app_postgres_dsn,
+            settings.app_postgres_schema,
+        )
+        for run in research_runs:
+            research_run_store.save_run(run)
+        PostgresResearchFindingStore(
+            settings.app_postgres_dsn,
+            settings.app_postgres_schema,
+        ).save_findings(research_findings)
+        research_program_store = PostgresResearchProgramStore(
+            settings.app_postgres_dsn,
+            settings.app_postgres_schema,
+        )
+        for program in _seed_research_programs():
+            research_program_store.save_program(ResearchProgram.model_validate(program))
+        job_store = PostgresJobStore(
+            settings.app_postgres_dsn,
+            settings.app_postgres_schema,
+        )
+        for job in jobs:
+            job_store.save_job(job)
+        PostgresBibleProjectProfileStore(
+            settings.app_postgres_dsn,
+            settings.app_postgres_schema,
+        ).save_profile(profile)
+        section_store = PostgresBibleSectionStore(
+            settings.app_postgres_dsn,
+            settings.app_postgres_schema,
+        )
+        for section in sections:
+            section_store.save_section(section)
+
+    if settings.app_truth_backend == "postgres":
+        _mirror_truth_to_postgres(
+            evidence=evidence,
+            review_events=review_events,
+            claims=claims,
+            relationships=relationships,
+        )
 
     if settings.app_state_backend == "sqlite":
         if settings.app_sqlite_path.exists():
             settings.app_sqlite_path.unlink()
         SqliteSourceStore(settings.app_sqlite_path).save_sources(sources)
-        SqliteSourceDocumentStore(settings.app_sqlite_path).save_source_documents([])
+        SqliteSourceDocumentStore(settings.app_sqlite_path).save_source_documents(source_documents)
         SqliteTextUnitStore(settings.app_sqlite_path).save_text_units(text_units)
         SqliteEvidenceStore(settings.app_sqlite_path).save_evidence(evidence)
         SqliteCandidateStore(settings.app_sqlite_path).save_candidates(candidates)
-        SqliteExtractionRunStore(settings.app_sqlite_path).save_run(extraction_runs[0])
-        SqliteReviewStore(settings.app_sqlite_path)
+        extraction_run_store = SqliteExtractionRunStore(settings.app_sqlite_path)
+        for run in extraction_runs:
+            extraction_run_store.save_run(run)
+        review_store = SqliteReviewStore(settings.app_sqlite_path)
+        for review in review_events:
+            review_store.save_review(review)
+        research_run_store = SqliteResearchRunStore(settings.app_sqlite_path)
+        for run in research_runs:
+            research_run_store.save_run(run)
+        SqliteResearchFindingStore(settings.app_sqlite_path).save_findings(research_findings)
+        research_program_store = SqliteResearchProgramStore(settings.app_sqlite_path)
+        for program in _seed_research_programs():
+            research_program_store.save_program(ResearchProgram.model_validate(program))
+        job_store = SqliteJobStore(settings.app_sqlite_path)
+        for job in jobs:
+            job_store.save_job(job)
+        SqliteBibleProjectProfileStore(settings.app_sqlite_path).save_profile(profile)
+        section_store = SqliteBibleSectionStore(settings.app_sqlite_path)
+        for section in sections:
+            section_store.save_section(section)
+
+    if settings.app_state_backend == "file":
+        FileJobStore(settings.app_data_dir)
+    if settings.app_truth_backend == "file":
+        truth_store = FileTruthStore(settings.app_data_dir)
+        evidence_by_id = {item.evidence_id: item for item in evidence}
+        reviews_by_claim = {
+            review.approved_claim_id: review
+            for review in review_events
+            if review.approved_claim_id is not None
+        }
+        for claim in claims:
+            truth_store.save_claim(
+                claim,
+                evidence=[evidence_by_id[evidence_id] for evidence_id in claim.evidence_ids if evidence_id in evidence_by_id],
+                review=reviews_by_claim.get(claim.claim_id),
+            )
+        for relationship in relationships:
+            truth_store.upsert_relationship(
+                relationship.claim_id,
+                relationship.related_claim_id,
+                relationship.relationship_type,
+                notes=relationship.notes,
+                source_kind=relationship.source_kind,
+            )
 
     print(f"[green]Seeded development data in {data_dir}[/green]")
+
+
+def _reset_postgres_schema() -> None:
+    with connect(settings.app_postgres_dsn, autocommit=True) as connection:
+        connection.execute(
+            SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(
+                Identifier(settings.app_postgres_schema)
+            )
+        )
+        connection.execute(
+            SQL("CREATE SCHEMA {}").format(Identifier(settings.app_postgres_schema))
+        )
 
 
 @app.command()
@@ -578,9 +2074,9 @@ def _benchmark_brief_2003_dj() -> ResearchBrief:
             "people": 1,
             "practices": 1,
         },
-        max_queries=10,
+        max_queries=15,
         max_results_per_query=10,
-        max_findings=50,
+        max_findings=80,
         max_per_facet=1,
         execution_policy=ResearchExecutionPolicy(
             total_fetch_time_seconds=90,
@@ -735,41 +2231,125 @@ def _benchmark_candidate_quality(candidate: CandidateClaim) -> tuple[bool, bool]
     return reviewable, broken
 
 
+def _benchmark_core_year_range(brief) -> tuple[int | None, int | None]:
+    focal_year = getattr(brief, "focal_year", None)
+    if focal_year and str(focal_year).isdigit():
+        year = int(focal_year)
+        return year - 5, year + 5
+    years = []
+    for value in (getattr(brief, "time_start", None), getattr(brief, "time_end", None)):
+        if not value:
+            continue
+        match = re.search(r"\b(\d{4})\b", str(value))
+        if match:
+            years.append(int(match.group(1)))
+    if len(years) >= 2:
+        return min(years), max(years)
+    if years:
+        return years[0], years[0]
+    return None, None
+
+
+def _benchmark_historical_year_range(brief) -> tuple[int | None, int | None]:
+    core_start, _ = _benchmark_core_year_range(brief)
+    if core_start is None:
+        return None, None
+    return core_start - 50, core_start - 1
+
+
+def _benchmark_future_year_range(brief) -> tuple[int | None, int | None]:
+    _, core_end = _benchmark_core_year_range(brief)
+    if core_end is None:
+        return None, None
+    return core_end + 1, core_end + 10
+
+
+def _benchmark_year_from_value(value: str | None) -> int | None:
+    if not value:
+        return None
+    match = re.search(r"\b(\d{4})\b", str(value))
+    return int(match.group(1)) if match else None
+
+
+def _benchmark_era_band_for_year(year: int | None, brief) -> str:
+    if year is None:
+        return "unknown"
+    core_start, core_end = _benchmark_core_year_range(brief)
+    historical_start, historical_end = _benchmark_historical_year_range(brief)
+    future_start, future_end = _benchmark_future_year_range(brief)
+    if core_start is not None and core_end is not None and core_start <= year <= core_end:
+        return "core"
+    if historical_start is not None and historical_end is not None and historical_start <= year <= historical_end:
+        return "historical"
+    if future_start is not None and future_end is not None and future_start <= year <= future_end:
+        return "future"
+    if future_end is not None and year > future_end:
+        return "distant_future"
+    if historical_start is not None and year < historical_start:
+        return "distant_past"
+    return "unknown"
+
+
+def _benchmark_core_year_tokens(brief) -> set[str]:
+    start, end = _benchmark_core_year_range(brief)
+    if start is None or end is None:
+        year = _benchmark_year_from_value(getattr(brief, "focal_year", None))
+        return {str(year)} if year is not None else set()
+    return {str(year) for year in range(start, end + 1)}
+
+
+def _benchmark_finding_era_state(finding: ResearchFinding, brief) -> dict[str, object]:
+    scoring = finding.provenance.scoring if finding.provenance else None
+    staged_text = " ".join(filter(None, [finding.page_excerpt or "", finding.snippet_text]))
+    core_tokens = _benchmark_core_year_tokens(brief)
+    published_year = _benchmark_year_from_value(finding.published_at)
+    era_band = scoring.era_band if scoring and scoring.era_band else _benchmark_era_band_for_year(published_year, brief)
+    period_native = scoring.period_native if scoring else era_band == "core"
+    period_evidenced = scoring.period_evidenced if scoring else any(year in staged_text for year in core_tokens)
+    historical_contextual = scoring.historical_contextual if scoring else era_band == "historical"
+    return {
+        "published_year": published_year,
+        "era_band": era_band,
+        "period_native": period_native,
+        "period_evidenced": period_evidenced,
+        "historical_contextual": historical_contextual,
+    }
+
+
 def _build_benchmark_scorecard(run_detail, extract_result) -> dict:
     accepted = [item for item in run_detail.findings if item.decision == ResearchFindingDecision.ACCEPTED]
     top_candidates = extract_result.extraction.candidates[:10]
-    target_years = {"2002", "2003", "2004"}
-    near_era_or_anchored = 0
+    brief = run_detail.run.brief
+    core_era_count = 0
+    period_evidenced_count = 0
+    historical_context_count = 0
+    late_retrospective_count = 0
     anchored_profile_count = 0
     concrete_anchor_count = 0
-    late_sources = 0
+    source_counts: dict[str, int] = {}
     root_path_count = 0
     disallowed_source_count = 0
     fetch_failed_accepted_count = 0
 
     for finding in accepted:
-        published_year = ""
-        if finding.published_at:
-            for year in target_years | {str(year) for year in range(1900, 2101)}:
-                if year in finding.published_at:
-                    published_year = year
-                    break
-        staged_text = " ".join(filter(None, [finding.page_excerpt or "", finding.snippet_text]))
-        anchored = any(year in staged_text for year in target_years)
+        era_state = _benchmark_finding_era_state(finding, brief)
+        source_identity = finding.canonical_url or finding.url
+        source_counts[source_identity] = source_counts.get(source_identity, 0) + 1
         if finding.provenance and finding.provenance.query_profile in {"anchored", "source_seeking"}:
             anchored_profile_count += 1
         scoring = finding.provenance.scoring if finding.provenance else None
         if scoring and scoring.concreteness_score >= 0.16 and (
-            scoring.anchor_score >= 0.16 or anchored
+            scoring.anchor_score >= 0.16 or era_state["period_evidenced"]
         ):
             concrete_anchor_count += 1
-        if published_year in target_years or (
-            finding.source_type in {"archive", "news", "magazine", "government", "educational", "web"}
-            and anchored
-        ):
-            near_era_or_anchored += 1
-        if published_year and published_year.isdigit() and int(published_year) > 2015:
-            late_sources += 1
+        if era_state["period_native"]:
+            core_era_count += 1
+        elif era_state["period_evidenced"]:
+            period_evidenced_count += 1
+        elif era_state["historical_contextual"]:
+            historical_context_count += 1
+        elif era_state["era_band"] in {"future", "distant_future"}:
+            late_retrospective_count += 1
         if finding.canonical_url and (urlparse(finding.canonical_url).path or "/") == "/":
             root_path_count += 1
         if finding.source_type in {"social", "shopping"}:
@@ -789,15 +2369,22 @@ def _build_benchmark_scorecard(run_detail, extract_result) -> dict:
     auto_checks = {
         "coverage_all_facets": all(item.accepted_count >= 1 for item in run_detail.facet_coverage),
         "accepted_findings_total": len(accepted) == 5,
-        "near_era_or_anchored_count": near_era_or_anchored,
-        "near_era_or_anchored_pass": near_era_or_anchored >= 3,
+        "core_era_count": core_era_count,
+        "period_evidenced_count": period_evidenced_count,
+        "historical_context_count": historical_context_count,
+        "core_or_period_evidenced_count": core_era_count + period_evidenced_count,
+        "core_or_period_evidenced_pass": (core_era_count + period_evidenced_count) >= 4,
         "anchored_profile_count": anchored_profile_count,
-        "anchored_profile_pass": anchored_profile_count >= 3,
         "concrete_anchor_count": concrete_anchor_count,
+        "unique_accepted_source_count": len(source_counts),
+        "unique_accepted_source_pass": len(source_counts) >= 3,
+        "max_facets_per_source": max(source_counts.values(), default=0),
+        "max_facets_per_source_pass": max(source_counts.values(), default=0) <= 2,
+        "accepted_findings_all_same_source": len(source_counts) == 1 and bool(source_counts),
         "root_path_count": root_path_count,
         "root_path_pass": root_path_count == 0,
-        "late_source_count": late_sources,
-        "late_source_pass": late_sources <= 1,
+        "late_retrospective_count": late_retrospective_count,
+        "late_retrospective_pass": late_retrospective_count <= 1,
         "disallowed_source_count": disallowed_source_count,
         "disallowed_source_pass": disallowed_source_count == 0,
         "candidate_count": len(extract_result.extraction.candidates),
@@ -829,7 +2416,15 @@ def _build_benchmark_scorecard(run_detail, extract_result) -> dict:
 def _build_benchmark_report(run_detail, extract_result, artifact_dir: Path, *, label: str | None) -> dict:
     accepted_provider_profile: dict[str, int] = {}
     accepted_by_profile: dict[str, int] = {}
-    accepted_anchor_class: dict[str, int] = {"near_era": 0, "anchored_retrospective": 0, "weak_anchor": 0}
+    accepted_anchor_class: dict[str, int] = {
+        "core_era": 0,
+        "period_evidenced": 0,
+        "historical_context": 0,
+        "late_retrospective": 0,
+        "weak_anchor": 0,
+    }
+    accepted_by_source: dict[str, dict[str, object]] = {}
+    brief = run_detail.run.brief
     for finding in run_detail.findings:
         if finding.decision != ResearchFindingDecision.ACCEPTED:
             continue
@@ -838,20 +2433,33 @@ def _build_benchmark_report(run_detail, extract_result, artifact_dir: Path, *, l
         key = f"{provider or 'unknown'}::{profile or 'unknown'}"
         accepted_provider_profile[key] = accepted_provider_profile.get(key, 0) + 1
         accepted_by_profile[profile or "unknown"] = accepted_by_profile.get(profile or "unknown", 0) + 1
-        published_year = ""
-        if finding.published_at:
-            for year in {"2002", "2003", "2004"} | {str(year) for year in range(1900, 2101)}:
-                if year in finding.published_at:
-                    published_year = year
-                    break
-        staged_text = " ".join(filter(None, [finding.page_excerpt or "", finding.snippet_text]))
-        anchored = any(year in staged_text for year in {"2002", "2003", "2004"})
-        if published_year in {"2002", "2003", "2004"}:
-            accepted_anchor_class["near_era"] += 1
-        elif anchored:
-            accepted_anchor_class["anchored_retrospective"] += 1
+        era_state = _benchmark_finding_era_state(finding, brief)
+        if era_state["period_native"]:
+            accepted_anchor_class["core_era"] += 1
+        elif era_state["period_evidenced"]:
+            accepted_anchor_class["period_evidenced"] += 1
+        elif era_state["historical_contextual"]:
+            accepted_anchor_class["historical_context"] += 1
+        elif era_state["era_band"] in {"future", "distant_future"}:
+            accepted_anchor_class["late_retrospective"] += 1
         else:
             accepted_anchor_class["weak_anchor"] += 1
+        source_key = finding.canonical_url or finding.url
+        group = accepted_by_source.setdefault(
+            source_key,
+            {
+                "url": source_key,
+                "title": finding.title,
+                "count": 0,
+                "facets": [],
+                "query_profiles": [],
+            },
+        )
+        group["count"] = int(group["count"]) + 1
+        group["facets"].append(finding.facet_id)
+        group["era_bands"] = list(dict.fromkeys([*(group.get("era_bands") or []), str(era_state["era_band"])]))
+        if profile:
+            group["query_profiles"].append(profile)
     report = {
         "benchmark_id": "2003_dj_chicago",
         "label": label,
@@ -871,6 +2479,24 @@ def _build_benchmark_report(run_detail, extract_result, artifact_dir: Path, *, l
                 "relevance_score": finding.relevance_score,
                 "quality_score": finding.quality_score,
                 "novelty_score": finding.novelty_score,
+                "facet_fit_score": (
+                    finding.provenance.scoring.facet_fit_score if finding.provenance else None
+                ),
+                "era_band": (
+                    finding.provenance.scoring.era_band if finding.provenance else None
+                ),
+                "period_native": (
+                    finding.provenance.scoring.period_native if finding.provenance else None
+                ),
+                "period_evidenced": (
+                    finding.provenance.scoring.period_evidenced if finding.provenance else None
+                ),
+                "historical_contextual": (
+                    finding.provenance.scoring.historical_contextual if finding.provenance else None
+                ),
+                "source_saturation_score": (
+                    finding.provenance.scoring.source_saturation_score if finding.provenance else None
+                ),
                 "url": finding.canonical_url or finding.url,
                 "snippet_text": finding.snippet_text,
                 "page_excerpt": finding.page_excerpt,
@@ -917,6 +2543,7 @@ def _build_benchmark_report(run_detail, extract_result, artifact_dir: Path, *, l
             "accepted_by_profile": run_detail.run.telemetry.search.accepted_by_profile,
             "accepted_by_provider_profile": accepted_provider_profile,
             "accepted_anchor_class": accepted_anchor_class,
+            "accepted_by_source": list(accepted_by_source.values()),
             "zero_hit_queries_by_profile": run_detail.run.telemetry.search.zero_hit_queries_by_profile,
         },
         "manual_review": _manual_review_slots(run_detail, extract_result),
@@ -943,8 +2570,10 @@ def _aggregate_benchmark_reports(reports: list[dict], artifact_dir: Path, *, lab
     scorecards = [report["scorecard"]["auto_checks"] for report in reports]
     accepted_counts = [len(report["accepted_findings"]) for report in reports]
     candidate_counts = [report["extraction"]["candidate_count"] for report in reports]
-    near_era_counts = [report["scorecard"]["auto_checks"]["near_era_or_anchored_count"] for report in reports]
-    anchored_profile_counts = [report["scorecard"]["auto_checks"]["anchored_profile_count"] for report in reports]
+    core_or_period_counts = [report["scorecard"]["auto_checks"]["core_or_period_evidenced_count"] for report in reports]
+    late_retrospective_counts = [report["scorecard"]["auto_checks"]["late_retrospective_count"] for report in reports]
+    unique_source_counts = [report["scorecard"]["auto_checks"]["unique_accepted_source_count"] for report in reports]
+    max_facets_per_source_counts = [report["scorecard"]["auto_checks"]["max_facets_per_source"] for report in reports]
     aggregate = {
         "benchmark_id": "2003_dj_chicago",
         "label": label,
@@ -957,7 +2586,7 @@ def _aggregate_benchmark_reports(reports: list[dict], artifact_dir: Path, *, lab
                 "status": report["run"]["status"],
                 "accepted_findings": len(report["accepted_findings"]),
                 "candidate_count": report["extraction"]["candidate_count"],
-                "near_era_or_anchored_count": report["scorecard"]["auto_checks"]["near_era_or_anchored_count"],
+                "core_or_period_evidenced_count": report["scorecard"]["auto_checks"]["core_or_period_evidenced_count"],
             }
             for report in reports
         ],
@@ -974,20 +2603,32 @@ def _aggregate_benchmark_reports(reports: list[dict], artifact_dir: Path, *, lab
                 "worst": min(candidate_counts, default=0),
                 "median": statistics.median(candidate_counts) if candidate_counts else 0,
             },
-            "near_era_or_anchored_count": {
-                "best": max(near_era_counts, default=0),
-                "worst": min(near_era_counts, default=0),
-                "median": statistics.median(near_era_counts) if near_era_counts else 0,
+            "core_or_period_evidenced_count": {
+                "best": max(core_or_period_counts, default=0),
+                "worst": min(core_or_period_counts, default=0),
+                "median": statistics.median(core_or_period_counts) if core_or_period_counts else 0,
             },
-            "anchored_profile_count": {
-                "best": max(anchored_profile_counts, default=0),
-                "worst": min(anchored_profile_counts, default=0),
-                "median": statistics.median(anchored_profile_counts) if anchored_profile_counts else 0,
+            "late_retrospective_count": {
+                "best": max(late_retrospective_counts, default=0),
+                "worst": min(late_retrospective_counts, default=0),
+                "median": statistics.median(late_retrospective_counts) if late_retrospective_counts else 0,
+            },
+            "unique_accepted_source_count": {
+                "best": max(unique_source_counts, default=0),
+                "worst": min(unique_source_counts, default=0),
+                "median": statistics.median(unique_source_counts) if unique_source_counts else 0,
+            },
+            "max_facets_per_source": {
+                "best": max(max_facets_per_source_counts, default=0),
+                "worst": min(max_facets_per_source_counts, default=0),
+                "median": statistics.median(max_facets_per_source_counts) if max_facets_per_source_counts else 0,
             },
             "coverage_all_facets_passes": sum(1 for item in scorecards if item["coverage_all_facets"]),
             "candidate_count_passes": sum(1 for item in scorecards if item["candidate_count_pass"]),
-            "near_era_or_anchored_passes": sum(1 for item in scorecards if item["near_era_or_anchored_pass"]),
-            "anchored_profile_passes": sum(1 for item in scorecards if item["anchored_profile_pass"]),
+            "core_or_period_evidenced_passes": sum(1 for item in scorecards if item["core_or_period_evidenced_pass"]),
+            "late_retrospective_passes": sum(1 for item in scorecards if item["late_retrospective_pass"]),
+            "unique_accepted_source_passes": sum(1 for item in scorecards if item["unique_accepted_source_pass"]),
+            "max_facets_per_source_passes": sum(1 for item in scorecards if item["max_facets_per_source_pass"]),
         },
     }
     return aggregate
@@ -1028,7 +2669,9 @@ def benchmark_2003_dj(
             f"Passes: {report['summary']['pass_count']} | "
             f"Median accepted: {report['summary']['accepted_findings']['median']} | "
             f"Median candidates: {report['summary']['candidate_count']['median']} | "
-            f"Median anchored-profile accepted: {report['summary']['anchored_profile_count']['median']}"
+            f"Median core/period-evidenced accepted: {report['summary']['core_or_period_evidenced_count']['median']} | "
+            f"Median unique sources: {report['summary']['unique_accepted_source_count']['median']} | "
+            f"Median max facets/source: {report['summary']['max_facets_per_source']['median']}"
         )
         return
     scorecard = report["scorecard"]["auto_checks"]
@@ -1042,9 +2685,9 @@ def benchmark_2003_dj(
     print(
         "Coverage: "
         f"{'ok' if scorecard['coverage_all_facets'] else 'missing facets'} | "
-        f"Near-era accepted: {scorecard['near_era_or_anchored_count']} | "
-        f"Anchored/source-seeking accepted: {scorecard['anchored_profile_count']} | "
-        f"Late accepted: {scorecard['late_source_count']} | "
+        f"Core/period-evidenced accepted: {scorecard['core_or_period_evidenced_count']} | "
+        f"Unique sources: {scorecard['unique_accepted_source_count']} | "
+        f"Late retrospectives: {scorecard['late_retrospective_count']} | "
         f"Top-10 proxy reviewable: {scorecard['top_candidate_proxy_reviewable_count']}"
     )
 

@@ -1,0 +1,185 @@
+[
+  {
+    "job_id": "job-research-create",
+    "job_type": "research_run_create",
+    "status": "completed",
+    "payload": {
+      "run_id": "research-rouen-winter",
+      "request": {
+        "brief": {
+          "topic": "Rouen winter shortage daily life",
+          "time_start": "1421-12-01",
+          "time_end": "1422-02-28",
+          "focal_year": "1422",
+          "locale": "Rouen",
+          "audience": "historical fiction authors",
+          "domain_hints": [],
+          "desired_facets": [
+            "practices",
+            "institutions",
+            "regional_context"
+          ],
+          "preferred_source_types": [
+            "archive",
+            "record",
+            "petition"
+          ],
+          "excluded_source_types": [],
+          "coverage_targets": {},
+          "adapter_id": "curated_inputs",
+          "curated_inputs": [],
+          "execution_policy": null,
+          "max_queries": 0,
+          "max_results_per_query": 0,
+          "max_findings": 4,
+          "max_per_facet": 2
+        },
+        "program_id": "historical-daily-life"
+      }
+    },
+    "progress_stage": "completed",
+    "progress_current": 100,
+    "progress_total": 100,
+    "result_ref": {
+      "run_id": "research-rouen-winter",
+      "section_id": null
+    },
+    "error": null,
+    "created_at": "2026-04-12T10:45:00+00:00",
+    "started_at": "2026-04-12T10:45:02+00:00",
+    "completed_at": "2026-04-12T10:49:00+00:00",
+    "updated_at": "2026-04-12T10:49:00+00:00"
+  },
+  {
+    "job_id": "job-research-stage",
+    "job_type": "research_run_stage",
+    "status": "completed",
+    "payload": {
+      "run_id": "research-rouen-winter"
+    },
+    "progress_stage": "completed",
+    "progress_current": 100,
+    "progress_total": 100,
+    "result_ref": {
+      "run_id": "research-rouen-winter",
+      "section_id": null
+    },
+    "error": null,
+    "created_at": "2026-04-12T10:50:00+00:00",
+    "started_at": "2026-04-12T10:50:03+00:00",
+    "completed_at": "2026-04-12T10:52:00+00:00",
+    "updated_at": "2026-04-12T10:52:00+00:00"
+  },
+  {
+    "job_id": "job-research-extract",
+    "job_type": "research_run_extract",
+    "status": "completed",
+    "payload": {
+      "run_id": "research-rouen-winter"
+    },
+    "progress_stage": "completed",
+    "progress_current": 100,
+    "progress_total": 100,
+    "result_ref": {
+      "run_id": "research-rouen-winter",
+      "section_id": null
+    },
+    "error": null,
+    "created_at": "2026-04-12T10:54:00+00:00",
+    "started_at": "2026-04-12T10:54:02+00:00",
+    "completed_at": "2026-04-12T10:57:00+00:00",
+    "updated_at": "2026-04-12T10:57:00+00:00"
+  },
+  {
+    "job_id": "job-bible-compose-economics",
+    "job_type": "bible_section_compose",
+    "status": "completed",
+    "payload": {
+      "section_id": "section-rouen-economics",
+      "request": {
+        "project_id": "project-rouen-winter",
+        "section_type": "economics_and_material_culture",
+        "title": "Markets, Tokens, and Grain Flow",
+        "filters": {
+          "focus": "bread prices, ration tokens, debt tracking, and market movement",
+          "statuses": [
+            "verified",
+            "probable"
+          ],
+          "source_types": [
+            "record",
+            "petition",
+            "archive",
+            "account_book"
+          ],
+          "place": "Rouen",
+          "viewpoint_scope": null,
+          "claim_kind": null,
+          "time_start": "1421-12-01",
+          "time_end": "1422-02-28",
+          "relationship_types": [
+            "supports"
+          ]
+        }
+      }
+    },
+    "progress_stage": "completed",
+    "progress_current": 100,
+    "progress_total": 100,
+    "result_ref": {
+      "run_id": null,
+      "section_id": "section-rouen-economics"
+    },
+    "error": null,
+    "created_at": "2026-04-12T12:18:00+00:00",
+    "started_at": "2026-04-12T12:18:03+00:00",
+    "completed_at": "2026-04-12T12:20:00+00:00",
+    "updated_at": "2026-04-12T12:20:00+00:00"
+  },
+  {
+    "job_id": "job-bible-regenerate-rumors",
+    "job_type": "bible_section_regenerate",
+    "status": "completed",
+    "payload": {
+      "section_id": "section-rouen-rumors",
+      "request": {
+        "filters": {
+          "focus": "grain bell disputes, hoarding stories, and eerie shrine gossip",
+          "statuses": [
+            "contested",
+            "rumor",
+            "legend",
+            "probable"
+          ],
+          "source_types": [
+            "ordinance",
+            "chronicle",
+            "broadside"
+          ],
+          "place": "Rouen",
+          "viewpoint_scope": null,
+          "claim_kind": null,
+          "time_start": "1421-12-01",
+          "time_end": "1422-02-28",
+          "relationship_types": [
+            "contradicts",
+            "supersedes",
+            "superseded_by"
+          ]
+        }
+      }
+    },
+    "progress_stage": "completed",
+    "progress_current": 100,
+    "progress_total": 100,
+    "result_ref": {
+      "run_id": null,
+      "section_id": "section-rouen-rumors"
+    },
+    "error": null,
+    "created_at": "2026-04-12T12:58:00+00:00",
+    "started_at": "2026-04-12T12:58:04+00:00",
+    "completed_at": "2026-04-12T13:00:00+00:00",
+    "updated_at": "2026-04-12T13:00:00+00:00"
+  }
+]

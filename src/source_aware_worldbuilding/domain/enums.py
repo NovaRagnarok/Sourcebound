@@ -38,6 +38,24 @@ class QueryMode(StrEnum):
     OPEN_EXPLORATION = "open_exploration"
 
 
+class BibleSectionType(StrEnum):
+    SETTING_OVERVIEW = "setting_overview"
+    CHRONOLOGY = "chronology"
+    PEOPLE_AND_FACTIONS = "people_and_factions"
+    DAILY_LIFE = "daily_life"
+    INSTITUTIONS_AND_POLITICS = "institutions_and_politics"
+    ECONOMICS_AND_MATERIAL_CULTURE = "economics_and_material_culture"
+    RUMORS_AND_CONTESTED = "rumors_and_contested_accounts"
+    AUTHOR_DECISIONS = "author_decisions"
+
+
+class BibleTone(StrEnum):
+    DOCUMENTARY = "documentary"
+    GROUNDED_LITERARY = "grounded_literary"
+    RUMOR_RICH = "rumor_rich_folkloric"
+    MIXED = "mixed_historical_fiction"
+
+
 class ReviewDecision(StrEnum):
     APPROVE = "approve"
     REJECT = "reject"
@@ -87,3 +105,12 @@ class ResearchCoverageStatus(StrEnum):
     PARTIAL = "partial"
     EMPTY = "empty"
     OVERSUBSCRIBED = "oversubscribed"
+
+
+class JobStatus(StrEnum):
+    PENDING = "pending"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    PARTIAL = "partial"
+    FAILED = "failed"
+    CANCELLED = "cancelled"

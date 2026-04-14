@@ -1,1 +1,38 @@
-[]
+[
+  {
+    "review_id": "review-market-price",
+    "candidate_id": "cand-market-price",
+    "decision": "approve",
+    "reviewed_at": "2026-04-12T08:15:00+00:00",
+    "override_status": null,
+    "notes": "Core economic anchor for the project.",
+    "approved_claim_id": "claim-market-price"
+  },
+  {
+    "review_id": "review-bread-tokens",
+    "candidate_id": "cand-bread-tokens",
+    "decision": "approve",
+    "reviewed_at": "2026-04-12T08:18:00+00:00",
+    "override_status": "probable",
+    "notes": "Useful routine detail despite narrow sourcing.",
+    "approved_claim_id": "claim-bread-tokens"
+  },
+  {
+    "review_id": "review-bread-scrip",
+    "candidate_id": "cand-bread-scrip",
+    "decision": "approve",
+    "reviewed_at": "2026-04-12T11:02:00+00:00",
+    "override_status": "probable",
+    "notes": "Accepted from staged research because it reinforces the token economy.",
+    "approved_claim_id": "claim-bread-scrip"
+  },
+  {
+    "review_id": "review-hidden-grain",
+    "candidate_id": "cand-hidden-grain",
+    "decision": "reject",
+    "reviewed_at": "2026-04-12T08:21:00+00:00",
+    "override_status": null,
+    "notes": "Keep as rumor texture only; do not turn into settled canon.",
+    "approved_claim_id": null
+  }
+]

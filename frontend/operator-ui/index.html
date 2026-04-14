@@ -7,7 +7,7 @@
       content="width=device-width, initial-scale=1, viewport-fit=cover"
     />
     <meta name="color-scheme" content="light" />
-    <title>Sourcebound Operator Console</title>
+    <title>Sourcebound Writer Workspace</title>
     <link rel="stylesheet" href="./styles.css" />
     <script>
       window.SOURCEBOUND_API_BASE = new URLSearchParams(window.location.search).get("api") || "";
@@ -23,18 +23,29 @@
           <div class="brand-mark">SB</div>
           <div>
             <div class="brand-name">Sourcebound</div>
-            <div class="brand-subtitle">Operator Console</div>
+            <div class="brand-subtitle">Lore Workstation</div>
           </div>
         </div>
 
-        <nav class="nav" aria-label="Operator screens">
-          <a class="nav-item" href="#sources" data-nav="sources">Sources</a>
-          <a class="nav-item" href="#research" data-nav="research">Research</a>
-          <a class="nav-item" href="#runs" data-nav="runs">Extraction Runs</a>
-          <a class="nav-item" href="#review" data-nav="review">Review Queue</a>
-          <a class="nav-item" href="#claims" data-nav="claims">Claims</a>
-          <a class="nav-item" href="#ask" data-nav="ask">Ask</a>
-        </nav>
+        <div class="nav-stack">
+          <div class="rail-label">Writing flow</div>
+          <nav class="nav" aria-label="Primary writing screens">
+            <a class="nav-item" href="#workspace" data-nav="workspace">Workspace</a>
+            <a class="nav-item" href="#bible" data-nav="bible">Bible</a>
+            <a class="nav-item" href="#research" data-nav="research">Research</a>
+            <a class="nav-item" href="#review" data-nav="review">Canon Review</a>
+            <a class="nav-item" href="#ask" data-nav="ask">Ask</a>
+          </nav>
+        </div>
+
+        <div class="nav-stack nav-stack-secondary">
+          <div class="rail-label">Utilities</div>
+          <nav class="nav" aria-label="Supporting utility screens">
+            <a class="nav-item nav-item-secondary" href="#sources" data-nav="sources">Sources</a>
+            <a class="nav-item nav-item-secondary" href="#runs" data-nav="runs">Jobs & Runs</a>
+            <a class="nav-item nav-item-secondary" href="#claims" data-nav="claims">Claims</a>
+          </nav>
+        </div>
 
         <section class="rail-card" aria-label="Live status">
           <div class="rail-label">Mode</div>
@@ -43,12 +54,12 @@
         </section>
 
         <section class="rail-card">
-          <div class="rail-label">Pipeline</div>
+          <div class="rail-label">Writer loop</div>
           <div class="pipeline">
-            <span>Sources</span>
-            <span>Extraction</span>
+            <span>Research</span>
             <span>Review</span>
-            <span>Canon</span>
+            <span>Compose</span>
+            <span>Edit</span>
             <span>Ask</span>
           </div>
         </section>
@@ -57,11 +68,10 @@
       <main class="workspace">
         <header class="topbar">
           <div>
-            <div class="eyebrow">Internal tool</div>
-            <h1 id="screen-title">Sources</h1>
+            <div class="eyebrow">Writer workspace</div>
+            <h1 id="screen-title">Workspace</h1>
             <p id="screen-summary" class="screen-summary">
-              Pull source records, inspect extraction runs, and move approved claims through the
-              review gate.
+              Stay oriented on the active project, the canon that is ready, and the next writing move.
             </p>
           </div>
           <div class="topbar-meta">
@@ -79,19 +89,19 @@
 
         <section class="metrics" aria-label="Overview metrics">
           <div class="metric">
-            <span class="metric-label">Sources</span>
+            <span id="metric-label-sources" class="metric-label">Bible sections</span>
             <strong id="metric-sources">0</strong>
           </div>
           <div class="metric">
-            <span class="metric-label">Queued candidates</span>
+            <span id="metric-label-pending" class="metric-label">Needs review</span>
             <strong id="metric-pending">0</strong>
           </div>
           <div class="metric">
-            <span class="metric-label">Approved claims</span>
+            <span id="metric-label-claims" class="metric-label">Reviewed canon</span>
             <strong id="metric-claims">0</strong>
           </div>
           <div class="metric">
-            <span class="metric-label">Evidence snippets</span>
+            <span id="metric-label-evidence" class="metric-label">Evidence snippets</span>
             <strong id="metric-evidence">0</strong>
           </div>
         </section>

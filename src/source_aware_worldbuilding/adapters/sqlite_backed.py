@@ -3,9 +3,12 @@ from __future__ import annotations
 from pathlib import Path
 
 from source_aware_worldbuilding.domain.models import (
+    BibleProjectProfile,
+    BibleSection,
     CandidateClaim,
     EvidenceSnippet,
     ExtractionRun,
+    JobRecord,
     ResearchFinding,
     ResearchProgram,
     ResearchRun,
@@ -249,4 +252,84 @@ class SqliteResearchProgramStore(_SqliteAdapterBase):
             "program_id",
             [program],
             extra_columns={"updated_at": "updated_at", "built_in": "built_in"},
+        )
+
+
+class SqliteJobStore(_SqliteAdapterBase):
+    def list_jobs(self, *, status: str | None = None) -> list[JobRecord]:
+        where = ("status", status) if status else None
+        return self.store.list_models(
+            "jobs",
+            JobRecord,
+            order_by="created_at DESC",
+            where=where,
+        )
+
+    def get_job(self, job_id: str) -> JobRecord | None:
+        return self.store.get_model("jobs", "job_id", job_id, JobRecord)
+
+    def save_job(self, job: JobRecord) -> None:
+        self.store.upsert_models(
+            "jobs",
+            "job_id",
+            [job],
+            extra_columns={
+                "status": "status",
+                "job_type": "job_type",
+                "created_at": "created_at",
+            },
+        )
+
+    def update_job(self, job: JobRecord) -> None:
+        self.save_job(job)
+
+
+class SqliteBibleProjectProfileStore(_SqliteAdapterBase):
+    def list_profiles(self) -> list[BibleProjectProfile]:
+        return self.store.list_models(
+            "bible_project_profiles",
+            BibleProjectProfile,
+            order_by="updated_at DESC",
+        )
+
+    def get_profile(self, project_id: str) -> BibleProjectProfile | None:
+        return self.store.get_model(
+            "bible_project_profiles",
+            "project_id",
+            project_id,
+            BibleProjectProfile,
+        )
+
+    def save_profile(self, profile: BibleProjectProfile) -> None:
+        self.store.upsert_models(
+            "bible_project_profiles",
+            "project_id",
+            [profile],
+            extra_columns={"updated_at": "updated_at", "project_name": "project_name"},
+        )
+
+
+class SqliteBibleSectionStore(_SqliteAdapterBase):
+    def list_sections(self, project_id: str | None = None) -> list[BibleSection]:
+        where = ("project_id", project_id) if project_id else None
+        return self.store.list_models(
+            "bible_sections",
+            BibleSection,
+            order_by="updated_at DESC",
+            where=where,
+        )
+
+    def get_section(self, section_id: str) -> BibleSection | None:
+        return self.store.get_model("bible_sections", "section_id", section_id, BibleSection)
+
+    def save_section(self, section: BibleSection) -> None:
+        self.store.upsert_models(
+            "bible_sections",
+            "section_id",
+            [section],
+            extra_columns={
+                "project_id": "project_id",
+                "section_type": "section_type",
+                "updated_at": "updated_at",
+            },
         )

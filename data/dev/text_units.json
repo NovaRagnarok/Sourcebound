@@ -1,20 +1,92 @@
 [
   {
-    "text_unit_id": "txt-1",
-    "source_id": "src-1",
+    "text_unit_id": "txt-price-ledger",
+    "source_id": "src-price-ledger",
     "locator": "folio 12r",
-    "text": "Bread prices rose sharply during the winter shortage.",
+    "text": "Rouen bread prices rose during the winter shortage in Rouen in 1421, and clerks marked the increase in the municipal ledger.",
     "ordinal": 1,
-    "checksum": "seed-1",
+    "checksum": "seed-01",
     "notes": null
   },
   {
-    "text_unit_id": "txt-2",
-    "source_id": "src-2",
-    "locator": "chapter 7",
-    "text": "Townspeople whispered that merchants were withholding grain.",
+    "text_unit_id": "txt-bakers-petition",
+    "source_id": "src-bakers-petition",
+    "locator": "petition 3",
+    "text": "Bakers in Rouen used household bread tokens during January 1422, and each token marked one ration loaf for a registered hearth.",
     "ordinal": 1,
-    "checksum": "seed-2",
+    "checksum": "seed-02",
+    "notes": null
+  },
+  {
+    "text_unit_id": "txt-port-roll",
+    "source_id": "src-port-roll",
+    "locator": "gate roll 4",
+    "text": "Night barges unloaded grain outside Rouen near Saint Sever gate in 1422, and porters moved sacks before dawn to avoid crowding.",
+    "ordinal": 1,
+    "checksum": "seed-03",
+    "notes": null
+  },
+  {
+    "text_unit_id": "txt-council-ordinance",
+    "source_id": "src-council-ordinance",
+    "locator": "article 7",
+    "text": "The council ordinance in Rouen recorded that the grain bell was rung after prime in early January 1422.",
+    "ordinal": 1,
+    "checksum": "seed-04",
+    "notes": null
+  },
+  {
+    "text_unit_id": "txt-council-addendum",
+    "source_id": "src-council-addendum",
+    "locator": "addendum 2",
+    "text": "A revised council ordinance in Rouen recorded that the grain bell was rung after terce in late January 1422.",
+    "ordinal": 1,
+    "checksum": "seed-05",
+    "notes": null
+  },
+  {
+    "text_unit_id": "txt-chronicle",
+    "source_id": "src-chronicle",
+    "locator": "chapter 7",
+    "text": "Citizens in Rouen whispered that merchants withheld grain behind shuttered lofts during the winter of 1422.",
+    "ordinal": 1,
+    "checksum": "seed-06",
+    "notes": null
+  },
+  {
+    "text_unit_id": "txt-abbey-accounts",
+    "source_id": "src-abbey-accounts",
+    "locator": "leaf 9v",
+    "text": "Abbey clerks in Rouen recorded wax tally tablets for barley and salt in February 1422, keeping each market debt by household mark.",
+    "ordinal": 1,
+    "checksum": "seed-07",
+    "notes": null
+  },
+  {
+    "text_unit_id": "txt-ballad",
+    "source_id": "src-ballad",
+    "locator": "verse 4",
+    "text": "Sailors in Rouen said the Saint Romain shrine lanterns burned blue before the thaw of 1422.",
+    "ordinal": 1,
+    "checksum": "seed-08",
+    "notes": null
+  },
+  {
+    "text_unit_id": "txt-research-bread-scrip",
+    "source_id": "research-source-bread-scrip",
+    "locator": "curated input",
+    "text": "Rouen bakers were paid in bread scrip during the winter of 1422, and neighbors compared the stamped tokens at the market gate.",
+    "ordinal": 1,
+    "checksum": "seed-09",
+    "notes": null
+  },
+  {
+    "text_unit_id": "txt-research-grain-bell",
+    "source_id": "research-source-grain-bell",
+    "locator": "curated input",
+    "text": "Rouen parish beadles were posted at the grain bell in 1422, and witnesses described how they counted households before opening the market.",
+    "ordinal": 1,
+    "checksum": "seed-10",
     "notes": null
   }
 ]

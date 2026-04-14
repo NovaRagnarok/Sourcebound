@@ -1,1 +1,162 @@
-[]
+[
+  {
+    "claim_id": "claim-market-price",
+    "subject": "Rouen bread prices",
+    "predicate": "rose_during",
+    "value": "the winter shortage",
+    "claim_kind": "practice",
+    "status": "verified",
+    "place": "Rouen",
+    "time_start": "1421-12-01",
+    "time_end": "1422-02-28",
+    "viewpoint_scope": null,
+    "author_choice": false,
+    "evidence_ids": [
+      "evi-price-rise"
+    ],
+    "created_from_run_id": "extract-rouen-core",
+    "notes": "Strong anchor from the municipal ledger."
+  },
+  {
+    "claim_id": "claim-bread-tokens",
+    "subject": "Bakers in Rouen",
+    "predicate": "used",
+    "value": "household bread tokens",
+    "claim_kind": "practice",
+    "status": "probable",
+    "place": "Rouen",
+    "time_start": "1422-01-01",
+    "time_end": "1422-01-31",
+    "viewpoint_scope": null,
+    "author_choice": false,
+    "evidence_ids": [
+      "evi-bread-tokens"
+    ],
+    "created_from_run_id": "extract-rouen-core",
+    "notes": "Grounds rationing scenes but still comes from a narrow petition source."
+  },
+  {
+    "claim_id": "claim-bread-scrip",
+    "subject": "Rouen bakers",
+    "predicate": "were_paid_in",
+    "value": "bread scrip",
+    "claim_kind": "practice",
+    "status": "probable",
+    "place": "Rouen",
+    "time_start": "1422-01-01",
+    "time_end": "1422-02-28",
+    "viewpoint_scope": null,
+    "author_choice": false,
+    "evidence_ids": [
+      "evi-bread-scrip"
+    ],
+    "created_from_run_id": "extract-research-rouen",
+    "notes": "Accepted from the staged research run to deepen the local economy."
+  },
+  {
+    "claim_id": "claim-night-barges",
+    "subject": "Night barges",
+    "predicate": "unloaded_at",
+    "value": "Saint Sever gate before dawn",
+    "claim_kind": "event",
+    "status": "verified",
+    "place": "Rouen",
+    "time_start": "1422-01-01",
+    "time_end": "1422-02-28",
+    "viewpoint_scope": null,
+    "author_choice": false,
+    "evidence_ids": [
+      "evi-night-barges"
+    ],
+    "created_from_run_id": "extract-rouen-core",
+    "notes": "Supports setting logistics and harbor movement."
+  },
+  {
+    "claim_id": "claim-bell-prime",
+    "subject": "Rouen grain bell",
+    "predicate": "rang_after",
+    "value": "prime",
+    "claim_kind": "institution",
+    "status": "contested",
+    "place": "Rouen",
+    "time_start": "1422-01-01",
+    "time_end": "1422-01-15",
+    "viewpoint_scope": null,
+    "author_choice": false,
+    "evidence_ids": [
+      "evi-bell-prime"
+    ],
+    "created_from_run_id": "extract-rouen-core",
+    "notes": "Earlier ordinance reading kept as contested context."
+  },
+  {
+    "claim_id": "claim-bell-terce",
+    "subject": "Rouen grain bell",
+    "predicate": "rang_after",
+    "value": "terce",
+    "claim_kind": "institution",
+    "status": "probable",
+    "place": "Rouen",
+    "time_start": "1422-01-16",
+    "time_end": "1422-02-28",
+    "viewpoint_scope": null,
+    "author_choice": false,
+    "evidence_ids": [
+      "evi-bell-terce"
+    ],
+    "created_from_run_id": "extract-rouen-core",
+    "notes": "Later ordinance appears to supersede the earlier hour."
+  },
+  {
+    "claim_id": "claim-wax-tablets",
+    "subject": "Rouen market debt",
+    "predicate": "was_tracked_with",
+    "value": "wax tally tablets",
+    "claim_kind": "object",
+    "status": "verified",
+    "place": "Rouen",
+    "time_start": "1422-02-01",
+    "time_end": "1422-02-28",
+    "viewpoint_scope": null,
+    "author_choice": false,
+    "evidence_ids": [
+      "evi-wax-tablets"
+    ],
+    "created_from_run_id": "extract-rouen-core",
+    "notes": "Concrete object detail for material culture."
+  },
+  {
+    "claim_id": "claim-blue-lanterns",
+    "subject": "Saint Romain shrine lanterns",
+    "predicate": "were_said_to_burn",
+    "value": "blue before the thaw",
+    "claim_kind": "belief",
+    "status": "rumor",
+    "place": "Rouen",
+    "time_start": "1422-02-01",
+    "time_end": "1422-02-28",
+    "viewpoint_scope": null,
+    "author_choice": false,
+    "evidence_ids": [
+      "evi-blue-lanterns"
+    ],
+    "created_from_run_id": "extract-rouen-core",
+    "notes": "Useful atmosphere, still explicitly rumor."
+  },
+  {
+    "claim_id": "claim-docks-author-choice",
+    "subject": "Rouen docks",
+    "predicate": "should_be_depicted_as",
+    "value": "narrow, freezing, and lantern-lit",
+    "claim_kind": "place",
+    "status": "author_choice",
+    "place": "Rouen",
+    "time_start": null,
+    "time_end": null,
+    "viewpoint_scope": null,
+    "author_choice": true,
+    "evidence_ids": [],
+    "created_from_run_id": null,
+    "notes": "Author decision to unify harbor scenes even when evidence is thin."
+  }
+]

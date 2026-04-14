@@ -87,6 +87,26 @@ class SqliteAppStateStore:
                     built_in INTEGER NOT NULL,
                     payload TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS jobs (
+                    job_id TEXT PRIMARY KEY,
+                    status TEXT NOT NULL,
+                    job_type TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    payload TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS bible_project_profiles (
+                    project_id TEXT PRIMARY KEY,
+                    project_name TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    payload TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS bible_sections (
+                    section_id TEXT PRIMARY KEY,
+                    project_id TEXT NOT NULL,
+                    section_type TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    payload TEXT NOT NULL
+                );
                 """
             )
 

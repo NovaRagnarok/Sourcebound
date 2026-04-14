@@ -51,7 +51,7 @@ def test_benchmark_brief_uses_fixed_2003_dj_preset() -> None:
         "practices",
     ]
     assert brief.max_results_per_query == 10
-    assert brief.max_findings == 50
+    assert brief.max_findings == 80
 
 
 def test_benchmark_runner_writes_complete_report_artifact(tmp_path: Path, monkeypatch) -> None:
@@ -163,7 +163,8 @@ def test_benchmark_runner_writes_complete_report_artifact(tmp_path: Path, monkey
     assert "scorecard" in payload
     assert "manual_review" in payload
     assert "provider_contribution" in payload
-    assert "anchored_profile_count" in payload["scorecard"]["auto_checks"]
+    assert "core_or_period_evidenced_count" in payload["scorecard"]["auto_checks"]
+    assert "unique_accepted_source_count" in payload["scorecard"]["auto_checks"]
 
 
 def test_cli_benchmark_command_emits_json(monkeypatch) -> None:
@@ -173,7 +174,7 @@ def test_cli_benchmark_command_emits_json(monkeypatch) -> None:
             "artifact_dir": str(output_root / "artifact"),
             "accepted_findings": [],
             "extraction": {"candidate_count": 0},
-            "scorecard": {"auto_pass": False, "auto_checks": {"coverage_all_facets": False, "near_era_or_anchored_count": 0, "late_source_count": 0, "top_candidate_proxy_reviewable_count": 0}},
+            "scorecard": {"auto_pass": False, "auto_checks": {"coverage_all_facets": False, "core_or_period_evidenced_count": 0, "late_retrospective_count": 0, "top_candidate_proxy_reviewable_count": 0}},
         },
     )
 
@@ -273,4 +274,5 @@ def test_benchmark_repeat_writes_summary_artifact(tmp_path: Path, monkeypatch) -
     assert summary["summary"]["repeat_count"] == 2
     assert len(summary["runs"]) == 2
     assert (Path(summary["artifact_dir"]) / "summary.json").exists()
-    assert "anchored_profile_count" in summary["summary"]
+    assert "core_or_period_evidenced_count" in summary["summary"]
+    assert "unique_accepted_source_count" in summary["summary"]

@@ -25,6 +25,11 @@ class Settings(BaseSettings):
     )
     app_postgres_schema: str = Field(default="sourcebound", alias="APP_POSTGRES_SCHEMA")
     app_ui_enabled: bool = Field(default=True, alias="APP_UI_ENABLED")
+    app_job_worker_enabled: bool = Field(default=True, alias="APP_JOB_WORKER_ENABLED")
+    app_job_poll_interval_seconds: float = Field(
+        default=0.25,
+        alias="APP_JOB_POLL_INTERVAL_SECONDS",
+    )
     app_research_default_adapter_id: str = Field(
         default="web_open",
         alias="APP_RESEARCH_DEFAULT_ADAPTER_ID",

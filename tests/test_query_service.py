@@ -247,6 +247,9 @@ def test_query_modes_return_expected_claims_and_warnings(temp_data_dir: Path) ->
         assert result.supporting_claims[0].subject in result.answer
         assert result.metadata.retrieval_backend == "memory"
         assert result.metadata.fallback_used is False
+        assert isinstance(result.certainty_summary, dict)
+        assert isinstance(result.coverage_gaps, list)
+        assert isinstance(result.recommended_next_research, list)
 
 
 def test_query_filters_can_narrow_matching_claims(temp_data_dir: Path) -> None:
@@ -257,7 +260,11 @@ def test_query_filters_can_narrow_matching_claims(temp_data_dir: Path) -> None:
         QueryRequest(
             question="Market gossip about bread prices",
             mode=QueryMode.OPEN_EXPLORATION,
-            filters=QueryFilter(status=ClaimStatus.PROBABLE, place="Rouen"),
+            filters=QueryFilter(
+                status=ClaimStatus.PROBABLE,
+                place="Rouen",
+                source_types=["record"],
+            ),
         )
     )
 
@@ -267,6 +274,24 @@ def test_query_filters_can_narrow_matching_claims(temp_data_dir: Path) -> None:
     assert result.evidence[0].evidence_id == "evi-5"
     assert result.sources[0].source_id == "src-5"
     assert result.metadata.retrieval_backend == "memory"
+
+
+def test_query_keeps_focus_band_instead_of_single_strongest_claim(temp_data_dir: Path) -> None:
+    claims = populate_query_fixtures(temp_data_dir)
+    service = build_query_service(temp_data_dir, claims)
+
+    result = service.answer(
+        QueryRequest(
+            question="What does Rouen market gossip say about bread prices?",
+            mode=QueryMode.STRICT_FACTS,
+        )
+    )
+
+    returned_ids = {claim.claim_id for claim in result.supporting_claims}
+    assert "claim-verified-1" in returned_ids
+    assert "claim-probable-1" in returned_ids
+    assert "claim-probable-2" not in returned_ids
+    assert result.answer_sections
 
 
 def test_query_strict_facts_reports_gap_when_only_uncertain_claims_remain(
@@ -354,6 +379,7 @@ def test_query_uses_projection_when_available(temp_data_dir: Path) -> None:
     ]
     assert result.metadata.retrieval_backend == "qdrant"
     assert result.metadata.fallback_used is False
+    assert result.metadata.ranking_strategy == "blended"
 
 
 def test_query_falls_back_to_memory_when_projection_fails(temp_data_dir: Path) -> None:
@@ -380,6 +406,7 @@ def test_query_falls_back_to_memory_when_projection_fails(temp_data_dir: Path) -
     assert result.metadata.retrieval_backend == "memory"
     assert result.metadata.fallback_used is True
     assert result.metadata.fallback_reason == "Qdrant is disabled."
+    assert result.metadata.ranking_strategy == "lexical"
     assert any("Qdrant fallback" in warning for warning in result.warnings)
 
 

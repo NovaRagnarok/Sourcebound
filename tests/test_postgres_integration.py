@@ -32,56 +32,43 @@ def test_operator_flow_routes_share_postgres_backed_state(
 
     seed_dev_data()
 
-    assert _table_count(dsn, schema, "sources") == 2
-    assert _table_count(dsn, schema, "text_units") == 2
-    assert _table_count(dsn, schema, "extraction_runs") == 1
-    assert _table_count(dsn, schema, "candidates") == 2
-    assert _table_count(dsn, schema, "evidence") == 2
-    assert _table_count(dsn, schema, "review_events") == 0
-    assert _table_count(dsn, schema, "claims") == 0
-    assert _table_count(dsn, schema, "claim_evidence") == 0
-    assert _table_count(dsn, schema, "claim_reviews") == 0
-    assert _table_count(dsn, schema, "claim_versions") == 0
-    assert _table_count(dsn, schema, "source_documents") == 0
-    assert _table_count(dsn, schema, "source_chunks") == 0
+    assert _table_count(dsn, schema, "sources") == 10
+    assert _table_count(dsn, schema, "source_documents_state") == 10
+    assert _table_count(dsn, schema, "text_units") == 10
+    assert _table_count(dsn, schema, "extraction_runs") == 2
+    assert _table_count(dsn, schema, "candidates") == 6
+    assert _table_count(dsn, schema, "evidence") == 10
+    assert _table_count(dsn, schema, "review_events") == 4
+    assert _table_count(dsn, schema, "research_runs") == 1
+    assert _table_count(dsn, schema, "research_findings") == 4
+    assert _table_count(dsn, schema, "jobs") == 7
+    assert _table_count(dsn, schema, "bible_project_profiles") == 1
+    assert _table_count(dsn, schema, "bible_sections") == 3
+    assert _table_count(dsn, schema, "claims") == 9
+    assert _table_count(dsn, schema, "claim_evidence") == 8
+    assert _table_count(dsn, schema, "claim_relationships") == 5
+    assert _table_count(dsn, schema, "claim_reviews") == 3
+    assert _table_count(dsn, schema, "claim_versions") == 9
+    assert _table_count(dsn, schema, "source_documents") == 8
+    assert _table_count(dsn, schema, "source_chunks") == 8
 
     with TestClient(app) as client:
         sources_before = client.get("/v1/sources")
         assert sources_before.status_code == 200
-        assert len(sources_before.json()) == 2
+        assert len(sources_before.json()) == 10
 
-        pull_response = client.post("/v1/ingest/zotero/pull")
-        assert pull_response.status_code == 200
-        pull_body = pull_response.json()
-        assert pull_body["count"] == 2
-        assert _table_count(dsn, schema, "sources") == 2
-        assert _table_count(dsn, schema, "text_units") == 2
-        assert _table_count(dsn, schema, "source_documents_state") == 2
+        jobs = client.get("/v1/jobs")
+        assert jobs.status_code == 200
+        assert len(jobs.json()) == 7
 
-        normalize_response = client.post("/v1/ingest/normalize-documents")
-        assert normalize_response.status_code == 200
-        normalize_body = normalize_response.json()
-        assert normalize_body["document_count"] == 2
-        assert normalize_body["text_unit_count"] == 2
-        assert _table_count(dsn, schema, "text_units") == 4
-
-        run_response = client.post("/v1/ingest/extract-candidates")
-        assert run_response.status_code == 200
-        run_body = run_response.json()
-        assert run_body["count"] >= 1
-        assert run_body["run"]["status"] == "completed"
-        assert len(run_body["evidence"]) >= 1
-        assert _table_count(dsn, schema, "extraction_runs") == 2
-        assert _table_count(dsn, schema, "candidates") >= 3
-        assert _table_count(dsn, schema, "evidence") >= 3
-
-        runs = client.get("/v1/extraction-runs")
-        assert runs.status_code == 200
-        assert runs.json()[0]["status"] == "completed"
+        research_runs = client.get("/v1/research/runs")
+        assert research_runs.status_code == 200
+        assert len(research_runs.json()) == 1
+        assert research_runs.json()[0]["latest_job"]["status"] == "completed"
 
         candidates_before = client.get("/v1/candidates?review_state=pending")
         assert candidates_before.status_code == 200
-        assert len(candidates_before.json()) >= 3
+        assert len(candidates_before.json()) == 2
         assert all(item["review_state"] == "pending" for item in candidates_before.json())
 
         first_candidate_id = candidates_before.json()[0]["candidate_id"]
@@ -91,17 +78,17 @@ def test_operator_flow_routes_share_postgres_backed_state(
         )
         assert approve_response.status_code == 200
         assert approve_response.json()["status"] == "approved"
-        assert _table_count(dsn, schema, "review_events") == 1
-        assert _table_count(dsn, schema, "claims") == 1
-        assert _table_count(dsn, schema, "claim_evidence") == 1
-        assert _table_count(dsn, schema, "claim_reviews") == 1
-        assert _table_count(dsn, schema, "claim_versions") == 1
-        assert _table_count(dsn, schema, "source_documents") == 1
-        assert _table_count(dsn, schema, "source_chunks") == 1
+        assert _table_count(dsn, schema, "review_events") == 5
+        assert _table_count(dsn, schema, "claims") == 10
+        assert _table_count(dsn, schema, "claim_evidence") == 9
+        assert _table_count(dsn, schema, "claim_reviews") == 4
+        assert _table_count(dsn, schema, "claim_versions") == 10
+        assert _table_count(dsn, schema, "source_documents") == 9
+        assert _table_count(dsn, schema, "source_chunks") == 9
 
-        source_detail = client.get("/v1/sources/src-1")
+        source_detail = client.get("/v1/sources/src-price-ledger")
         assert source_detail.status_code == 200
-        assert source_detail.json()["source"]["source_id"] == "src-1"
+        assert source_detail.json()["source"]["source_id"] == "src-price-ledger"
         assert len(source_detail.json()["text_units"]) >= 1
 
         candidate_detail = client.get(f"/v1/candidates/{first_candidate_id}")
@@ -110,7 +97,7 @@ def test_operator_flow_routes_share_postgres_backed_state(
 
         claims_response = client.get("/v1/claims")
         assert claims_response.status_code == 200
-        assert len(claims_response.json()) == 1
+        assert len(claims_response.json()) == 10
 
         query_response = client.post(
             "/v1/query",

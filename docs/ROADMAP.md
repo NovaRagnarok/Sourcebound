@@ -1,52 +1,85 @@
 # Roadmap
 
-## Current status
+## Current Status
 
-- Phase 0 is complete.
-- Large parts of Phase 4 already exist as an operator MVP.
-- Approved-claim reads and writes now use Postgres by default in the normal stack.
-- The main work now is making the remaining integrations real: live Zotero intake, non-heuristic extraction, and Qdrant-backed retrieval in the normal dev loop.
+The repo is well beyond the initial scaffold.
 
-## Phase 0 — architecture seed
+Already shipped:
 
-- domain models
-- schemas
-- file-backed stores
-- API skeleton
-- review flow
-- operator MVP
-- Postgres and SQLite app-state adapters
+- operator UI mounted at `/operator/`
+- ingestion, intake, review, query, export, and runtime-health APIs
+- research runs with staging and extract handoff
+- Postgres-backed app state
+- Postgres-backed canon as the default truth-store path
+- lore packet export
+- live integration coverage for Zotero, Qdrant, and Wikibase
 
-## Phase 1 — pilot corpus
+Still notably incomplete or provisional:
 
-- connect to a narrow Zotero collection as the normal ingest path
-- normalize attached sources into text units
-- replace the default heuristic extractor with GraphRAG or another LLM-backed extraction path
-- manually review candidates against a real pilot corpus
+- GraphRAG is not yet the always-on default in normal local use
+- real Zotero-backed workflows still depend on local credentials and collection setup
+- Qdrant-backed retrieval is available but not yet the default everyday loop for all development
+- auth and production deployment concerns are still light
 
-## Phase 2 — approved truth store
+## Phase 1 — Stabilize The Default Stack
 
-- keep approved-claim review/write/read solid in the Postgres truth store
-- decide whether Wikibase still earns its complexity for canonical sync
-- if it does, write references and qualifiers with a project-specific property map
-- handle competing claims cleanly
+Focus: make the documented Postgres-first stack feel boring and dependable.
 
-## Phase 3 — retrieval
+- tighten `.env.example` around the current defaults and optional integrations
+- keep operator flow smooth in the Postgres-backed path
+- harden runtime status and setup diagnostics
+- continue closing gaps between file-backed tests and Postgres-backed behavior
 
-- make Qdrant-backed projection part of the normal local dev loop
-- support filtered semantic search
-- enable query modes by certainty and viewpoint
+## Phase 2 — Real Corpus Workflow
 
-## Phase 4 — product surface
+Focus: make Zotero-backed intake and normalization the standard source workflow.
 
-- review queue UI
-- source browsing UI
-- ask-the-bible UI
-- runtime readiness and environment status reporting
+- improve source-document discovery and attachment handling
+- make `zotero-check` and intake tooling better at surfacing config or API issues
+- reduce friction between operator intake and pull-based ingest
+- validate the loop on a narrow but real pilot corpus
 
-## Phase 5 — advanced features
+## Phase 3 — Extraction Upgrade
 
-- character knowledge filters
-- author decisions as separate layer
-- contradiction and drift detection
-- reusable prompt packs for domain-specific extraction
+Focus: move from “heuristic fallback works” to “GraphRAG is practical”.
+
+- harden GraphRAG runtime readiness checks
+- improve artifact import and in-process GraphRAG paths
+- compare heuristic and GraphRAG output quality on benchmark runs
+- improve evidence span quality and candidate usefulness for review
+
+## Phase 4 — Retrieval And Research Quality
+
+Focus: turn Qdrant-backed search and research semantics into routine tools.
+
+- make projection-backed retrieval a normal local workflow
+- improve semantic reranking and duplicate handling for research findings
+- expose clearer query modes by certainty, relationship, and viewpoint
+- strengthen provenance-aware answer assembly from approved claims and Bible paragraphs
+
+## Phase 5 — Canon Modeling
+
+Focus: deepen what approved canon can express.
+
+- expand relationship handling across claims
+- refine author-decision support as a first-class canon layer
+- improve contradiction, drift, and supersession workflows
+- keep file, Postgres, and optional Wikibase behavior aligned
+
+## Phase 6 — Product Hardening
+
+Focus: make the tool more usable outside a dev-only loop.
+
+- extend the shipped persisted-job model if local-first async work grows beyond the in-process worker
+- auth and access control decisions for the operator surface
+- deployment guidance beyond local docker compose
+- stronger observability around retries, degraded modes, and partial completion
+
+## Phase 7 — Benchmarking And Evaluation
+
+Focus: make progress measurable.
+
+- keep expanding benchmark scenarios beyond the current `benchmark-2003-dj` preset
+- track quality, coverage, and reviewability of extracted candidates
+- compare retrieval quality across projection settings
+- make benchmark artifacts easy to inspect and share

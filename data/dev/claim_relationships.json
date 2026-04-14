@@ -1,1 +1,42 @@
-[]
+[
+  {
+    "relationship_id": "rel-bread-tokens-support-price",
+    "claim_id": "claim-bread-tokens",
+    "related_claim_id": "claim-market-price",
+    "relationship_type": "supports",
+    "source_kind": "derived",
+    "notes": "Ration tokens reinforce the price-spike reading."
+  },
+  {
+    "relationship_id": "rel-bell-prime-contradicts-terce",
+    "claim_id": "claim-bell-prime",
+    "related_claim_id": "claim-bell-terce",
+    "relationship_type": "contradicts",
+    "source_kind": "derived",
+    "notes": "The two bell-time accounts cannot both be primary canon without qualification."
+  },
+  {
+    "relationship_id": "rel-bell-terce-contradicts-prime",
+    "claim_id": "claim-bell-terce",
+    "related_claim_id": "claim-bell-prime",
+    "relationship_type": "contradicts",
+    "source_kind": "derived",
+    "notes": "The later addendum directly contests the earlier ordinance reading."
+  },
+  {
+    "relationship_id": "rel-bell-terce-supersedes-prime",
+    "claim_id": "claim-bell-terce",
+    "related_claim_id": "claim-bell-prime",
+    "relationship_type": "supersedes",
+    "source_kind": "derived",
+    "notes": "The addendum is treated as the better operational guide for scenes after mid-January."
+  },
+  {
+    "relationship_id": "rel-bell-prime-superseded-by-terce",
+    "claim_id": "claim-bell-prime",
+    "related_claim_id": "claim-bell-terce",
+    "relationship_type": "superseded_by",
+    "source_kind": "derived",
+    "notes": "The earlier bell hour remains visible for provenance, not as the preferred synthesis."
+  }
+]

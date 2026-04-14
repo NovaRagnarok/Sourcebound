@@ -1,418 +1,192 @@
-# Source-Aware Worldbuilding
+# Sourcebound
 
-A research-first knowledge system for creators.
+Sourcebound is a source-aware worldbuilding workbench: it ingests source material, normalizes it into text units, extracts candidate claims, routes those claims through human review, stores approved canon behind a truth-store port, and serves that canon through an API and operator UI.
 
-This repository is a research-first MVP for building a source-grounded lore bible that keeps the following layers separate:
+Today the repo is past the original seed stage. It already ships:
 
-- verified facts
-- probable interpretations
-- contested claims
-- rumor and legend
-- author choices
+- a FastAPI backend with ingestion, intake, research, review, export, query, and health routes
+- a Typer CLI for local development, runtime checks, seeding, intake, and benchmarking
+- a browser-based operator UI at `/operator/`
+- Postgres-backed app state and Postgres-backed canon as the default stack
+- file-backed and SQLite-backed state adapters for lighter local workflows
+- optional Zotero, GraphRAG, Qdrant, and Wikibase integrations behind explicit ports
 
-It is designed around the architecture we chose earlier:
+## Current Shape
 
-- **Zotero** as the corpus/source library
-- **GraphRAG** as the extraction engine
-- **Postgres** as the default canonical claim store for now
-- **Qdrant** as the retrieval projection/index
-- **FastAPI** as the application/control plane
-- a thin operator UI on top
-
-The codebase starts as a **modular monolith** with explicit ports and adapters. That keeps the system easy to evolve with Codex while preserving the seams needed to split parts later.
-
----
-
-## What this repo gives you
-
-- a sane repository layout
-- a backend MVP with domain models, ports, services, CLI commands, and HTTP routes
-- JSON schemas for the most important records
-- architecture docs and ADRs so the shape does not drift
-- a Postgres-first app-state setup with SQLite and file-backed fallbacks
-- a shipped operator UI for sources, research scouting, extraction runs, review, claims, and querying
-- live-capable Zotero, optional Wikibase, and Qdrant adapters with safe local fallbacks
-
-This seed intentionally keeps approved claims in Postgres by default for the normal stack. File-backed truth remains available for zero-infra development, and Wikibase remains an optional adapter behind a `TruthStorePort`.
-
----
-
-## Current project state
-
-The project is currently between the architecture-seed phase and the first real integration phase:
-
-- the end-to-end ingest -> extract -> review -> claim -> query path is implemented and tested
-- the generic research scout can discover, score, and stage provenance-rich findings for any broad subject and era
-- the operator UI is already present at `/operator/`
-- Postgres-backed app state is implemented and covered by integration tests
-- live Zotero, Wikibase, and Qdrant integration tests exist, but they are opt-in and require local or remote services plus credentials
-- extraction is still heuristic by default, not a full GraphRAG pipeline yet
-
-Use the runtime status command to see what is live versus stubbed in your current environment:
-
-```bash
-.venv/bin/saw status
-```
-
----
-
-## Core architectural principles
-
-### 1. Truth has layers
-
-Do not flatten everything into one bucket.
-
-The system distinguishes:
-
-- `verified`
-- `probable`
-- `contested`
-- `rumor`
-- `legend`
-- `author_choice`
-
-### 2. Extraction is not canon
-
-GraphRAG produces **candidate claims** only.
-
-Nothing extracted by an LLM becomes canonical until it passes through review and is written to the truth store.
-
-### 3. Approved claims live behind a truth-store port
-
-Approved claims use Postgres by default in the normal stack, with a file-backed truth store still available for no-infra local work. If we bring Wikibase back later, it should remain an adapter instead of leaking into domain logic.
-
-### 4. Qdrant is a projection, not a source of truth
-
-Qdrant exists to support filtered semantic retrieval across approved claims and evidence. It can be rebuilt from canonical data.
-
-### 5. Keep source provenance at evidence-snippet level
-
-Every approved claim should be traceable back to:
-
-- a source record
-- a locator (page, section, chapter, URL fragment, timestamp, etc.)
-- a supporting text span or excerpt
-
-### 6. Start as a modular monolith
-
-Do not start with microservices.
-
-Start with one Python codebase that contains bounded modules with explicit interfaces. Split only when there is real operational pressure.
-
----
-
-## System overview
+The implemented end-to-end flow looks like this:
 
 ```text
-Zotero
-  ↓
-Normalization / Source Intake
-  ↓
-GraphRAG Extraction
-  ↓
-Candidate Claims Queue
-  ↓ Human Review
-Approved Claims
-  ↓
-Postgres truth store
-  ↓
-Qdrant projection
-  ↓
-Query / Answering API
-  ↓
-Future thin UI
+Zotero or operator intake
+  -> source documents
+  -> normalized text units
+  -> candidate claims + evidence
+  -> human review
+  -> approved claims in truth store
+  -> optional Qdrant projection
+  -> query + lore export surfaces
 ```
 
----
-
-## Bounded contexts
-
-### Corpus
-Responsible for source records, attachments, extracted text, and locators.
-
-### Extraction
-Responsible for chunking, running GraphRAG, and producing candidate claims.
-
-### Review
-Responsible for approval, rejection, merge, split, and status overrides.
-
-### Canon
-Responsible for approved claims, evidence links, author choices, and viewpoints.
-
-### Retrieval
-Responsible for query projections and filtered search over approved data.
-
-### Application
-Responsible for HTTP API, future UI, auth, workflow orchestration, and jobs.
-
----
-
-## Repository layout
+There is also a second path for broad-topic research:
 
 ```text
-source-aware-worldbuilding/
-├── README.md
-├── Makefile
-├── pyproject.toml
-├── .env.example
-├── docker-compose.yml
-├── data/
-│   └── dev/
-│       ├── candidates.json
-│       ├── claims.json
-│       ├── evidence.json
-│       ├── extraction_runs.json
-│       ├── review_events.json
-│       └── sources.json
-├── docs/
-│   ├── ARCHITECTURE.md
-│   ├── ROADMAP.md
-│   ├── ontology/
-│   │   └── initial-taxonomy.md
-│   ├── schemas/
-│   │   ├── candidate-claim.schema.json
-│   │   ├── claim.schema.json
-│   │   └── evidence.schema.json
-│   └── adrs/
-│       ├── 0001-modular-monolith.md
-│       ├── 0002-wikibase-canonical-store.md
-│       ├── 0003-human-review-gate.md
-│       └── 0004-qdrant-is-a-projection.md
-├── infra/
-│   └── wikibase/
-│       └── README.md
-├── src/
-│   └── source_aware_worldbuilding/
-│       ├── __init__.py
-│       ├── settings.py
-│       ├── cli.py
-│       ├── ports.py
-│       ├── domain/
-│       │   ├── enums.py
-│       │   └── models.py
-│       ├── storage/
-│       │   ├── json_store.py
-│       │   ├── postgres_app_state.py
-│       │   └── sqlite_app_state.py
-│       ├── adapters/
-│       │   ├── file_backed.py
-│       │   ├── graphrag_adapter.py
-│       │   ├── postgres_backed.py
-│       │   ├── qdrant_adapter.py
-│       │   ├── sqlite_backed.py
-│       │   ├── wikibase_adapter.py
-│       │   └── zotero_adapter.py
-│       ├── services/
-│       │   ├── ingestion.py
-│       │   ├── query.py
-│       │   ├── review.py
-│       │   └── status.py
-│       └── api/
-│           ├── dependencies.py
-│           ├── main.py
-│           └── routes/
-│               ├── candidates.py
-│               ├── claims.py
-│               ├── health.py
-│               ├── ingest.py
-│               ├── query.py
-│               ├── runs.py
-│               └── sources.py
-└── tests/
-    ├── test_api_integration.py
-    ├── test_health.py
-    ├── test_postgres_integration.py
-    ├── test_query_service.py
-    └── test_review_flow.py
+research brief
+  -> web scout / curated inputs
+  -> persisted background job
+  -> accepted findings
+  -> staged sources + documents
+  -> normalization
+  -> extraction
+  -> normal review queue
 ```
 
----
+Important reality checks for the current repo:
 
-## Quick start
+- `APP_STATE_BACKEND` defaults to `postgres`
+- `APP_TRUTH_BACKEND` defaults to `postgres`
+- extraction uses GraphRAG when enabled, otherwise the heuristic adapter
+- the operator UI is already shipped, not planned
+- lore packet export is implemented
+- live integration tests exist for Zotero, Qdrant, and Wikibase but are opt-in
+- long-running research and Bible composition routes now queue persisted background jobs and are polled by the operator UI
 
-### 1. Bootstrap a virtual environment
+## Quick Start
+
+### 1. Bootstrap
 
 ```bash
 make bootstrap
 ```
 
-### 2. Copy environment file
+### 2. Configure local env
+
+The app reads `.env` automatically. The repo already includes `.env.example`.
+
+For the default local stack:
 
 ```bash
 cp .env.example .env
-```
-
-### 3. Start local infra
-
-```bash
 docker compose up -d postgres qdrant
 ```
 
-Postgres is the default app-state backend. Qdrant is optional, but starting it now lets you exercise projection-backed retrieval later.
-
-### 4. Check runtime readiness
+### 3. Check runtime readiness
 
 ```bash
 .venv/bin/saw status
 ```
 
-This reports which parts of the stack are live, disabled, stubbed, or missing configuration.
+This shows which services are configured, ready, disabled, or stubbed in your current environment.
 
-### 5. Seed dev data
+### 4. Seed development data
 
 ```bash
 .venv/bin/saw seed-dev-data
 ```
 
-### 6. Run the API
+### 5. Run the app
 
 ```bash
 .venv/bin/saw serve --reload
 ```
 
-API docs will be available at `http://localhost:8000/docs`.
-The operator console will be available at `http://localhost:8000/operator/`.
+Then open:
 
-### 7. File-backed workflow state
+- API docs: `http://localhost:8000/docs`
+- operator UI: `http://localhost:8000/operator/`
+- runtime health: `http://localhost:8000/health/runtime`
 
-```bash
-APP_STATE_BACKEND=file APP_TRUTH_BACKEND=file .venv/bin/saw seed-dev-data
-```
+## Development Modes
 
-Use file-backed mode when you want zero external services while shaping models, workflows, or prompts.
-Approved-claim routes work locally and write to `data/dev/claims.json`.
+### Postgres-first local stack
 
-### 8. Optional live integration checks
-
-```bash
-.venv/bin/pytest -m live_zotero tests/test_live_integrations.py
-.venv/bin/pytest -m live_qdrant tests/test_live_integrations.py
-.venv/bin/pytest -m live_wikibase tests/test_live_integrations.py
-```
-
-Each live test skips automatically unless its real service is configured. Run the Wikibase live test only against a disposable or non-production instance, because it creates test items.
-
----
-
-## Development modes
-
-### Mode A — file-backed dev mode
-
-Use this when you are shaping models, workflows, and prompts.
-
-- no Zotero required
-- no Wikibase required
-- no Qdrant required
-- set `APP_STATE_BACKEND=file`
-- set `APP_TRUTH_BACKEND=file`
-- works from `data/dev/*.json`
-- approved claims are stored in `data/dev/claims.json`
-
-### Mode B — real corpus mode
-
-Use this when integrating a live Zotero library.
-
-- source intake from Zotero API
-- extracted text normalization from source metadata, notes, and attachment metadata
-- sentence-level candidate claims and evidence from the extraction pipeline
-- review and approved-claim storage can run against Postgres without adding Wikibase
-
-### Mode C — full stack mode
-
-Use this once the domain model is stable.
-
-- app/workflow state persisted to Postgres
-- approved claims persisted to Postgres by default
-- retrieval projection stored in Qdrant
-- query modes backed by approved claims and evidence
-
-### Postgres app state and canon
-
-Default settings:
+This is the default and matches the repo’s main integration path.
 
 ```bash
 APP_STATE_BACKEND=postgres
 APP_TRUTH_BACKEND=postgres
 APP_POSTGRES_DSN=postgresql://saw:saw@localhost:5432/saw
 APP_POSTGRES_SCHEMA=sourcebound
+QDRANT_URL=http://localhost:6333
 ```
 
-This stores sources, text units, extraction runs, candidates, evidence, review events, and approved claims in Postgres while preserving the same service layer and API routes.
+Use this when you want the full operator flow, Postgres-backed review state, and Postgres-backed canon.
+Qdrant is the recommended local retrieval path, but it remains optional.
 
-The canon side now uses dedicated epistemic tables instead of one generic approved-claims blob:
+### Zero-infra local mode
 
-- `claims`
-- `claim_evidence`
-- `claim_reviews`
-- `claim_versions`
-- `claim_relationships`
-- `author_decisions`
-- `source_documents`
-- `source_chunks`
-
-If you want the old no-infra path, switch back explicitly:
+Use this when you want to work without Postgres, Qdrant, or Zotero:
 
 ```bash
 APP_STATE_BACKEND=file
 APP_TRUTH_BACKEND=file
+GRAPH_RAG_ENABLED=false
+QDRANT_ENABLED=false
 ```
 
-### Optional Wikibase sync
-
-If you explicitly set `APP_TRUTH_BACKEND=wikibase`, approved-claim reads and writes require:
+Then reseed:
 
 ```bash
-WIKIBASE_API_URL=https://your-wikibase.example/w/api.php
-WIKIBASE_USERNAME=...
-WIKIBASE_PASSWORD=...
-WIKIBASE_PROPERTY_MAP='{"main_value":"P1","predicate":"P2","status":"P3","claim_kind":"P4","place":"P5","time_start":"P6","time_end":"P7","viewpoint_scope":"P8","notes":"P9","app_claim_id":"P10","source_id":"P11","locator":"P12","evidence_text":"P13","evidence_id":"P14"}'
+APP_STATE_BACKEND=file APP_TRUTH_BACKEND=file .venv/bin/saw seed-dev-data
 ```
 
-The default is `APP_TRUTH_BACKEND=postgres`. Use `APP_TRUTH_BACKEND=file` only when you explicitly want the zero-infra local path.
+Data will live in `data/dev/`.
+Long-running work still queues as persisted jobs in this mode; the in-process worker simply executes them against file-backed state.
 
----
+### SQLite app-state mode
 
-## The minimal claim lifecycle
+SQLite exists for app state, but truth storage still uses the configured truth backend:
 
-1. Pull source metadata and attachments from Zotero.
-2. Normalize content into text units with locators.
-3. Run extraction to produce **candidate claims**.
-4. Review candidates.
-5. Write approved claims and evidence references to the truth store.
-6. Project approved claims into Qdrant.
-7. Answer user questions only from approved claims and evidence.
+```bash
+APP_STATE_BACKEND=sqlite
+APP_SQLITE_PATH=runtime/sourcebound.db
+```
 
----
+## CLI Surface
 
-## Research scout workflow
+Main commands:
 
-Use the research scout when you need to turn a broad topic and era into staged source material before normal extraction.
+- `saw serve`
+- `saw seed-dev-data`
+- `saw status`
+- `saw zotero-check`
+- `saw intake-text`
+- `saw intake-url`
+- `saw intake-file`
+- `saw normalize-documents`
+- `saw benchmark-2003-dj`
 
-1. Open `/operator/#research`.
-2. Start a run from a brief: topic, focal year or date range, optional locale, optional audience, and any domain hints.
-3. Inspect accepted and rejected findings, facet coverage, warnings, and run logs.
-4. Stage accepted findings into native text-backed `SourceRecord` and `SourceDocumentRecord` entries.
-5. Run `Stage + extract` to normalize only that run's staged documents and create candidate claims from them.
-6. Review those candidates in the normal review queue before anything becomes canonical.
+Useful examples:
 
-The built-in default program is generic. Custom research programs can still be created through the API and are listed in the operator UI:
+```bash
+.venv/bin/saw status --json-output
+.venv/bin/saw zotero-check --json-output
+.venv/bin/saw intake-text "Field Notes" "Observed three shrine rituals at dusk."
+.venv/bin/saw benchmark-2003-dj --json-output
+```
 
-- `POST /v1/research/programs`
-- `GET /v1/research/programs`
+## API Surface
 
----
+Implemented routes:
 
-## API shape in the seed
-
-### Health
 - `GET /health`
 - `GET /health/runtime`
-
-### Ingestion
 - `POST /v1/ingest/zotero/pull`
+- `POST /v1/ingest/normalize-documents`
 - `POST /v1/ingest/extract-candidates`
-
-### Research
+- `POST /v1/intake/text`
+- `POST /v1/intake/url`
+- `POST /v1/intake/file`
+- `GET /v1/sources`
+- `GET /v1/sources/{source_id}`
+- `GET /v1/extraction-runs`
+- `GET /v1/candidates`
+- `GET /v1/candidates/{candidate_id}`
+- `POST /v1/candidates/{candidate_id}/review`
+- `GET /v1/claims`
+- `GET /v1/claims/{claim_id}`
+- `GET /v1/claims/{claim_id}/relationships`
+- `POST /v1/claims/{claim_id}/relationships`
+- `POST /v1/query`
+- `POST /v1/exports/lore-packet`
 - `POST /v1/research/runs`
 - `GET /v1/research/runs`
 - `GET /v1/research/runs/{run_id}`
@@ -420,106 +194,103 @@ The built-in default program is generic. Custom research programs can still be c
 - `POST /v1/research/runs/{run_id}/extract`
 - `POST /v1/research/programs`
 - `GET /v1/research/programs`
+- `GET /v1/jobs`
+- `GET /v1/jobs/{job_id}`
 
-### Sources
-- `GET /v1/sources`
-- `GET /v1/sources/{source_id}`
+Long-running `POST /v1/research/...` and Bible composition/regeneration routes return `202 Accepted` with a persisted job record. Poll `GET /v1/jobs/{job_id}` until the job reaches `completed`, then read the authoritative research run or Bible section from its normal route.
 
-### Extraction runs
-- `GET /v1/extraction-runs`
+Bible export now has two paths:
 
-### Candidates
-- `GET /v1/candidates`
-- `GET /v1/candidates/{candidate_id}`
-- `POST /v1/candidates/{candidate_id}/review`
+- `POST /v1/bible/exports/{project_id}` queues a persisted export job
+- `GET /v1/bible/exports/{project_id}` returns the latest completed export bundle when one exists, otherwise falls back to direct bundle generation for tooling and verification
+- `POST /v1/jobs/{job_id}/cancel` requests best-effort cancellation
+- `POST /v1/jobs/{job_id}/retry` creates a fresh retry attempt for failed retryable jobs
 
-### Claims
-- `GET /v1/claims`
-- `GET /v1/claims/{claim_id}`
+## Recommended Author Stack
 
-### Query
-- `POST /v1/query`
+For the smoothest solo-author workflow, use:
 
----
+- `APP_STATE_BACKEND=postgres`
+- `APP_TRUTH_BACKEND=postgres`
+- `APP_JOB_WORKER_ENABLED=true`
+- `QDRANT_ENABLED=true`
+- `GRAPH_RAG_ENABLED=false` unless you are actively exercising extraction work beyond the heuristic path
 
-## Query modes
+That combination gives you persisted Bible state, background research/Bible/export jobs, optional semantic retrieval, and a stable local operator experience without making Qdrant a trust dependency.
 
-The domain model already assumes separate answer modes:
+## Solo Author Flow
 
-- `strict_facts`
-- `contested_views`
-- `rumor_and_legend`
-- `character_knowledge`
-- `open_exploration`
+The intended daily-writing loop is:
 
-That matters because the same corpus should answer different kinds of questions differently.
+1. run a research brief
+2. stage and extract accepted findings
+3. review candidates into approved canon
+4. compose Bible sections
+5. inspect “Why this section says this” for any paragraph you want to trust
+6. keep drafting in the manual section text without fear of regeneration overwriting it
 
----
+## Minimal Deployment Notes
 
-## Suggested near-term milestones
+If you run Sourcebound outside local dev, keep the deployment guidance intentionally small:
 
-### Milestone 0
-Done: repo scaffolding, schemas, Postgres-backed app state, file-backed fallback, review flow, and operator UI.
+- use a persistent state backend, not ephemeral file storage
+- keep the background worker enabled wherever long-running jobs are expected
+- treat Qdrant as recommended for relevance, not required for correctness
+- keep a routine export/backup habit for Bible projects and app-state storage
 
-### Milestone 1
-Next: connect a real Zotero pilot corpus and replace stub ingest as the normal operating path.
+## Repository Guide
 
-### Milestone 2
-Next: replace or augment the heuristic extractor with the real GraphRAG or LLM-backed extraction path.
+```text
+src/source_aware_worldbuilding/
+  api/           FastAPI app and route wiring
+  adapters/      Postgres, SQLite, file, Zotero, Qdrant, Wikibase, GraphRAG, research adapters
+  domain/        models, enums, errors, normalization rules
+  services/      ingestion, intake, review, research, query, lore export, status
+  storage/       low-level JSON and relational state helpers
+  settings.py    environment-driven runtime configuration
+  cli.py         developer/operator CLI
 
-### Milestone 3
-Next: harden the local approved-claim workflow and only bring back Wikibase if it earns its complexity.
+frontend/operator-ui/
+  static operator console for research, sources, runs, review, claims, and query flows
 
-### Milestone 4
-Next: enable Qdrant-backed retrieval in normal local development and harden answer quality around provenance and viewpoint filters.
+docs/
+  ARCHITECTURE.md
+  ROADMAP.md
+  adrs/
+  ontology/
+  research/
+  schemas/
+```
 
----
+## Tests
 
-## Non-goals for the first iteration
+Normal test run:
 
-- manuscript generation
-- collaborative editing permissions
-- giant ontology design
-- fully automated claim approval
-- multi-period / multi-domain abstraction before one pilot works
-- replacing Zotero
+```bash
+make test
+```
 
----
+Live integrations are opt-in:
 
-## Codex-friendly rules for this repo
+```bash
+.venv/bin/pytest -m live_zotero tests/test_live_integrations.py
+.venv/bin/pytest -m live_qdrant tests/test_live_integrations.py
+.venv/bin/pytest -m live_wikibase tests/test_live_integrations.py
+```
 
-When you use Codex on this repository, keep these rules in place:
+The live Wikibase test creates test entities and should only be run against a disposable instance.
 
-1. Do not let adapters import from each other.
-2. Do not let domain models depend on framework code.
-3. Do not write directly to Qdrant from extraction.
-4. Do not bypass review when creating approved claims.
-5. Do not let adapter-specific payloads leak into domain models.
-6. Prefer additive ADRs over silent architecture drift.
-7. Keep query answers structured and provenance-aware.
+## Notes On Integrations
 
----
+- Zotero is the main corpus adapter for real-source workflows and powers both pull-based ingest and write-based intake.
+- GraphRAG is optional at runtime. If it is not ready, the app falls back to heuristic extraction.
+- Qdrant is treated as a projection layer, not the source of truth.
+- Wikibase remains optional and is selected only when `APP_TRUTH_BACKEND=wikibase`.
 
-## External system notes
+## Related Docs
 
-### GraphRAG
-This project expects GraphRAG to be used as an extraction and retrieval building block, not as the source of truth.
-
-### Zotero
-Zotero remains the source library for research metadata and attachment management.
-
-### Wikibase
-Wikibase is optional for later canonical-sync work, not the default local truth store.
-
-### Qdrant
-Qdrant is used for fast filtered retrieval over approved claims and evidence projections.
-
----
-
-## Highest-leverage next work
-
-- configure a real Zotero collection and use it as the default pilot corpus
-- replace or augment the heuristic extractor with the real GraphRAG pipeline
-- harden the local approved-claim workflow and only add Wikibase back when it earns its complexity
-- run Qdrant locally in the normal dev loop and tune projection-backed query ranking
-- add richer character-knowledge and viewpoint handling once the real corpus is flowing
+- [Architecture](docs/ARCHITECTURE.md)
+- [Roadmap](docs/ROADMAP.md)
+- [Author Stack](docs/AUTHOR_STACK.md)
+- [Default Research Program](docs/research/default_program.md)
+- [ADR 0001: Modular Monolith](docs/adrs/0001-modular-monolith.md)

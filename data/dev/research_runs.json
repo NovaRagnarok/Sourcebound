@@ -1,0 +1,123 @@
+[
+  {
+    "run_id": "research-rouen-winter",
+    "status": "completed",
+    "brief": {
+      "topic": "Rouen winter shortage daily life",
+      "time_start": "1421-12-01",
+      "time_end": "1422-02-28",
+      "focal_year": "1422",
+      "locale": "Rouen",
+      "audience": "historical fiction authors",
+      "domain_hints": [],
+      "desired_facets": [
+        "practices",
+        "institutions",
+        "regional_context"
+      ],
+      "preferred_source_types": [
+        "archive",
+        "record",
+        "petition"
+      ],
+      "excluded_source_types": [],
+      "coverage_targets": {},
+      "adapter_id": "curated_inputs",
+      "curated_inputs": [],
+      "execution_policy": null,
+      "max_queries": 0,
+      "max_results_per_query": 0,
+      "max_findings": 4,
+      "max_per_facet": 2
+    },
+    "program_id": "historical-daily-life",
+    "facets": [
+      {
+        "facet_id": "practices",
+        "label": "Practices",
+        "query_hint": "routines, household rationing, payment habits",
+        "target_count": 1,
+        "queries_attempted": 0,
+        "hits_seen": 2,
+        "accepted_count": 1,
+        "rejected_count": 1,
+        "skipped_count": 0
+      },
+      {
+        "facet_id": "institutions",
+        "label": "Institutions",
+        "query_hint": "council enforcement, bells, wardens, beadles",
+        "target_count": 1,
+        "queries_attempted": 0,
+        "hits_seen": 1,
+        "accepted_count": 1,
+        "rejected_count": 0,
+        "skipped_count": 0
+      },
+      {
+        "facet_id": "regional_context",
+        "label": "Region-Specific Context",
+        "query_hint": "broader winter context and neighboring market pressure",
+        "target_count": 1,
+        "queries_attempted": 0,
+        "hits_seen": 1,
+        "accepted_count": 0,
+        "rejected_count": 1,
+        "skipped_count": 0
+      }
+    ],
+    "query_count": 0,
+    "finding_count": 4,
+    "accepted_count": 2,
+    "rejected_count": 2,
+    "staged_count": 2,
+    "extraction_run_id": "extract-research-rouen",
+    "telemetry": {
+      "total_queries": 0,
+      "queries_attempted": 0,
+      "fetch_attempts": 0,
+      "successful_fetches": 0,
+      "retries": 0,
+      "fetch_failures_by_category": {},
+      "blocked_by_robots_count": 0,
+      "blocked_by_policy_count": 0,
+      "dedupe_count": 0,
+      "per_host_fetch_counts": {},
+      "skipped_host_counts": {},
+      "elapsed_run_time_ms": 4200,
+      "elapsed_fetch_time_ms": 0,
+      "fallback_flags": [],
+      "search": {
+        "providers_used": [],
+        "queries_by_provider": {},
+        "hits_by_provider": {},
+        "accepted_by_provider": {},
+        "accepted_by_profile": {},
+        "zero_hit_queries_by_profile": {},
+        "fallback_used": false,
+        "fallback_reason": null
+      },
+      "semantic": {
+        "backend": null,
+        "fallback_used": false,
+        "fallback_reason": null,
+        "vectors_upserted": 0,
+        "comparisons_performed": 0,
+        "duplicate_hints_emitted": 0
+      }
+    },
+    "warnings": [
+      "Regional context is still thin compared with daily-life detail."
+    ],
+    "logs": [
+      "Queued research program historical-daily-life.",
+      "Using adapter curated_inputs.",
+      "Processing 2 curated input(s).",
+      "Accepted one practice finding and one institutional finding."
+    ],
+    "latest_job": null,
+    "started_at": "2026-04-12T10:45:00+00:00",
+    "completed_at": "2026-04-12T10:49:00+00:00",
+    "error": null
+  }
+]

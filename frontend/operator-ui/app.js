@@ -1,6 +1,18 @@
 (() => {
   const API = {
     runtimeStatus: "/health/runtime",
+    jobs: "/v1/jobs",
+    job: (jobId) => `/v1/jobs/${jobId}`,
+    cancelJob: (jobId) => `/v1/jobs/${jobId}/cancel`,
+    retryJob: (jobId) => `/v1/jobs/${jobId}/retry`,
+    bibleProfiles: "/v1/bible/profiles",
+    bibleProfile: (projectId) => `/v1/bible/profiles/${projectId}`,
+    bibleSections: "/v1/bible/sections",
+    bibleSection: (sectionId) => `/v1/bible/sections/${sectionId}`,
+    bibleSectionProvenance: (sectionId) => `/v1/bible/sections/${sectionId}/provenance`,
+    regenerateBibleSection: (sectionId) => `/v1/bible/sections/${sectionId}/regenerate`,
+    queueBibleExport: (projectId) => `/v1/bible/exports/${projectId}`,
+    exportBibleProject: (projectId) => `/v1/bible/exports/${projectId}`,
     sources: "/v1/sources",
     runs: "/v1/extraction-runs",
     researchRuns: "/v1/research/runs",
@@ -15,9 +27,11 @@
     claims: "/v1/claims",
     query: "/v1/query",
   };
+  const STORAGE_KEY = "sourcebound.writer-workspace.state";
+  const LEGACY_STORAGE_KEY = "sourcebound.operator.state";
 
   const seed = window.SOURCEBOUND_SEED_DATA;
-  const knownScreens = new Set(["sources", "research", "runs", "review", "claims", "ask"]);
+  const knownScreens = new Set(["workspace", "sources", "research", "bible", "runs", "review", "claims", "ask"]);
   const state = {
     apiBase: normalizeBase(window.SOURCEBOUND_API_BASE || ""),
     activeScreen: currentScreen(),
@@ -26,6 +40,7 @@
     banner: null,
     loading: false,
     runtimeStatus: null,
+    jobs: [],
     sources: clone(seed.sources),
     evidence: clone(seed.evidence),
     candidates: clone(seed.candidates),
@@ -33,6 +48,26 @@
     runs: clone(seed.extractionRuns),
     researchRuns: clone(seed.researchRuns || []),
     researchPrograms: clone(seed.researchPrograms || []),
+    bible: {
+      projectId: seed.bibleProfile?.project_id || "project-greyport",
+      profile: clone(seed.bibleProfile || null),
+      sections: clone(seed.bibleSections || []),
+      selectedSectionId: seed.bibleSections?.[0]?.section_id ?? null,
+      selectedParagraphId: null,
+      selectedProvenance: null,
+      exportBundle: null,
+      exportJobId: null,
+      draft: {
+        section_type: "setting_overview",
+        title: "",
+        focus: seed.bibleProfile?.composition_defaults?.focus || "",
+        statuses: (seed.bibleProfile?.composition_defaults?.include_statuses || ["verified", "probable"]).join(", "),
+        source_types: (seed.bibleProfile?.composition_defaults?.source_types || []).join(", "),
+        place: seed.bibleProfile?.geography || "",
+        time_start: seed.bibleProfile?.time_start || "",
+        time_end: seed.bibleProfile?.time_end || "",
+      },
+    },
     selectedSourceId: seed.sources[0]?.source_id ?? null,
     selectedRunId: seed.extractionRuns[0]?.run_id ?? null,
     selectedResearchRunId: seed.researchRuns?.[0]?.run_id ?? null,
@@ -104,55 +139,72 @@
     connectionSummary: document.getElementById("connection-summary"),
     refreshAll: document.getElementById("refresh-all"),
     metricSources: document.getElementById("metric-sources"),
+    metricLabelSources: document.getElementById("metric-label-sources"),
     metricPending: document.getElementById("metric-pending"),
+    metricLabelPending: document.getElementById("metric-label-pending"),
     metricClaims: document.getElementById("metric-claims"),
+    metricLabelClaims: document.getElementById("metric-label-claims"),
     metricEvidence: document.getElementById("metric-evidence"),
+    metricLabelEvidence: document.getElementById("metric-label-evidence"),
     runtimePanel: document.getElementById("runtime-panel"),
     nav: Array.from(document.querySelectorAll("[data-nav]")),
   };
 
   const screenConfig = {
+    workspace: {
+      title: "Workspace",
+      summary:
+        "See the active writing project, what canon is ready, where the thin spots are, and what to do next.",
+    },
     sources: {
       title: "Sources",
       summary:
-        "Pulled sources feed extraction and review. This view mirrors the live source catalog and the normalized text feeding extraction.",
+        "Supporting utility for source intake, linked evidence, and staged material feeding extraction.",
     },
     runs: {
-      title: "Extraction Runs",
+      title: "Jobs & Runs",
       summary:
-        "Track intake cycles, candidate yield, and backend-reported extraction history.",
+        "Supporting workflow status for extraction, bible composition, export, and other background jobs.",
     },
     research: {
       title: "Research",
       summary:
-        "Scout broad subjects and eras into staged, provenance-rich excerpts before normalization and candidate extraction.",
+        "Run focused research, stage findings into sources, and push the strongest material toward review and composition.",
+    },
+    bible: {
+      title: "Bible",
+      summary:
+        "Shape reviewed canon into editable notebook pages with visible trust boundaries, uncertainty, and provenance.",
     },
     review: {
-      title: "Review Queue",
+      title: "Canon Review",
       summary:
-        "Approve, reject, or override extracted candidates before they become canonical claims.",
+        "Approve, reject, or override extracted candidates before they cross the canon trust boundary.",
     },
     claims: {
       title: "Claims",
       summary:
-        "Inspect approved claims and their evidence links as the canonical output of the review gate.",
+        "Supporting utility for inspecting reviewed claims and their evidence links in detail.",
     },
     ask: {
       title: "Ask",
       summary:
-        "Query approved claims with explicit mode controls and surfaced provenance, not hidden retrieval magic.",
+        "Ask questions against reviewed canon with explicit mode controls and surfaced provenance.",
     },
   };
 
   boot().catch((error) => {
     console.error(error);
-    setBanner("failed", "Startup failed", error.message || "The operator console could not initialize.");
+    setBanner("failed", "Startup failed", error.message || "The writer workspace could not initialize.");
   });
 
   async function boot() {
     bindGlobalEvents();
     hydrateFromStorage();
     await refreshLiveData({ quiet: true });
+    if (state.bible.projectId) {
+      await refreshBibleWorkspace({ quiet: true, projectId: state.bible.projectId });
+    }
     if (state.activeScreen === "research" && state.selectedResearchRunId) {
       await refreshResearchDetail(state.selectedResearchRunId, { quiet: true });
     }
@@ -180,6 +232,8 @@
       const sourceButton = event.target.closest("[data-select-source]");
       const runButton = event.target.closest("[data-select-run]");
       const researchRunButton = event.target.closest("[data-select-research-run]");
+      const bibleSectionButton = event.target.closest("[data-select-bible-section]");
+      const bibleParagraphButton = event.target.closest("[data-select-bible-paragraph]");
       const candidateButton = event.target.closest("[data-select-candidate]");
       const claimButton = event.target.closest("[data-select-claim]");
       const actionButton = event.target.closest("[data-action]");
@@ -204,6 +258,23 @@
         state.researchRunDetail = null;
         render();
         await refreshResearchDetail(state.selectedResearchRunId, { quiet: true });
+        return;
+      }
+
+      if (bibleSectionButton) {
+        state.bible.selectedSectionId = bibleSectionButton.dataset.selectBibleSection;
+        state.bible.selectedParagraphId = null;
+        await loadBibleProvenance(state.bible.selectedSectionId);
+        persistState();
+        render();
+        return;
+      }
+
+      if (bibleParagraphButton) {
+        state.bible.selectedParagraphId = bibleParagraphButton.dataset.selectBibleParagraph;
+        await loadBibleProvenance(state.bible.selectedSectionId);
+        persistState();
+        render();
         return;
       }
 
@@ -271,6 +342,57 @@
         return;
       }
 
+      if (action === "export-bible") {
+        await exportBibleProject();
+        return;
+      }
+
+      if (action === "cancel-job") {
+        await cancelJob(actionButton.dataset.jobId);
+        return;
+      }
+
+      if (action === "retry-job") {
+        await retryJob(actionButton.dataset.jobId);
+        return;
+      }
+
+      if (action === "regenerate-bible-section") {
+        await regenerateBibleSection(state.bible.selectedSectionId);
+        return;
+      }
+
+      if (action === "compose-from-query") {
+        state.bible.draft.focus = state.query.question || state.queryResult?.question || "";
+        state.bible.draft.place = state.query.place || state.bible.profile?.geography || "";
+        state.activeScreen = "bible";
+        location.hash = "#bible";
+        persistState();
+        render();
+        return;
+      }
+
+      if (action === "compose-from-claim") {
+        const claim = state.claims.find((item) => item.claim_id === state.selectedClaimId);
+        state.bible.draft.focus = claim ? `${claim.subject} ${claim.value}` : "";
+        state.bible.draft.place = claim?.place || state.bible.profile?.geography || "";
+        state.activeScreen = "bible";
+        location.hash = "#bible";
+        persistState();
+        render();
+        return;
+      }
+
+      if (action === "compose-from-research") {
+        const run = state.researchRuns.find((item) => item.run_id === state.selectedResearchRunId);
+        state.bible.draft.focus = run?.brief?.topic || "";
+        state.activeScreen = "bible";
+        location.hash = "#bible";
+        persistState();
+        render();
+        return;
+      }
+
       // Submit actions are handled by the form submit listener to avoid duplicate posts.
     });
 
@@ -289,6 +411,21 @@
         event.preventDefault();
         await submitResearchRun(event.target);
       }
+
+      if (event.target.dataset.form === "bible-profile") {
+        event.preventDefault();
+        await submitBibleProfile(event.target);
+      }
+
+      if (event.target.dataset.form === "bible-section") {
+        event.preventDefault();
+        await submitBibleSection(event.target);
+      }
+
+      if (event.target.dataset.form === "bible-section-edit") {
+        event.preventDefault();
+        await submitBibleSectionEdit(event.target);
+      }
     });
 
     nodes.app.addEventListener("change", (event) => {
@@ -304,7 +441,7 @@
 
   function hydrateFromStorage() {
     try {
-      const raw = localStorage.getItem("sourcebound.operator.state");
+      const raw = localStorage.getItem(STORAGE_KEY) || localStorage.getItem(LEGACY_STORAGE_KEY);
       if (!raw) {
         return;
       }
@@ -324,31 +461,40 @@
       if (saved.selectedResearchRunId) {
         state.selectedResearchRunId = saved.selectedResearchRunId;
       }
+      if (saved.bible) {
+        state.bible = {
+          ...state.bible,
+          ...saved.bible,
+          draft: { ...state.bible.draft, ...(saved.bible.draft || {}) },
+        };
+      }
     } catch (error) {
-      console.warn("Could not hydrate operator state", error);
+      console.warn("Could not hydrate workspace state", error);
     }
   }
 
   function persistState() {
     try {
       localStorage.setItem(
-        "sourcebound.operator.state",
+        STORAGE_KEY,
         JSON.stringify({
           query: state.query,
           filters: state.filters,
           runs: state.runs,
           researchDraft: state.researchDraft,
           selectedResearchRunId: state.selectedResearchRunId,
+          bible: state.bible,
         })
       );
+      localStorage.removeItem(LEGACY_STORAGE_KEY);
     } catch (error) {
-      console.warn("Could not persist operator state", error);
+      console.warn("Could not persist workspace state", error);
     }
   }
 
   function currentScreen() {
     const hash = window.location.hash.replace("#", "").trim();
-    return knownScreens.has(hash) ? hash : "sources";
+    return knownScreens.has(hash) ? hash : "workspace";
   }
 
   function normalizeBase(base) {
@@ -443,11 +589,11 @@
   async function refreshLiveData({ quiet = false } = {}) {
     applyLoading(true);
     if (!quiet) {
-      setBanner("pending", "Refreshing", "Pulling live sources, research runs, extraction runs, candidates, and claims from the API.");
+      setBanner("pending", "Refreshing", "Pulling live sources, bible workspace, research runs, extraction runs, candidates, and claims from the API.");
     }
 
     try {
-      const [sourcesResult, researchRunsResult, researchProgramsResult, runsResult, candidatesResult, claimsResult, runtimeResult] =
+      const [sourcesResult, researchRunsResult, researchProgramsResult, runsResult, candidatesResult, claimsResult, runtimeResult, bibleProfilesResult, jobsResult] =
         await Promise.allSettled([
           fetchJson(API.sources),
           fetchJson(API.researchRuns),
@@ -456,6 +602,8 @@
           fetchJson(API.candidates),
           fetchJson(API.claims),
           fetchJson(API.runtimeStatus),
+          fetchJson(API.bibleProfiles),
+          fetchJson(API.jobs),
         ]);
 
       if (sourcesResult.status === "fulfilled") {
@@ -486,14 +634,26 @@
         state.runtimeStatus = runtimeResult.value;
       }
 
-      const online = [sourcesResult, researchRunsResult, researchProgramsResult, runsResult, candidatesResult, claimsResult, runtimeResult].some(
+      if (jobsResult?.status === "fulfilled") {
+        state.jobs = jobsResult.value;
+      }
+
+      if (bibleProfilesResult?.status === "fulfilled") {
+        const profiles = bibleProfilesResult.value;
+        if (profiles.length) {
+          state.bible.projectId = state.bible.projectId || profiles[0].project_id;
+          await refreshBibleWorkspace({ quiet: true, projectId: state.bible.projectId });
+        }
+      }
+
+      const online = [sourcesResult, researchRunsResult, researchProgramsResult, runsResult, candidatesResult, claimsResult, runtimeResult, bibleProfilesResult, jobsResult].some(
         (result) => result.status === "fulfilled"
       );
       const runtimeSummary = summarizeRuntime();
       setApiStatus(
         online,
         online
-          ? runtimeSummary || "Live sources, research runs, extraction runs, candidates, claims, and runtime status loaded."
+          ? runtimeSummary || "Live sources, bible workspace, research runs, extraction runs, candidates, claims, and runtime status loaded."
           : "Using seed data until the API responds."
       );
       updateMetrics();
@@ -505,7 +665,7 @@
           online ? "live" : "queued",
           online ? "Live data synced" : "Seed data retained",
           online
-            ? "Sources, research runs, extraction runs, candidates, and claims refreshed from the backend."
+            ? "Sources, bible workspace, research runs, extraction runs, candidates, and claims refreshed from the backend."
             : "The UI stayed operational with local seed records."
         );
       }
@@ -548,13 +708,28 @@
     if (!state.selectedClaimId && state.claims.length) {
       state.selectedClaimId = state.claims[0].claim_id;
     }
+
+    if (
+      state.bible.selectedSectionId &&
+      !state.bible.sections.some((section) => section.section_id === state.bible.selectedSectionId)
+    ) {
+      state.bible.selectedSectionId = null;
+    }
+
+    if (!state.bible.selectedSectionId && state.bible.sections.length) {
+      state.bible.selectedSectionId = state.bible.sections[0].section_id;
+    }
   }
 
   function updateMetrics() {
     const pendingCount = state.candidates.filter((candidate) => candidate.review_state === "pending").length;
-    nodes.metricSources.textContent = String(state.sources.length);
+    nodes.metricLabelSources.textContent = "Bible sections";
+    nodes.metricSources.textContent = String(state.bible.sections.length);
+    nodes.metricLabelPending.textContent = "Needs review";
     nodes.metricPending.textContent = String(pendingCount);
+    nodes.metricLabelClaims.textContent = "Reviewed canon";
     nodes.metricClaims.textContent = String(state.claims.length);
+    nodes.metricLabelEvidence.textContent = "Evidence snippets";
     nodes.metricEvidence.textContent = String(state.evidence.length);
   }
 
@@ -569,13 +744,17 @@
   }
 
   function renderRuntimeOverview() {
+    if (state.activeScreen !== "workspace") {
+      nodes.runtimePanel.innerHTML = "";
+      return;
+    }
     if (!state.runtimeStatus) {
       nodes.runtimePanel.innerHTML = `
         <div class="runtime-shell">
           <div class="runtime-summary">
             <p class="runtime-kicker">Runtime overview</p>
             <h2>Waiting for backend status</h2>
-            <p>The operator console is still usable with seed data, but the runtime report has not loaded yet.</p>
+            <p>The workspace is still usable with seed data, but the runtime report has not loaded yet.</p>
           </div>
           <div class="helper">The API can expose a live readiness report at <code>/health/runtime</code>.</div>
         </div>
@@ -668,8 +847,12 @@
 
   function renderScreen() {
     switch (state.activeScreen) {
+      case "workspace":
+        return renderWorkspaceScreen();
       case "research":
         return renderResearchScreen();
+      case "bible":
+        return renderBibleScreen();
       case "runs":
         return renderRunsScreen();
       case "review":
@@ -684,6 +867,291 @@
     }
   }
 
+  function renderWorkspaceScreen() {
+    const profile = state.bible.profile;
+    const coverage = buildBibleCoverage(profile, state.bible.sections, state.claims);
+    const selectedSection =
+      state.bible.sections.find((section) => section.section_id === state.bible.selectedSectionId) ??
+      state.bible.sections[0] ??
+      null;
+    const pendingCandidates = state.candidates.filter((candidate) => candidate.review_state === "pending");
+    const thinCoverage = coverage.filter((item) => item.tone === "contested");
+    const researchRunsNeedingAttention = state.researchRuns.filter((run) =>
+      ["queued", "running", "partial"].includes(run.status)
+    );
+    const writerActions = buildWorkspaceActions({
+      profile,
+      pendingCandidates,
+      thinCoverage,
+      selectedSection,
+      researchRunsNeedingAttention,
+    });
+    const activeJobs = collectWorkspaceJobs();
+    const projectPeriod =
+      profile?.era || [profile?.time_start, profile?.time_end].filter(Boolean).join(" to ") || "Not set";
+
+    return `
+      <article class="screen fade-in">
+        <section class="workspace-hero">
+          <div class="workspace-hero-copy">
+            <p class="eyebrow">Active writing project</p>
+            <h2 data-active-screen>${escapeHtml(profile?.project_name || "Set up your first writing project")}</h2>
+            <p class="workspace-lead">
+              ${escapeHtml(
+                profile?.narrative_focus ||
+                  "Define the project focus, review canon, and turn evidence-backed material into usable notebook pages."
+              )}
+            </p>
+            <div class="workspace-hero-actions">
+              <a class="primary-button" href="#research">Start research</a>
+              <a class="secondary-button" href="#review">Review canon</a>
+              <a class="secondary-button" href="#bible">Compose bible</a>
+            </div>
+          </div>
+          <div class="workspace-hero-meta">
+            <div class="workspace-keyline">
+              <span>Place</span>
+              <strong>${escapeHtml(profile?.geography || "Not set")}</strong>
+            </div>
+            <div class="workspace-keyline">
+              <span>Era</span>
+              <strong>${escapeHtml(projectPeriod)}</strong>
+            </div>
+            <div class="workspace-keyline">
+              <span>Trust boundary</span>
+              <strong>Review gates canon; manual text stays separate</strong>
+            </div>
+          </div>
+        </section>
+
+        <section class="workspace-grid">
+          <div class="detail workspace-panel-primary">
+            <div class="detail-head">
+              <div>
+                <h3>Next actions</h3>
+                <div class="detail-note">The shortest route to stronger pages is research, review, compose, then edit.</div>
+              </div>
+              <span class="pill probable">${escapeHtml(writerActions.length)}</span>
+            </div>
+            <div class="workspace-action-list">
+              ${writerActions
+                .map(
+                  (item) => `
+                    <a class="workspace-action" href="#${escapeHtml(item.href)}">
+                      <div>
+                        <strong>${escapeHtml(item.title)}</strong>
+                        <div class="detail-note">${escapeHtml(item.summary)}</div>
+                      </div>
+                      <span class="pill ${escapeHtml(item.tone)}">${escapeHtml(item.badge)}</span>
+                    </a>
+                  `
+                )
+                .join("")}
+            </div>
+          </div>
+
+          <div class="detail">
+            <div class="detail-head">
+              <div>
+                <h3>Canon readiness</h3>
+                <div class="detail-note">One glance at what is strong, thin, or still risky.</div>
+              </div>
+              <span class="pill ${thinCoverage.length ? "contested" : "verified"}">${thinCoverage.length ? "gaps visible" : "usable"}</span>
+            </div>
+            <div class="detail-list">
+              ${coverage
+                .map(
+                  (item) => `
+                    <div class="mini">
+                      <div class="toolbar">
+                        <strong>${escapeHtml(item.label)}</strong>
+                        <span class="pill ${escapeHtml(item.tone)}">${escapeHtml(item.summary)}</span>
+                      </div>
+                      <div class="detail-note">${escapeHtml(item.detail)}</div>
+                    </div>
+                  `
+                )
+                .join("")}
+            </div>
+          </div>
+        </section>
+
+        <section class="workspace-grid">
+          <div class="detail">
+            <div class="detail-head">
+              <div>
+                <h3>Current bible section</h3>
+                <div class="detail-note">Generated canon stays auditable; editable text stays clearly separate.</div>
+              </div>
+              <a class="secondary-button" href="#bible">Open Bible</a>
+            </div>
+            ${
+              selectedSection
+                ? `
+                  <div class="inline-metrics">
+                    <span>${escapeHtml(selectedSection.references.claim_ids.length)} claims</span>
+                    <span>${escapeHtml(selectedSection.references.source_ids.length)} sources</span>
+                    <span>${selectedSection.has_manual_edits ? "manual edit preserved" : "generated only"}</span>
+                  </div>
+                  <div class="workspace-section-preview">
+                    <h4>${escapeHtml(selectedSection.title)}</h4>
+                    <p>${escapeHtml((selectedSection.paragraphs?.[0]?.text || selectedSection.generated_markdown || "No generated material yet.").slice(0, 320))}${(selectedSection.paragraphs?.[0]?.text || selectedSection.generated_markdown || "").length > 320 ? "..." : ""}</p>
+                  </div>
+                  <div class="detail-list">
+                    ${
+                      (selectedSection.coverage_gaps || []).length
+                        ? selectedSection.coverage_gaps
+                            .slice(0, 3)
+                            .map((item) => `<div class="warning">${escapeHtml(item)}</div>`)
+                            .join("")
+                        : "<div class='helper'>No coverage gaps recorded for the selected section.</div>"
+                    }
+                  </div>
+                `
+                : "<div class='helper'>No bible section exists yet. Compose one once reviewed canon is ready.</div>"
+            }
+          </div>
+
+          <div class="detail">
+            <div class="detail-head">
+              <div>
+                <h3>Workflow status</h3>
+                <div class="detail-note">Jobs stay visible here as support, not the main event.</div>
+              </div>
+              <a class="secondary-button" href="#runs">Open utilities</a>
+            </div>
+            <div class="detail-list">
+              ${
+                activeJobs.length
+                  ? activeJobs
+                      .slice(0, 5)
+                      .map(
+                        (item) => `
+                          <div class="mini">
+                            <div class="toolbar">
+                              <strong>${escapeHtml(item.label)}</strong>
+                              ${renderJobPill(item.job)}
+                            </div>
+                            <div class="detail-note">${escapeHtml(item.summary)}</div>
+                          </div>
+                        `
+                      )
+                      .join("")
+                  : "<div class='helper'>No active or recent jobs need attention.</div>"
+              }
+            </div>
+          </div>
+        </section>
+      </article>
+    `;
+  }
+
+  function buildWorkspaceActions({ profile, pendingCandidates, thinCoverage, selectedSection, researchRunsNeedingAttention }) {
+    const actions = [];
+    if (!profile?.project_name) {
+      actions.push({
+        title: "Set the active project profile",
+        summary: "Add place, era, and narrative focus so research and composition aim at the same book.",
+        href: "bible",
+        tone: "queued",
+        badge: "setup",
+      });
+    }
+    if (pendingCandidates.length) {
+      actions.push({
+        title: "Review pending canon candidates",
+        summary: `${pendingCandidates.length} extracted claims are waiting at the trust boundary before they can feed the bible.`,
+        href: "review",
+        tone: "probable",
+        badge: `${pendingCandidates.length} pending`,
+      });
+    }
+    if (thinCoverage.length) {
+      actions.push({
+        title: "Close the thinnest research gaps",
+        summary: `${thinCoverage[0].label} is still thin. Run research before the next compose pass to get fuller scene material.`,
+        href: "research",
+        tone: "contested",
+        badge: `${thinCoverage.length} thin`,
+      });
+    }
+    if (selectedSection) {
+      actions.push({
+        title: "Regenerate or edit the live bible section",
+        summary: `${selectedSection.title} already has canon attached. Refresh the generated draft or continue manual shaping without losing provenance.`,
+        href: "bible",
+        tone: selectedSection.has_manual_edits ? "author_choice" : "verified",
+        badge: selectedSection.has_manual_edits ? "manual text" : "ready",
+      });
+    } else {
+      actions.push({
+        title: "Compose the first bible section",
+        summary: "Turn reviewed canon into a writer-facing section with visible uncertainty and provenance.",
+        href: "bible",
+        tone: "queued",
+        badge: "compose",
+      });
+    }
+    if (researchRunsNeedingAttention.length) {
+      actions.push({
+        title: "Check in-flight research",
+        summary: `${researchRunsNeedingAttention.length} research run${researchRunsNeedingAttention.length === 1 ? "" : "s"} still need staging, extraction, or review follow-through.`,
+        href: "research",
+        tone: "queued",
+        badge: "running",
+      });
+    }
+    if (!actions.length) {
+      actions.push({
+        title: "Ask canon a drafting question",
+        summary: "The project is in a healthy state. Use Ask to pressure-test the approved record before drafting a scene.",
+        href: "ask",
+        tone: "verified",
+        badge: "ready",
+      });
+    }
+    return actions.slice(0, 4);
+  }
+
+  function collectWorkspaceJobs() {
+    const jobs = [];
+    const seen = new Set();
+    for (const job of state.jobs || []) {
+      if (!job?.job_id || seen.has(job.job_id)) continue;
+      seen.add(job.job_id);
+      jobs.push({
+        label: titleize((job.job_type || "background_job").replaceAll("_", " ")),
+        summary: job.checkpoint || job.error_detail || job.error || "Background workflow status is available.",
+        job,
+      });
+    }
+    for (const section of state.bible.sections || []) {
+      const job = section.latest_job;
+      if (!job?.job_id || seen.has(job.job_id)) continue;
+      seen.add(job.job_id);
+      jobs.push({
+        label: `${section.title} ${titleize((job.job_type || "job").replaceAll("_", " "))}`.trim(),
+        summary: job.checkpoint || renderJobSummary(job),
+        job,
+      });
+    }
+    for (const run of state.researchRuns || []) {
+      const job = run.latest_job;
+      if (!job?.job_id || seen.has(job.job_id)) continue;
+      seen.add(job.job_id);
+      jobs.push({
+        label: run.brief?.topic || run.run_id || "Research run",
+        summary: job.checkpoint || renderJobSummary(job),
+        job,
+      });
+    }
+    return jobs.sort((left, right) => {
+      const leftTime = Date.parse(left.job.updated_at || left.job.finished_at || left.job.started_at || "") || 0;
+      const rightTime = Date.parse(right.job.updated_at || right.job.finished_at || right.job.started_at || "") || 0;
+      return rightTime - leftTime;
+    });
+  }
+
   function renderSourcesScreen() {
     const selected = state.sources.find((source) => source.source_id === state.selectedSourceId) ?? state.sources[0];
     const linkedEvidence = state.evidence.filter((snippet) => snippet.source_id === selected?.source_id);
@@ -696,7 +1164,7 @@
         <div class="screen-head">
           <div>
             <h2 data-active-screen>Sources</h2>
-            <p>Source intake is the operator starting point. Pull from Zotero when you want live source records; use the seed list when the backend is still in file-backed mode.</p>
+            <p>Use source intake when you need to inspect imported material feeding the writing workflow. Pull from Zotero for live records or inspect the seed catalog while the backend is file-backed.</p>
           </div>
           <div class="screen-actions">
             <button class="secondary-button" type="button" data-action="pull-sources">Pull Zotero sources</button>
@@ -1014,6 +1482,7 @@
                           </div>
                           <div class="row-meta">
                             <span class="pill ${escapeHtml(run.status)}">${escapeHtml(run.status)}</span>
+                            ${renderJobPill(run.latest_job)}
                             <span class="code">${escapeHtml(run.program_id)}</span>
                           </div>
                           <div class="row-meta">${escapeHtml(run.accepted_count)} accepted · ${escapeHtml(run.rejected_count)} rejected</div>
@@ -1047,7 +1516,10 @@
           <h3>${escapeHtml(run.brief.topic)}</h3>
           <div class="detail-note">${escapeHtml(run.run_id)} · ${escapeHtml(program?.name || run.program_id)}</div>
         </div>
-        <span class="pill ${escapeHtml(run.status)}">${escapeHtml(run.status)}</span>
+        <div class="toolbar">
+          ${renderJobPill(run.latest_job)}
+          <span class="pill ${escapeHtml(run.status)}">${escapeHtml(run.status)}</span>
+        </div>
       </div>
       <div class="inline-metrics">
         <span>${escapeHtml(run.accepted_count)} accepted</span>
@@ -1060,7 +1532,10 @@
         <button class="secondary-button" type="button" data-action="refresh-research">Refresh detail</button>
         <button class="secondary-button" type="button" data-action="stage-research">Stage accepted findings</button>
         <button class="primary-button" type="button" data-action="extract-research">Stage + extract</button>
+        <button class="secondary-button" type="button" data-action="compose-from-research">Compose section</button>
+        ${renderJobControls(run.latest_job)}
       </div>
+      ${renderJobDiagnostic(run.latest_job)}
       <div class="detail-grid">
         <div class="field">
           <label>Time window</label>
@@ -1296,6 +1771,590 @@
     `;
   }
 
+  function renderBibleScreen() {
+    const profile = state.bible.profile;
+    const selected = state.bible.sections.find((section) => section.section_id === state.bible.selectedSectionId) ?? state.bible.sections[0];
+    const coverage = buildBibleCoverage(profile, state.bible.sections, state.claims);
+    const readyForBible = state.claims.filter((claim) => claim.status !== "rumor" && claim.status !== "legend").length;
+
+    return `
+      <article class="screen fade-in">
+        <div class="screen-head">
+          <div>
+            <h2 data-active-screen>Bible</h2>
+            <p>The bible workspace turns reviewed canon into writer-facing sections. Every section keeps its provenance visible, keeps uncertainty explicit, and can be regenerated without silently overwriting manual edits.</p>
+          </div>
+          <div class="screen-actions">
+            <button class="secondary-button" type="button" data-action="export-bible">Export saved bible</button>
+          </div>
+        </div>
+
+        <section class="hero-surface bible-hero">
+          <div>
+            <p class="eyebrow">Solo author workflow</p>
+            <h3>${escapeHtml(profile?.project_name || "No bible profile yet")}</h3>
+            <p>${escapeHtml(profile?.narrative_focus || "Anchor the period, track what is true, and keep rumors and author choices visibly separate.")}</p>
+          </div>
+          <div class="funnel">
+            <div><strong>${state.candidates.filter((candidate) => candidate.review_state === "pending").length}</strong><span>Needs review</span></div>
+            <div><strong>${readyForBible}</strong><span>Ready for bible</span></div>
+            <div><strong>${coverage.filter((item) => item.tone === "contested").length}</strong><span>Missing coverage</span></div>
+          </div>
+        </section>
+
+        ${state.bible.exportBundle
+          ? `
+            <section class="detail">
+              <div class="detail-head">
+                <div>
+                  <h3>Latest Export Bundle</h3>
+                  <div class="detail-note">Exports now run as background jobs. This panel shows the latest completed bundle returned by the worker.</div>
+                </div>
+                <span class="pill verified">${escapeHtml(state.bible.exportBundle.sections?.length || 0)} sections</span>
+              </div>
+              <div class="detail-grid">
+                <div class="field">
+                  <label>Project</label>
+                  <div>${escapeHtml(state.bible.exportBundle.profile?.project_name || "n/a")}</div>
+                </div>
+                <div class="field">
+                  <label>Generated</label>
+                  <div>${escapeHtml(state.bible.exportBundle.generated_at || "n/a")}</div>
+                </div>
+              </div>
+            </section>
+          `
+          : ""}
+
+        <div class="split">
+          <div class="detail-stack">
+            <form class="detail" data-form="bible-profile">
+              <div class="detail-head">
+                <div>
+                  <h3>Project profile</h3>
+                  <div class="detail-note">This drives section defaults, tone, and coverage expectations for one active historical-fiction project.</div>
+                </div>
+                <span class="pill probable">profile</span>
+              </div>
+              <div class="detail-grid">
+                <div class="field">
+                  <label for="bible-project-name">Project name</label>
+                  <input id="bible-project-name" name="project_name" value="${escapeHtml(profile?.project_name || "")}" placeholder="Greyport Bible" required />
+                </div>
+                <div class="field">
+                  <label for="bible-era">Era</label>
+                  <input id="bible-era" name="era" value="${escapeHtml(profile?.era || "")}" placeholder="1421-1422 winter shortage" />
+                </div>
+                <div class="field">
+                  <label for="bible-geography">Geography</label>
+                  <input id="bible-geography" name="geography" value="${escapeHtml(profile?.geography || "")}" placeholder="Rouen" />
+                </div>
+                <div class="field">
+                  <label for="bible-social-lens">Social lens</label>
+                  <input id="bible-social-lens" name="social_lens" value="${escapeHtml(profile?.social_lens || "")}" placeholder="market workers, clerks, dockhands" />
+                </div>
+                <div class="field">
+                  <label for="bible-focus">Narrative focus</label>
+                  <input id="bible-focus" name="narrative_focus" value="${escapeHtml(profile?.narrative_focus || "")}" placeholder="scarcity, ritual, rumor" />
+                </div>
+                <div class="field">
+                  <label for="bible-tone">Tone</label>
+                  <select id="bible-tone" name="tone">
+                    ${renderSelectOptions([
+                      ["documentary", "documentary"],
+                      ["grounded_literary", "grounded literary"],
+                      ["rumor_rich_folkloric", "rumor-rich / folkloric"],
+                      ["mixed_historical_fiction", "mixed historical-fiction"],
+                    ], profile?.tone || "grounded_literary")}
+                  </select>
+                </div>
+                <div class="field">
+                  <label for="bible-time-start">Time start</label>
+                  <input id="bible-time-start" name="time_start" value="${escapeHtml(profile?.time_start || "")}" placeholder="1421-12-01" />
+                </div>
+                <div class="field">
+                  <label for="bible-time-end">Time end</label>
+                  <input id="bible-time-end" name="time_end" value="${escapeHtml(profile?.time_end || "")}" placeholder="1422-02-28" />
+                </div>
+                <div class="field">
+                  <label for="bible-facets">Desired facets</label>
+                  <input id="bible-facets" name="desired_facets" value="${escapeHtml((profile?.desired_facets || []).join(", "))}" placeholder="daily life, institutions, economics" />
+                </div>
+                <div class="field">
+                  <label for="bible-taboo">Taboo / excluded areas</label>
+                  <input id="bible-taboo" name="taboo_topics" value="${escapeHtml((profile?.taboo_topics || []).join(", "))}" placeholder="anachronistic slang, clean myths" />
+                </div>
+                <div class="field">
+                  <label for="bible-statuses">Default certainty buckets</label>
+                  <input id="bible-statuses" name="include_statuses" value="${escapeHtml((profile?.composition_defaults?.include_statuses || ["verified", "probable"]).join(", "))}" placeholder="verified, probable" />
+                </div>
+                <div class="field">
+                  <label for="bible-source-types">Default source types</label>
+                  <input id="bible-source-types" name="source_types" value="${escapeHtml((profile?.composition_defaults?.source_types || []).join(", "))}" placeholder="record, chronicle, archive" />
+                </div>
+              </div>
+              <div class="toolbar">
+                <button class="primary-button" type="submit">Save project profile</button>
+              </div>
+            </form>
+
+            <div class="detail">
+              <div class="detail-head">
+                <div>
+                  <h3>Coverage map</h3>
+                  <div class="detail-note">Thin, strong, and rumor-heavy areas stay visible so the writer can decide whether to research more or draft anyway.</div>
+                </div>
+                <span class="pill ${coverage.some((item) => item.tone === "contested") ? "contested" : "verified"}">${escapeHtml(coverage.length)}</span>
+              </div>
+              <div class="detail-list">
+                ${coverage.map((item) => `
+                  <div class="mini">
+                    <div class="toolbar">
+                      <strong>${escapeHtml(item.label)}</strong>
+                      <span class="pill ${escapeHtml(item.tone)}">${escapeHtml(item.summary)}</span>
+                    </div>
+                    <div class="detail-note">${escapeHtml(item.detail)}</div>
+                  </div>
+                `).join("")}
+              </div>
+            </div>
+
+            <form class="detail" data-form="bible-section">
+              <div class="detail-head">
+                <div>
+                  <h3>Compose section</h3>
+                  <div class="detail-note">Use section type, certainty, and source filters to generate a writer-facing draft from approved claims.</div>
+                </div>
+                <span class="pill queued">compose</span>
+              </div>
+              <div class="detail-grid">
+                <div class="field">
+                  <label for="bible-section-type">Section type</label>
+                  <select id="bible-section-type" name="section_type">
+                    ${renderSelectOptions([
+                      ["setting_overview", "setting overview"],
+                      ["chronology", "chronology / timeline"],
+                      ["people_and_factions", "people / factions"],
+                      ["daily_life", "daily life / practices"],
+                      ["institutions_and_politics", "institutions / politics"],
+                      ["economics_and_material_culture", "economics / material culture"],
+                      ["rumors_and_contested_accounts", "rumors / contested accounts"],
+                      ["author_decisions", "author decisions"],
+                    ], state.bible.draft.section_type)}
+                  </select>
+                </div>
+                <div class="field">
+                  <label for="bible-section-title">Custom title</label>
+                  <input id="bible-section-title" name="title" value="${escapeHtml(state.bible.draft.title)}" placeholder="Optional custom title" />
+                </div>
+                <div class="field">
+                  <label for="bible-section-focus">Focus</label>
+                  <input id="bible-section-focus" name="focus" value="${escapeHtml(state.bible.draft.focus)}" placeholder="bread prices, dock rumors, shrine rituals" />
+                </div>
+                <div class="field">
+                  <label for="bible-section-statuses">Certainty buckets</label>
+                  <input id="bible-section-statuses" name="statuses" value="${escapeHtml(state.bible.draft.statuses)}" placeholder="verified, probable" />
+                </div>
+                <div class="field">
+                  <label for="bible-section-source-types">Source types</label>
+                  <input id="bible-section-source-types" name="source_types" value="${escapeHtml(state.bible.draft.source_types)}" placeholder="record, chronicle, oral_history" />
+                </div>
+                <div class="field">
+                  <label for="bible-section-place">Place</label>
+                  <input id="bible-section-place" name="place" value="${escapeHtml(state.bible.draft.place)}" placeholder="Rouen" />
+                </div>
+                <div class="field">
+                  <label for="bible-section-time-start">Time start</label>
+                  <input id="bible-section-time-start" name="time_start" value="${escapeHtml(state.bible.draft.time_start)}" placeholder="1421-12-01" />
+                </div>
+                <div class="field">
+                  <label for="bible-section-time-end">Time end</label>
+                  <input id="bible-section-time-end" name="time_end" value="${escapeHtml(state.bible.draft.time_end)}" placeholder="1422-02-28" />
+                </div>
+              </div>
+              <div class="toolbar">
+                <button class="primary-button" type="submit">Compose section</button>
+                <span class="helper">Approved canon only. Rumor, contested material, and author choices stay visibly labeled.</span>
+              </div>
+            </form>
+
+            <div class="surface list">
+              ${state.bible.sections.length
+                ? state.bible.sections.map((section) => `
+                  <button class="list-row ${section.section_id === selected?.section_id ? "is-selected" : ""}" type="button" data-select-bible-section="${escapeHtml(section.section_id)}">
+                    <div>
+                      <div class="row-title">${escapeHtml(section.title)}</div>
+                      <div class="row-subtitle">${escapeHtml(section.section_type.replaceAll("_", " "))}</div>
+                    </div>
+                    <div class="row-meta">
+                      <span class="pill ${section.has_manual_edits ? "author_choice" : "verified"}">${section.has_manual_edits ? "edited" : "generated"}</span>
+                      ${renderJobPill(section.latest_job)}
+                      <span class="code">${escapeHtml(section.section_id)}</span>
+                    </div>
+                    <div class="row-meta">${escapeHtml(section.references.claim_ids.length)} claims · ${escapeHtml(section.references.source_ids.length)} sources</div>
+                  </button>
+                `).join("")
+                : "<div class='helper' style='padding:14px;'>No bible sections yet. Compose the first one from approved claims.</div>"}
+            </div>
+          </div>
+
+          <aside class="detail">
+            ${selected ? renderBibleSectionDetail(selected) : "<div class='helper'>No bible section selected.</div>"}
+          </aside>
+        </div>
+      </article>
+    `;
+  }
+
+  function renderBibleSectionDetail(section) {
+    const provenance = state.bible.selectedProvenance;
+    const selectedParagraph =
+      provenance?.paragraphs?.find((item) => item.paragraph?.paragraph_id === state.bible.selectedParagraphId) ||
+      provenance?.paragraphs?.[0] ||
+      null;
+    const manualMode = section.has_manual_edits ? "manual override active" : "generated working copy";
+    const manualCallout = section.has_manual_edits
+      ? "The editable text below is the author's working override. Regeneration refreshes the generated draft above and preserves this manual text."
+      : "The editable text below currently mirrors the generated draft. Once you change it, the editor becomes a manual override that can diverge from regenerated canon synthesis.";
+    return `
+      <div class="detail-head">
+        <div>
+          <h3>${escapeHtml(section.title)}</h3>
+          <div class="detail-note">${escapeHtml(section.section_type.replaceAll("_", " "))} · ${escapeHtml(section.project_id)}</div>
+        </div>
+        <div class="toolbar">
+          ${renderJobPill(section.latest_job)}
+          <span class="pill ${section.has_manual_edits ? "author_choice" : "verified"}">${section.has_manual_edits ? "manual edits" : "generated"}</span>
+        </div>
+      </div>
+      <div class="inline-metrics">
+        <span>${escapeHtml(section.references.claim_ids.length)} claims</span>
+        <span>${escapeHtml(section.references.source_ids.length)} sources</span>
+        <span>${escapeHtml(section.references.evidence_ids.length)} evidence</span>
+      </div>
+      <div class="toolbar">
+        <button class="secondary-button" type="button" data-action="regenerate-bible-section">Regenerate section</button>
+        ${renderJobControls(section.latest_job)}
+      </div>
+      ${renderJobDiagnostic(section.latest_job)}
+      <section class="trust-zone trust-zone-generated">
+        <div class="trust-zone-head">
+          <div>
+            <h4>Generated Canon Synthesis</h4>
+            <div class="detail-note">These cards and the draft snapshot are generated from approved canon. Paragraph provenance only explains this generated synthesis.</div>
+          </div>
+          <span class="pill verified">generated draft</span>
+        </div>
+        <div class="trust-callout trust-callout-generated">Regeneration refreshes this evidence-backed draft. It never silently rewrites manual author text.</div>
+        <div class="field">
+          <label>Generated draft snapshot</label>
+          <div class="draft-preview">${escapeHtml(section.generated_markdown || "No generated draft yet.")}</div>
+        </div>
+        <div class="field">
+          <label>Generated reading view</label>
+          ${renderBibleGeneratedReadingView(section)}
+        </div>
+        <div class="field">
+          <label>Generated paragraph cards</label>
+          ${renderBibleGeneratedParagraphCards(section)}
+        </div>
+      </section>
+      <section class="trust-zone trust-zone-manual">
+        <div class="trust-zone-head">
+          <div>
+            <h4>${section.has_manual_edits ? "Manual Override Text" : "Editable Working Text"}</h4>
+            <div class="detail-note">This is the author's writable surface. It may stay aligned with the generated draft or intentionally diverge from it.</div>
+          </div>
+          <span class="pill ${section.has_manual_edits ? "author_choice" : "probable"}">${escapeHtml(manualMode)}</span>
+        </div>
+        <div class="trust-callout ${section.has_manual_edits ? "trust-callout-manual" : "trust-callout-neutral"}">${escapeHtml(manualCallout)}</div>
+        <form data-form="bible-section-edit">
+          <input type="hidden" name="section_id" value="${escapeHtml(section.section_id)}" />
+          <div class="field" style="margin-bottom:10px;">
+            <label for="bible-edit-title">Title</label>
+            <input id="bible-edit-title" name="title" value="${escapeHtml(section.title)}" />
+          </div>
+          <div class="field">
+            <label>${section.has_manual_edits ? "Author-edited full text" : "Working text editor"}</label>
+            <textarea name="content" class="bible-editor">${escapeHtml(section.content)}</textarea>
+          </div>
+          <div class="toolbar">
+            <button class="primary-button" type="submit">Save edits</button>
+            <span class="helper">${section.has_manual_edits ? "Manual edits are preserved even when the generated draft refreshes." : "Saving here creates an explicit manual override."}</span>
+          </div>
+        </form>
+      </section>
+      <section class="trust-zone trust-zone-provenance">
+        <div class="trust-zone-head">
+          <div>
+            <h4>Why This Section Says This</h4>
+            <div class="detail-note">This drill-down explains why a selected generated paragraph exists. It does not justify arbitrary manual rewrites in the editor.</div>
+          </div>
+          <span class="pill queued">generated only</span>
+        </div>
+        <div class="provenance-scope-note">Select a generated paragraph card above to inspect supporting claims, evidence snippets, source titles, and contradictions or supersessions.</div>
+        ${selectedParagraph ? renderBibleParagraphProvenance(selectedParagraph, provenance) : "<div class='helper'>Select a generated paragraph to inspect why it exists.</div>"}
+      </section>
+      <div class="field">
+        <label>Coverage and trust</label>
+        <div class="warning-list">
+          ${(section.coverage_gaps || []).map((item) => `<div class="warning">${escapeHtml(item)}</div>`).join("") || "<div class='helper'>No coverage gaps recorded.</div>"}
+          ${(section.contradiction_flags || []).map((item) => `<div class="warning">${escapeHtml(item)}</div>`).join("")}
+        </div>
+      </div>
+      <div class="field">
+        <label>Coverage analysis</label>
+        <div class="detail-list">
+          <div class="mini">
+            <div class="detail-note">facet distribution</div>
+            <div>${escapeHtml(renderKeyValueMap(section.coverage_analysis?.facet_distribution || {}))}</div>
+          </div>
+          <div class="mini">
+            <div class="detail-note">certainty mix</div>
+            <div>${escapeHtml(renderKeyValueMap(section.coverage_analysis?.certainty_mix || {}))}</div>
+          </div>
+          <div class="mini">
+            <div class="detail-note">diagnostic</div>
+            <div>${escapeHtml(section.coverage_analysis?.diagnostic_summary || "No diagnostic summary.")}</div>
+          </div>
+          <div class="mini">
+            <div class="detail-note">retrieval</div>
+            <div>${escapeHtml(renderRetrievalSummary(section.retrieval_metadata || {}))}</div>
+          </div>
+        </div>
+      </div>
+      <div class="field">
+        <label>Recommended next research</label>
+        <div class="detail-list">
+          ${(section.recommended_next_research || []).length
+            ? section.recommended_next_research.map((item) => `<div class="mini">${escapeHtml(item)}</div>`).join("")
+            : "<div class='helper'>No follow-up research recommendations.</div>"}
+        </div>
+      </div>
+    `;
+  }
+
+  function renderBibleGeneratedParagraphCards(section) {
+    const paragraphs = section.paragraphs || [];
+    if (!paragraphs.length) {
+      return "<div class='helper'>No generated paragraphs yet.</div>";
+    }
+    return `
+      <div class="paragraph-grid">
+        ${paragraphs.map((paragraph) => `
+          <button class="paragraph-card ${paragraph.paragraph_id === state.bible.selectedParagraphId ? "is-selected" : ""}" type="button" data-select-bible-paragraph="${escapeHtml(paragraph.paragraph_id)}">
+            <div class="paragraph-card-head">
+              <div class="row-title">${escapeHtml(paragraph.heading || paragraph.paragraph_kind)}</div>
+              <span class="pill verified">generated</span>
+            </div>
+            <div class="paragraph-card-text">${escapeHtml(paragraph.text)}</div>
+            <div class="paragraph-card-meta">
+              <span>${escapeHtml(paragraph.claim_ids.length)} claims</span>
+              <span>${escapeHtml(paragraph.source_ids.length)} sources</span>
+              <span>${escapeHtml(paragraph.evidence_ids.length)} evidence</span>
+            </div>
+          </button>
+        `).join("")}
+      </div>
+    `;
+  }
+
+  function renderBibleGeneratedReadingView(section) {
+    const paragraphs = section.paragraphs || [];
+    if (!paragraphs.length) {
+      return "<div class='helper'>No generated reading view yet.</div>";
+    }
+    return `
+      <div class="linked-draft">
+        ${paragraphs.map((paragraph) => `
+          <button class="linked-draft-paragraph ${paragraph.paragraph_id === state.bible.selectedParagraphId ? "is-selected" : ""}" type="button" data-select-bible-paragraph="${escapeHtml(paragraph.paragraph_id)}">
+            ${paragraph.heading ? `<div class="linked-draft-heading">${escapeHtml(paragraph.heading)}</div>` : ""}
+            <div class="linked-draft-text">${escapeHtml(paragraph.text)}</div>
+            <div class="linked-draft-meta">
+              <span>${escapeHtml(paragraph.claim_ids.length)} claims</span>
+              <span>${escapeHtml(paragraph.source_ids.length)} sources</span>
+              <span>${escapeHtml(paragraph.evidence_ids.length)} evidence</span>
+            </div>
+          </button>
+        `).join("")}
+      </div>
+    `;
+  }
+
+  function renderBibleParagraphProvenance(selectedParagraph, provenance) {
+    const paragraph = selectedParagraph.paragraph || {};
+    const scopeTone =
+      selectedParagraph.provenance_scope === "author_guidance"
+        ? "author_choice"
+        : selectedParagraph.provenance_scope === "contested_context"
+          ? "contested"
+          : "verified";
+    return `
+      <div class="detail-list">
+        <div class="mini">
+          <div class="toolbar">
+            <div class="detail-note">generated paragraph</div>
+            <span class="pill ${escapeHtml(scopeTone)}">${escapeHtml((selectedParagraph.provenance_scope || "canon_support").replaceAll("_", " "))}</span>
+          </div>
+          <div>${escapeHtml(paragraph.text || "")}</div>
+        </div>
+        <div class="mini">
+          <div class="detail-note">why this paragraph exists</div>
+          <div>${escapeHtml(selectedParagraph.why_this_paragraph_exists || "No summary recorded.")}</div>
+        </div>
+        <div class="mini">
+          <div class="detail-note">supporting claims</div>
+          <div class="detail-list">
+            ${selectedParagraph.claim_details?.length
+              ? selectedParagraph.claim_details.map((claim) => `
+                  <div class="mini">
+                    <div class="toolbar">
+                      <strong>${escapeHtml(claim.summary || `${claim.subject} ${claim.value}`)}</strong>
+                      <span class="pill ${escapeHtml(claim.status || "probable")}">${escapeHtml((claim.status || "unknown").replaceAll("_", " "))}</span>
+                    </div>
+                    <div class="detail-note">${escapeHtml((claim.claim_kind || "claim").replaceAll("_", " "))}${claim.place ? ` · ${escapeHtml(claim.place)}` : ""}${claim.time_start ? ` · ${escapeHtml(claim.time_start)}` : ""}${claim.viewpoint_scope ? ` · ${escapeHtml(claim.viewpoint_scope)}` : ""}</div>
+                    ${claim.notes ? `<div>${escapeHtml(claim.notes)}</div>` : ""}
+                  </div>
+                `).join("")
+              : "<div class='helper'>No claim detail recorded.</div>"}
+          </div>
+        </div>
+        <div class="mini">
+          <div class="detail-note">evidence snippets</div>
+          <div class="detail-list">
+            ${selectedParagraph.evidence_details?.length
+              ? selectedParagraph.evidence_details.map((item) => `
+                  <div class="mini">
+                    <div class="toolbar">
+                      <strong>${escapeHtml(item.source_title || item.source_id || "source")}</strong>
+                      <span class="pill probable">${escapeHtml(item.source_type || "source")}</span>
+                    </div>
+                    <div class="detail-note">${escapeHtml(item.locator || "locator unavailable")}</div>
+                    <div>${escapeHtml(item.snippet || "")}</div>
+                  </div>
+                `).join("")
+              : "<div class='helper'>No evidence snippets linked.</div>"}
+          </div>
+        </div>
+        <div class="mini">
+          <div class="detail-note">contradictions and supersessions</div>
+          <div class="detail-list">
+            ${renderRelationshipDetails(selectedParagraph, provenance)}
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  function renderRelationshipDetails(selectedParagraph, provenance) {
+    const contradictionItems = selectedParagraph.contradiction_details || [];
+    const supersessionItems = selectedParagraph.supersession_details || [];
+    const fallbackContext = [
+      ...(selectedParagraph.contradiction_context || []),
+      ...(selectedParagraph.supersession_context || []),
+      ...(provenance?.relationships || []),
+    ];
+    if (!contradictionItems.length && !supersessionItems.length && !fallbackContext.length) {
+      return "<div class='helper'>No contradictions or supersessions linked.</div>";
+    }
+    return [
+      ...contradictionItems.map((item) => `
+        <div class="mini">
+          <div class="toolbar">
+            <strong>Contradiction</strong>
+            <span class="pill contested">contradicts</span>
+          </div>
+          <div>${escapeHtml(item.related_claim_summary || item.related_claim_id || "related claim")}</div>
+          ${item.notes ? `<div class="detail-note">${escapeHtml(item.notes)}</div>` : ""}
+        </div>
+      `),
+      ...supersessionItems.map((item) => `
+        <div class="mini">
+          <div class="toolbar">
+            <strong>Supersession</strong>
+            <span class="pill queued">${escapeHtml((item.relationship_type || "supersedes").replaceAll("_", " "))}</span>
+          </div>
+          <div>${escapeHtml(item.related_claim_summary || item.related_claim_id || "related claim")}</div>
+          ${item.notes ? `<div class="detail-note">${escapeHtml(item.notes)}</div>` : ""}
+        </div>
+      `),
+      ...(!contradictionItems.length && !supersessionItems.length
+        ? fallbackContext.map((item) => `<div class="mini"><div>${escapeHtml(item)}</div></div>`)
+        : []),
+    ].join("");
+  }
+
+  function renderRetrievalSummary(metadata) {
+    if (!metadata || !Object.keys(metadata).length) {
+      return "memory ranking";
+    }
+    const backend = metadata.retrieval_backend || "memory";
+    const strategy = metadata.ranking_strategy || "lexical";
+    const fallback = metadata.fallback_used ? ` · fallback ${metadata.fallback_reason || "used"}` : "";
+    return `${backend} · ${strategy}${fallback}`;
+  }
+
+  function renderJobControls(job) {
+    if (!job) {
+      return "";
+    }
+    if (["queued", "running"].includes(job.status_label || job.status)) {
+      return `<button class="secondary-button" type="button" data-action="cancel-job" data-job-id="${escapeHtml(job.job_id)}">Cancel job</button>`;
+    }
+    if ((job.status_label || job.status) === "failed" && job.retryable) {
+      return `<button class="secondary-button" type="button" data-action="retry-job" data-job-id="${escapeHtml(job.job_id)}">Retry job</button>`;
+    }
+    return "";
+  }
+
+  function renderJobDiagnostic(job) {
+    if (!job) {
+      return "";
+    }
+    const warnings = job.warnings || [];
+    if ((job.status_label || job.status) === "failed") {
+      return `<div class="warning">${escapeHtml(job.error_detail || job.error || "Background job failed.")}</div>`;
+    }
+    if (warnings.length) {
+      return warnings.map((warning) => `<div class="warning">${escapeHtml(warning)}</div>`).join("");
+    }
+    return "";
+  }
+
+  function buildBibleCoverage(profile, sections, claims) {
+    const sectionTypes = [
+      ["setting_overview", "Setting"],
+      ["chronology", "Chronology"],
+      ["people_and_factions", "People"],
+      ["daily_life", "Daily life"],
+      ["institutions_and_politics", "Institutions"],
+      ["economics_and_material_culture", "Economics"],
+      ["rumors_and_contested_accounts", "Rumor ledger"],
+      ["author_decisions", "Author decisions"],
+    ];
+    return sectionTypes.map(([type, label]) => {
+      const section = sections.find((item) => item.section_type === type);
+      const matchingClaims = claims.filter((claim) => {
+        if (type === "rumors_and_contested_accounts") {
+          return ["rumor", "legend", "contested"].includes(claim.status);
+        }
+        if (type === "author_decisions") {
+          return claim.status === "author_choice" || claim.author_choice;
+        }
+        return true;
+      });
+      const weak = !section || (section.coverage_gaps || []).length;
+      return {
+        label,
+        tone: weak ? "contested" : "verified",
+        summary: weak ? "thin" : "strong",
+        detail: section
+          ? `${section.references.claim_ids.length} claims tracked${section.coverage_analysis?.diagnostic_summary ? ` · ${section.coverage_analysis.diagnostic_summary}` : section.coverage_gaps?.length ? ` · ${section.coverage_gaps[0]}` : ""}${section.latest_job ? ` · ${renderJobSummary(section.latest_job)}` : ""}`
+          : `No saved section yet. ${matchingClaims.length} claims could support this area for ${profile?.project_name || "the current project"}.`,
+      };
+    });
+  }
+
   function renderRunsScreen() {
     const selected = state.runs.find((run) => run.run_id === state.selectedRunId) ?? state.runs[0];
 
@@ -1303,8 +2362,8 @@
       <article class="screen fade-in">
         <div class="screen-head">
           <div>
-            <h2 data-active-screen>Extraction Runs</h2>
-            <p>Use this view to track the intake cycle. The backend currently exposes extraction as an action, so this screen keeps local history of completed and queued runs.</p>
+            <h2 data-active-screen>Jobs & Runs</h2>
+            <p>Track supporting workflow history here. Extraction remains visible, but it should serve the writing loop rather than define the product.</p>
           </div>
           <div class="screen-actions">
             <button class="primary-button" type="button" data-action="run-extraction">Run extraction</button>
@@ -1394,8 +2453,8 @@
       <article class="screen fade-in">
         <div class="screen-head">
           <div>
-            <h2 data-active-screen>Review Queue</h2>
-            <p>Review is the trust gate. Pending candidates are queued here until they are approved into the canonical claim store or rejected as noise.</p>
+            <h2 data-active-screen>Canon Review</h2>
+            <p>Review is the trust gate. Pending candidates wait here until they are approved into the canonical claim store or rejected as noise.</p>
           </div>
           <div class="screen-actions">
             <div class="chip-bar" role="tablist" aria-label="Candidate filters">
@@ -1553,7 +2612,7 @@
         <div class="screen-head">
           <div>
             <h2 data-active-screen>Claims</h2>
-            <p>Approved claims are the canonical output. This screen keeps the operator focused on status, provenance, and what evidence actually supports each statement.</p>
+            <p>Approved claims are the canonical output. This utility view keeps status, provenance, and source support inspectable when you need the raw record.</p>
           </div>
           <div class="screen-actions">
             <div class="chip-bar" role="tablist" aria-label="Claim filters">
@@ -1660,6 +2719,9 @@
         <label>Notes</label>
         <div>${escapeHtml(claim.notes || "n/a")}</div>
       </div>
+      <div class="toolbar">
+        <button class="secondary-button" type="button" data-action="compose-from-claim">Compose into bible</button>
+      </div>
     `;
   }
 
@@ -1671,7 +2733,7 @@
         <div class="screen-head">
           <div>
             <h2 data-active-screen>Ask</h2>
-            <p>Ask only against approved claims. The query screen keeps mode selection visible so the operator always knows what kind of answer surface they are invoking.</p>
+            <p>Ask only against approved claims. The query screen keeps mode selection visible so the writer always knows what kind of answer surface they are invoking.</p>
           </div>
           <div class="screen-actions">
             ${seed.queryPresets
@@ -1771,6 +2833,26 @@
         ${result.warnings.length
           ? result.warnings.map((warning) => `<div class="warning">${escapeHtml(warning)}</div>`).join("")
           : "<div class='helper'>No warnings returned.</div>"}
+      </div>
+      <div class="toolbar">
+        <button class="secondary-button" type="button" data-action="compose-from-query">Compose into bible</button>
+      </div>
+      <div class="field">
+        <label>Trust summary</label>
+        <div class="detail-list">
+          <div class="mini">
+            <div class="detail-note">certainty summary</div>
+            <div>${escapeHtml(renderKeyValueMap(result.certainty_summary || {}))}</div>
+          </div>
+          <div class="mini">
+            <div class="detail-note">coverage gaps</div>
+            <div>${escapeHtml((result.coverage_gaps || []).join(" | ") || "none")}</div>
+          </div>
+          <div class="mini">
+            <div class="detail-note">recommended next research</div>
+            <div>${escapeHtml((result.recommended_next_research || []).join(" | ") || "none")}</div>
+          </div>
+        </div>
       </div>
       <div class="field">
         <label>Supporting claims</label>
@@ -1876,7 +2958,7 @@
           candidate_count: 0,
           started_at: new Date().toISOString(),
           finished_at: new Date().toISOString(),
-          note: "Extraction could not reach the live backend, so the console preserved the local run log.",
+          note: "Extraction could not reach the live backend, so the workspace preserved the local run log.",
         },
         ...state.runs,
       ];
@@ -2020,10 +3102,13 @@
         question: request.question,
         mode: request.mode,
         answer:
-          "The live query endpoint was unavailable, so the console retained the operator form instead of fabricating an answer.",
+          "The live query endpoint was unavailable, so the workspace retained the ask form instead of fabricating an answer.",
         supporting_claims: [],
         evidence: [],
         warnings: [error.message || "Query endpoint unavailable."],
+        certainty_summary: {},
+        coverage_gaps: [],
+        recommended_next_research: [],
       };
       setApiStatus(false, "Query failed. Seed and local state remain available.");
       setBanner("failed", "Query failed", error.message || "Could not reach the query endpoint.");
@@ -2103,18 +3188,33 @@
 
     applyLoading(true);
     try {
-      const payload = await fetchJson(API.researchRuns, {
+      const job = await fetchJson(API.researchRuns, {
         method: "POST",
         body: request,
       });
-      state.researchRuns = [payload.run, ...state.researchRuns.filter((run) => run.run_id !== payload.run.run_id)];
-      state.selectedResearchRunId = payload.run.run_id;
-      state.researchRunDetail = payload;
+      state.selectedResearchRunId = job.result_ref?.run_id || state.selectedResearchRunId;
       state.activeScreen = "research";
       location.hash = "#research";
-      await refreshRuntimeStatus();
-      setApiStatus(true, `Research run ${payload.run.run_id} completed and is ready for staging.`);
-      setBanner("live", "Research run created", `Collected ${payload.run.accepted_count} accepted findings across ${payload.run.facets.length} facets.`);
+      setBanner("queued", "Research queued", `Queued job ${job.job_id} for ${job.result_ref?.run_id || "research run"}.`);
+      render();
+      await pollJobUntilSettled(job.job_id, {
+        onProgress: async (activeJob) => {
+          setBanner("queued", "Research running", `Job ${activeJob.job_id} is ${renderJobSummary(activeJob)}.`);
+          await refreshLiveData({ quiet: true });
+          render();
+        },
+        onComplete: async (finishedJob) => {
+          await refreshLiveData({ quiet: true });
+          if (finishedJob.result_ref?.run_id) {
+            await refreshResearchDetail(finishedJob.result_ref.run_id, { quiet: true });
+          }
+          if (finishedJob.status === "completed") {
+            setBanner("live", "Research complete", `${finishedJob.result_ref?.run_id || "Research run"} finished in the background.`);
+          } else {
+            setBanner("failed", "Research failed", finishedJob.error || "Background research job failed.");
+          }
+        },
+      });
       render();
     } catch (error) {
       setBanner("failed", "Research run failed", error.message || "The research run could not be created.");
@@ -2122,6 +3222,332 @@
     } finally {
       applyLoading(false);
       persistState();
+    }
+  }
+
+  async function refreshBibleWorkspace({ quiet = false, projectId } = {}) {
+    const activeProjectId = projectId || state.bible.projectId;
+    if (!activeProjectId) {
+      return;
+    }
+    try {
+      const [profile, sections] = await Promise.all([
+        fetchJson(API.bibleProfile(activeProjectId)),
+        fetchJson(`${API.bibleSections}?project_id=${encodeURIComponent(activeProjectId)}`),
+      ]);
+      state.bible.projectId = activeProjectId;
+      state.bible.profile = profile;
+      state.bible.sections = sections;
+      state.bible.selectedProvenance = null;
+      updateSelectionFallbacks();
+      if (state.bible.selectedSectionId) {
+        await loadBibleProvenance(state.bible.selectedSectionId);
+      }
+      if (!quiet) {
+        setBanner("live", "Bible refreshed", `Loaded ${sections.length} saved bible sections for ${profile.project_name}.`);
+      }
+    } catch (error) {
+      if (!quiet) {
+        setBanner("failed", "Bible refresh failed", error.message || "Could not load the bible workspace.");
+      }
+    } finally {
+      persistState();
+      render();
+    }
+  }
+
+  async function loadBibleProvenance(sectionId) {
+    if (!sectionId) {
+      state.bible.selectedProvenance = null;
+      return;
+    }
+    try {
+      state.bible.selectedProvenance = await fetchJson(API.bibleSectionProvenance(sectionId));
+      const paragraphIds = (state.bible.selectedProvenance?.paragraphs || []).map((item) => item.paragraph?.paragraph_id).filter(Boolean);
+      if (!paragraphIds.includes(state.bible.selectedParagraphId)) {
+        state.bible.selectedParagraphId = paragraphIds[0] || null;
+      }
+    } catch (error) {
+      console.warn("Could not load bible provenance", error);
+    }
+  }
+
+  async function submitBibleProfile(form) {
+    const formData = new FormData(form);
+    const request = {
+      project_name: String(formData.get("project_name") || "").trim(),
+      era: nullableString(formData.get("era")),
+      geography: nullableString(formData.get("geography")),
+      social_lens: nullableString(formData.get("social_lens")),
+      narrative_focus: nullableString(formData.get("narrative_focus")),
+      tone: String(formData.get("tone") || "grounded_literary"),
+      time_start: nullableString(formData.get("time_start")),
+      time_end: nullableString(formData.get("time_end")),
+      desired_facets: splitList(formData.get("desired_facets")),
+      taboo_topics: splitList(formData.get("taboo_topics")),
+      composition_defaults: {
+        include_statuses: splitList(formData.get("include_statuses")),
+        source_types: splitList(formData.get("source_types")),
+        focus: state.bible.draft.focus || null,
+      },
+    };
+
+    applyLoading(true);
+    try {
+      const payload = await fetchJson(API.bibleProfile(state.bible.projectId), {
+        method: "PUT",
+        body: request,
+      });
+      state.bible.profile = payload;
+      state.bible.draft.place = payload.geography || state.bible.draft.place;
+      state.bible.draft.time_start = payload.time_start || state.bible.draft.time_start;
+      state.bible.draft.time_end = payload.time_end || state.bible.draft.time_end;
+      setBanner("live", "Bible profile saved", `Updated ${payload.project_name}.`);
+      render();
+    } catch (error) {
+      setBanner("failed", "Bible profile failed", error.message || "Could not save the bible profile.");
+      render();
+    } finally {
+      applyLoading(false);
+      persistState();
+    }
+  }
+
+  async function submitBibleSection(form) {
+    const formData = new FormData(form);
+    state.bible.draft = {
+      section_type: String(formData.get("section_type") || "setting_overview"),
+      title: String(formData.get("title") || "").trim(),
+      focus: String(formData.get("focus") || "").trim(),
+      statuses: String(formData.get("statuses") || "").trim(),
+      source_types: String(formData.get("source_types") || "").trim(),
+      place: String(formData.get("place") || "").trim(),
+      time_start: String(formData.get("time_start") || "").trim(),
+      time_end: String(formData.get("time_end") || "").trim(),
+    };
+
+    const request = {
+      project_id: state.bible.projectId,
+      section_type: state.bible.draft.section_type,
+      title: state.bible.draft.title || null,
+      filters: {
+        focus: nullableString(state.bible.draft.focus),
+        statuses: splitList(state.bible.draft.statuses),
+        source_types: splitList(state.bible.draft.source_types),
+        place: nullableString(state.bible.draft.place),
+        time_start: nullableString(state.bible.draft.time_start),
+        time_end: nullableString(state.bible.draft.time_end),
+      },
+    };
+
+    applyLoading(true);
+    try {
+      const job = await fetchJson(API.bibleSections, {
+        method: "POST",
+        body: request,
+      });
+      state.bible.selectedSectionId = job.result_ref?.section_id || state.bible.selectedSectionId;
+      setBanner("queued", "Bible composition queued", `Queued job ${job.job_id} for ${job.result_ref?.section_id || "new section"}.`);
+      await refreshBibleWorkspace({ quiet: true });
+      render();
+      await pollJobUntilSettled(job.job_id, {
+        onProgress: async (activeJob) => {
+          setBanner("queued", "Bible composition running", `Job ${activeJob.job_id} is ${renderJobSummary(activeJob)}.`);
+          await refreshBibleWorkspace({ quiet: true });
+        },
+        onComplete: async (finishedJob) => {
+          await refreshBibleWorkspace({ quiet: true });
+          if (finishedJob.result_ref?.section_id) {
+            state.bible.selectedSectionId = finishedJob.result_ref.section_id;
+          }
+          if (finishedJob.status === "completed") {
+            const section = state.bible.sections.find((item) => item.section_id === finishedJob.result_ref?.section_id);
+            setBanner("live", "Bible section composed", section ? `Saved ${section.title} with ${section.references.claim_ids.length} linked claims.` : "Bible composition finished.");
+          } else {
+            setBanner("failed", "Bible composition failed", finishedJob.error || "Background composition job failed.");
+          }
+        },
+      });
+      render();
+    } catch (error) {
+      setBanner("failed", "Bible composition failed", error.message || "Could not compose the bible section.");
+      render();
+    } finally {
+      applyLoading(false);
+      persistState();
+    }
+  }
+
+  async function submitBibleSectionEdit(form) {
+    const formData = new FormData(form);
+    const sectionId = String(formData.get("section_id") || "").trim();
+    if (!sectionId) {
+      return;
+    }
+    applyLoading(true);
+    try {
+      const payload = await fetchJson(API.bibleSection(sectionId), {
+        method: "PUT",
+        body: {
+          title: String(formData.get("title") || "").trim() || null,
+          content: String(formData.get("content") || ""),
+        },
+      });
+      state.bible.sections = state.bible.sections.map((section) =>
+        section.section_id === sectionId ? payload : section
+      );
+      state.bible.selectedSectionId = sectionId;
+      setBanner("live", "Bible edits saved", `Manual edits were saved for ${payload.title}.`);
+      render();
+    } catch (error) {
+      setBanner("failed", "Bible save failed", error.message || "Could not save section edits.");
+      render();
+    } finally {
+      applyLoading(false);
+      persistState();
+    }
+  }
+
+  async function regenerateBibleSection(sectionId) {
+    if (!sectionId) {
+      setBanner("failed", "No bible section selected", "Pick a bible section before regenerating it.");
+      return;
+    }
+    const section = state.bible.sections.find((item) => item.section_id === sectionId);
+    applyLoading(true);
+    try {
+      const job = await fetchJson(API.regenerateBibleSection(sectionId), {
+        method: "POST",
+        body: {
+          filters: section?.generation_filters || {},
+        },
+      });
+      setBanner("queued", "Regeneration queued", `Queued job ${job.job_id} for ${sectionId}.`);
+      await pollJobUntilSettled(job.job_id, {
+        onProgress: async (activeJob) => {
+          setBanner("queued", "Regeneration running", `Job ${activeJob.job_id} is ${renderJobSummary(activeJob)}.`);
+          await refreshBibleWorkspace({ quiet: true });
+        },
+        onComplete: async (finishedJob) => {
+          await refreshBibleWorkspace({ quiet: true });
+          const refreshed = state.bible.sections.find((item) => item.section_id === sectionId);
+          if (finishedJob.status === "completed") {
+            setBanner("live", "Section regenerated", refreshed?.has_manual_edits ? "Generated draft refreshed while manual edits stayed intact." : `Regenerated ${refreshed?.title || "section"}.`);
+          } else {
+            setBanner("failed", "Regeneration failed", finishedJob.error || "Background regeneration job failed.");
+          }
+        },
+      });
+      render();
+    } catch (error) {
+      setBanner("failed", "Regeneration failed", error.message || "Could not regenerate the selected bible section.");
+      render();
+    } finally {
+      applyLoading(false);
+      persistState();
+    }
+  }
+
+  async function exportBibleProject() {
+    if (!state.bible.projectId) {
+      setBanner("failed", "No active bible project", "Save a bible project profile before exporting.");
+      return;
+    }
+    applyLoading(true);
+    try {
+      const job = await fetchJson(API.queueBibleExport(state.bible.projectId), { method: "POST" });
+      state.bible.exportJobId = job.job_id;
+      setBanner("queued", "Bible export queued", `Queued job ${job.job_id} for ${state.bible.projectId}.`);
+      render();
+      await pollJobUntilSettled(job.job_id, {
+        onProgress: async (activeJob) => {
+          state.bible.exportJobId = activeJob.job_id;
+          setBanner("queued", "Bible export running", `Job ${activeJob.job_id} is ${renderJobSummary(activeJob)}.`);
+        },
+        onComplete: async (finishedJob) => {
+          state.bible.exportJobId = finishedJob.job_id;
+          if (finishedJob.result_payload?.profile) {
+            state.bible.exportBundle = finishedJob.result_payload;
+          } else {
+            state.bible.exportBundle = await fetchJson(API.exportBibleProject(state.bible.projectId));
+          }
+          if ((finishedJob.status_label || finishedJob.status) === "failed") {
+            setBanner("failed", "Bible export failed", finishedJob.error_detail || finishedJob.error || "Background export failed.");
+            return;
+          }
+          if ((finishedJob.status_label || finishedJob.status) === "partial") {
+            setBanner("pending", "Bible export partial", (finishedJob.warnings || []).join(" | ") || "Export completed with warnings.");
+            return;
+          }
+          setBanner(
+            "live",
+            "Bible exported",
+            `Prepared ${state.bible.exportBundle.sections.length} saved sections for ${state.bible.exportBundle.profile.project_name}.`
+          );
+        },
+      });
+      render();
+    } catch (error) {
+      setBanner("failed", "Bible export failed", error.message || "Could not export the saved bible.");
+    } finally {
+      applyLoading(false);
+      persistState();
+      render();
+    }
+  }
+
+  async function cancelJob(jobId) {
+    if (!jobId) {
+      return;
+    }
+    try {
+      const job = await fetchJson(API.cancelJob(jobId), { method: "POST" });
+      state.jobs = [job, ...state.jobs.filter((item) => item.job_id !== job.job_id)];
+      await refreshLiveData({ quiet: true });
+      if (state.bible.projectId) {
+        await refreshBibleWorkspace({ quiet: true });
+      }
+      if (state.selectedResearchRunId) {
+        await refreshResearchDetail(state.selectedResearchRunId, { quiet: true });
+      }
+      setBanner("pending", "Cancellation requested", `Job ${job.job_id} is now ${job.status_label || job.status}.`);
+    } catch (error) {
+      setBanner("failed", "Cancel failed", error.message || "Could not cancel the selected job.");
+    } finally {
+      render();
+    }
+  }
+
+  async function retryJob(jobId) {
+    if (!jobId) {
+      return;
+    }
+    try {
+      const job = await fetchJson(API.retryJob(jobId), { method: "POST" });
+      setBanner("queued", "Retry queued", `Queued retry job ${job.job_id}.`);
+      await pollJobUntilSettled(job.job_id, {
+        onProgress: async (activeJob) => {
+          setBanner("queued", "Retry running", `Job ${activeJob.job_id} is ${renderJobSummary(activeJob)}.`);
+        },
+        onComplete: async (finishedJob) => {
+          await refreshLiveData({ quiet: true });
+          if (state.bible.projectId) {
+            await refreshBibleWorkspace({ quiet: true });
+          }
+          if (state.selectedResearchRunId) {
+            await refreshResearchDetail(state.selectedResearchRunId, { quiet: true });
+          }
+          if ((finishedJob.status_label || finishedJob.status) === "failed") {
+            setBanner("failed", "Retry failed", finishedJob.error_detail || finishedJob.error || "Retry job failed.");
+          } else {
+            setBanner("live", "Retry completed", `Job ${finishedJob.job_id} finished as ${finishedJob.status_label || finishedJob.status}.`);
+          }
+        },
+      });
+    } catch (error) {
+      setBanner("failed", "Retry failed", error.message || "Could not retry the selected job.");
+    } finally {
+      render();
     }
   }
 
@@ -2166,21 +3592,24 @@
 
     applyLoading(true);
     try {
-      const payload = await fetchJson(API.stageResearchRun(runId), { method: "POST" });
-      state.researchRuns = [
-        payload.run,
-        ...state.researchRuns.filter((run) => run.run_id !== payload.run.run_id),
-      ];
-      await refreshLiveData({ quiet: true });
-      await refreshResearchDetail(runId, { quiet: true });
-      setApiStatus(true, `Staged ${payload.staged_source_ids.length} research findings into source records.`);
-      setBanner(
-        "live",
-        "Research staged",
-        payload.staged_source_ids.length
-          ? `Created ${payload.staged_source_ids.length} staged sources and ${payload.staged_document_ids.length} text documents.`
-          : payload.warnings[0] || "No additional accepted findings needed staging."
-      );
+      const job = await fetchJson(API.stageResearchRun(runId), { method: "POST" });
+      setBanner("queued", "Research staging queued", `Queued job ${job.job_id} for ${runId}.`);
+      await pollJobUntilSettled(job.job_id, {
+        onProgress: async (activeJob) => {
+          setBanner("queued", "Research staging running", `Job ${activeJob.job_id} is ${renderJobSummary(activeJob)}.`);
+          await refreshResearchDetail(runId, { quiet: true });
+        },
+        onComplete: async (finishedJob) => {
+          await refreshLiveData({ quiet: true });
+          await refreshResearchDetail(runId, { quiet: true });
+          if (finishedJob.status === "completed") {
+            setApiStatus(true, `Staged accepted research findings for ${runId}.`);
+            setBanner("live", "Research staged", `Accepted findings for ${runId} were staged into source records.`);
+          } else {
+            setBanner("failed", "Staging failed", finishedJob.error || "Background staging job failed.");
+          }
+        },
+      });
       render();
     } catch (error) {
       setBanner("failed", "Staging failed", error.message || "Could not stage the selected research run.");
@@ -2199,39 +3628,28 @@
 
     applyLoading(true);
     try {
-      const payload = await fetchJson(API.extractResearchRun(runId), { method: "POST" });
-      const researchRun = payload.stage_result?.run;
-      if (researchRun) {
-        state.researchRuns = [
-          researchRun,
-          ...state.researchRuns.filter((run) => run.run_id !== researchRun.run_id),
-        ];
-      }
-      if (payload.extraction?.candidates) {
-        state.candidates = payload.extraction.candidates;
-      }
-      if (payload.extraction?.evidence) {
-        state.evidence = payload.extraction.evidence;
-      }
-      if (payload.extraction?.run) {
-        state.runs = [
-          payload.extraction.run,
-          ...state.runs.filter((run) => run.run_id !== payload.extraction.run.run_id),
-        ];
-        state.selectedRunId = payload.extraction.run.run_id;
-      }
-      await refreshLiveData({ quiet: true });
-      await refreshResearchDetail(runId, { quiet: true });
-      state.selectedCandidateId =
-        state.candidates.find((candidate) => candidate.review_state === "pending")?.candidate_id ??
-        state.candidates[0]?.candidate_id ??
-        null;
-      setApiStatus(true, `Research extraction created ${payload.extraction?.candidates?.length || 0} candidates.`);
-      setBanner(
-        "live",
-        "Research extracted",
-        `Normalized ${payload.normalization?.document_count ?? 0} documents into ${payload.normalization?.text_unit_count ?? 0} text units and produced ${payload.extraction?.candidates?.length || 0} candidates.`
-      );
+      const job = await fetchJson(API.extractResearchRun(runId), { method: "POST" });
+      setBanner("queued", "Research extraction queued", `Queued job ${job.job_id} for ${runId}.`);
+      await pollJobUntilSettled(job.job_id, {
+        onProgress: async (activeJob) => {
+          setBanner("queued", "Research extraction running", `Job ${activeJob.job_id} is ${renderJobSummary(activeJob)}.`);
+          await refreshResearchDetail(runId, { quiet: true });
+        },
+        onComplete: async (finishedJob) => {
+          await refreshLiveData({ quiet: true });
+          await refreshResearchDetail(runId, { quiet: true });
+          state.selectedCandidateId =
+            state.candidates.find((candidate) => candidate.review_state === "pending")?.candidate_id ??
+            state.candidates[0]?.candidate_id ??
+            null;
+          if (finishedJob.status === "completed") {
+            setApiStatus(true, `Research extraction completed for ${runId}.`);
+            setBanner("live", "Research extracted", `Background extraction finished for ${runId}.`);
+          } else {
+            setBanner("failed", "Research extraction failed", finishedJob.error || "Background extraction job failed.");
+          }
+        },
+      });
       render();
     } catch (error) {
       setBanner("failed", "Research extraction failed", error.message || "Could not stage and extract the selected research run.");
@@ -2240,6 +3658,55 @@
       applyLoading(false);
       persistState();
     }
+  }
+
+  async function pollJobUntilSettled(jobId, { onProgress, onComplete } = {}) {
+    if (!jobId) {
+      return null;
+    }
+    let attempts = 0;
+    while (attempts < 80) {
+      const job = await fetchJson(API.job(jobId));
+      state.jobs = [job, ...state.jobs.filter((item) => item.job_id !== job.job_id)];
+      if (onProgress) {
+        await onProgress(job);
+      }
+      if (["completed", "failed", "cancelled", "partial"].includes(job.status_label || job.status)) {
+        if (onComplete) {
+          await onComplete(job);
+        }
+        return job;
+      }
+      attempts += 1;
+      await new Promise((resolve) => window.setTimeout(resolve, 500));
+    }
+    return null;
+  }
+
+  function renderJobSummary(job) {
+    if (!job) {
+      return "idle";
+    }
+    const total = Number(job.progress_total || 100);
+    const current = Number(job.progress_current || 0);
+    const percent = total > 0 ? Math.max(0, Math.min(100, Math.round((current / total) * 100))) : 0;
+    const label = (job.status_label || job.status || "queued").replaceAll("_", " ");
+    return `${label}${job.progress_stage ? ` · ${job.progress_stage}` : ""}${["running", "queued"].includes(job.status_label || job.status) ? ` · ${percent}%` : ""}`;
+  }
+
+  function renderJobPill(job) {
+    if (!job) {
+      return `<span class="pill verified">idle</span>`;
+    }
+    const tone =
+      (job.status_label || job.status) === "completed"
+        ? "verified"
+        : (job.status_label || job.status) === "failed"
+          ? "contested"
+          : (job.status_label || job.status) === "partial"
+            ? "probable"
+          : "queued";
+    return `<span class="pill ${escapeHtml(tone)}">${escapeHtml(renderJobSummary(job))}</span>`;
   }
 
   function nullableString(value) {
