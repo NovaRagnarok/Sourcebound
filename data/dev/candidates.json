@@ -90,6 +90,24 @@
     "notes": "Pending because it is vivid but folkloric."
   },
   {
+    "candidate_id": "cand-shrine-lantern-omen",
+    "subject": "Saint Romain shrine lanterns",
+    "predicate": "were_taken_as",
+    "value": "an omen before the thaw of 1422",
+    "claim_kind": "belief",
+    "status_suggestion": "rumor",
+    "review_state": "needs_edit",
+    "place": "Rouen",
+    "time_start": "1422-02-01",
+    "time_end": "1422-02-28",
+    "viewpoint_scope": "sailors",
+    "evidence_ids": [
+      "evi-blue-lanterns"
+    ],
+    "extractor_run_id": "extract-rouen-core",
+    "notes": "Good atmosphere, but the wording needs to stay explicitly folkloric."
+  },
+  {
     "candidate_id": "cand-grain-bell-beadles",
     "subject": "Rouen parish beadles",
     "predicate": "were_posted_at",
@@ -106,5 +124,24 @@
     ],
     "extractor_run_id": "extract-research-rouen",
     "notes": "Strong stage/extract result that still needs review."
+  },
+  {
+    "candidate_id": "cand-grain-bell-timing",
+    "subject": "Rouen grain bell",
+    "predicate": "rang_after",
+    "value": "prime and terce in January 1422",
+    "claim_kind": "institution",
+    "status_suggestion": "contested",
+    "review_state": "needs_split",
+    "place": "Rouen",
+    "time_start": "1422-01-01",
+    "time_end": "1422-01-31",
+    "viewpoint_scope": null,
+    "evidence_ids": [
+      "evi-bell-prime",
+      "evi-bell-terce"
+    ],
+    "extractor_run_id": "extract-rouen-core",
+    "notes": "Merged contradictory bell timings; split the reports before approval."
   }
 ]

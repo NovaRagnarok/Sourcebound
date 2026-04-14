@@ -9,6 +9,7 @@ from source_aware_worldbuilding.api.dependencies import (
     get_job_service,
     get_truth_store,
 )
+from source_aware_worldbuilding.domain.enums import UNRESOLVED_REVIEW_STATES
 from source_aware_worldbuilding.domain.models import (
     BibleSection,
     JobSummary,
@@ -42,7 +43,9 @@ def get_workspace_summary(
     sections = bible_service.list_sections(resolved_project_id) if resolved_project_id else []
     candidates = candidate_store.list_candidates()
     claims = truth_store.list_claims()
-    pending_candidates = [item for item in candidates if item.review_state.value == "pending"]
+    pending_candidates = [
+        item for item in candidates if item.review_state in UNRESOLVED_REVIEW_STATES
+    ]
     thin_sections = [
         section
         for section in sections
@@ -50,7 +53,10 @@ def get_workspace_summary(
     ]
     current_section = _select_current_section(sections)
     current_snapshot = (
-        _section_snapshot(current_section, job_service.summarize_latest_for_section(current_section.section_id))
+        _section_snapshot(
+            current_section,
+            job_service.summarize_latest_for_section(current_section.section_id),
+        )
         if current_section is not None
         else None
     )
@@ -73,7 +79,11 @@ def get_workspace_summary(
         bible_section_count=len(sections),
         evidence_count=len(evidence_store.list_evidence()),
         active_background_count=len(
-            [job for job in jobs if (job.status_label or job.status.value) in {"queued", "running", "partial"}]
+            [
+                job
+                for job in jobs
+                if (job.status_label or job.status.value) in {"queued", "running", "partial"}
+            ]
         ),
         thin_section_count=len(thin_sections),
     )
@@ -94,9 +104,14 @@ def _select_current_section(sections: list[BibleSection]) -> BibleSection | None
     return sorted(sections, key=sort_key, reverse=True)[0]
 
 
-def _section_snapshot(section: BibleSection, latest_job: JobSummary | None) -> WorkspaceSectionSnapshot:
+def _section_snapshot(
+    section: BibleSection, latest_job: JobSummary | None
+) -> WorkspaceSectionSnapshot:
     if section.generation_status.value == "ready" and section.ready_for_writer:
-        summary = f"{len(section.references.claim_ids)} reviewed claims are supporting the current draft."
+        summary = (
+            f"{len(section.references.claim_ids)} reviewed claims are supporting the current "
+            "draft."
+        )
     elif section.coverage_gaps:
         summary = section.coverage_gaps[0]
     elif section.recommended_next_research:
@@ -135,7 +150,10 @@ def _build_actions(
             WorkspaceAction(
                 action_id="setup-project",
                 title="Set the project frame",
-                summary="Define place, era, and narrative focus so research, review, and bible work stay aimed at the same book.",
+                summary=(
+                    "Define place, era, and narrative focus so research, review, and bible "
+                    "work stay aimed at the same book."
+                ),
                 screen="bible",
                 tone="queued",
                 badge="setup",
@@ -146,7 +164,10 @@ def _build_actions(
             WorkspaceAction(
                 action_id="open-current-section",
                 title="Open the current section",
-                summary=f"{current_section.title} is the live writing surface for the current project.",
+                summary=(
+                    f"{current_section.title} is the live writing surface for the current "
+                    "project."
+                ),
                 screen="bible",
                 tone="author_choice" if current_section.has_manual_edits else "verified",
                 badge="open",
@@ -157,14 +178,21 @@ def _build_actions(
             WorkspaceAction(
                 action_id="review-facts",
                 title="Review new facts",
-                summary=f"{pending_review_count} candidate facts are waiting at the trust boundary before they can support writing.",
+                summary=(
+                    f"{pending_review_count} candidate facts are waiting at the trust "
+                    "boundary before they can support writing."
+                ),
                 screen="review",
                 tone="probable",
                 badge=f"{pending_review_count} pending",
             )
         )
     thin_count = len(
-        [section for section in sections if section.generation_status.value != "ready" or not section.ready_for_writer]
+        [
+            section
+            for section in sections
+            if section.generation_status.value != "ready" or not section.ready_for_writer
+        ]
     )
     if current_section is not None and (
         current_section.generation_status.value != "ready" or not current_section.ready_for_writer
@@ -184,7 +212,10 @@ def _build_actions(
             WorkspaceAction(
                 action_id="compose-first-section",
                 title="Compose the first section",
-                summary="Turn reviewed canon into an editable bible section with provenance and uncertainty still visible.",
+                summary=(
+                    "Turn reviewed canon into an editable bible section with provenance and "
+                    "uncertainty still visible."
+                ),
                 screen="bible",
                 tone="queued",
                 badge="compose",
@@ -195,7 +226,10 @@ def _build_actions(
             WorkspaceAction(
                 action_id="close-thin-sections",
                 title="Strengthen thin sections",
-                summary=f"{thin_count} bible section{'s are' if thin_count != 1 else ' is'} still too thin for dependable drafting.",
+                summary=(
+                    f"{thin_count} bible section{'s are' if thin_count != 1 else ' is'} "
+                    "still too thin for dependable drafting."
+                ),
                 screen="research",
                 tone="contested",
                 badge=f"{thin_count} thin",
@@ -206,7 +240,10 @@ def _build_actions(
             WorkspaceAction(
                 action_id="ask-canon",
                 title="Ask canon about the next scene",
-                summary="Pressure-test the approved record before you commit a scene detail to the manuscript.",
+                summary=(
+                    "Pressure-test the approved record before you commit a scene detail to "
+                    "the manuscript."
+                ),
                 screen="ask",
                 tone="verified",
                 badge="ask",
@@ -238,7 +275,12 @@ def _build_background_items(
             continue
         seen.add(job.job_id)
         label = _job_title(job.job_type, section_titles.get(job.result_ref.section_id))
-        summary = job.progress_message or job.error_detail or job.error or "Background work is available."
+        summary = (
+            job.progress_message
+            or job.error_detail
+            or job.error
+            or "Background work is available."
+        )
         status_label = job.status_label or job.status.value
         items.append(
             WorkspaceBackgroundItem(
@@ -249,7 +291,11 @@ def _build_background_items(
                 screen="bible" if job.result_ref.section_id else "runs",
             )
         )
-    return sorted(items, key=lambda item: item.status_label in {"running", "queued", "partial"}, reverse=True)
+    return sorted(
+        items,
+        key=lambda item: item.status_label in {"running", "queued", "partial"},
+        reverse=True,
+    )
 
 
 def _job_title(job_type: str, section_title: str | None) -> str:

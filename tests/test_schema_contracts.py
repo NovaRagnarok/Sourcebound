@@ -126,7 +126,7 @@ def test_repository_fixtures_match_domain_models() -> None:
     assert len(source_documents) == 10
     assert len(text_units) == 10
     assert len(evidence) == 10
-    assert len(candidates) == 6
+    assert len(candidates) == 8
     assert len(claims) == 9
     assert len(relationships) == 5
     assert len(review_events) == 4
@@ -155,6 +155,8 @@ def test_repository_fixtures_match_domain_models() -> None:
         ReviewState.APPROVED,
         ReviewState.PENDING,
         ReviewState.REJECTED,
+        ReviewState.NEEDS_EDIT,
+        ReviewState.NEEDS_SPLIT,
     }
     assert any(section.has_manual_edits for section in sections)
     assert any(not section.has_manual_edits for section in sections)
@@ -167,7 +169,7 @@ def test_seed_dev_data_writes_reproducible_temp_fixtures(temp_data_dir) -> None:
     assert len(load_json_list(temp_data_dir / "source_documents.json")) == 10
     assert len(load_json_list(temp_data_dir / "text_units.json")) == 10
     assert len(load_json_list(temp_data_dir / "evidence.json")) == 10
-    assert len(load_json_list(temp_data_dir / "candidates.json")) == 6
+    assert len(load_json_list(temp_data_dir / "candidates.json")) == 8
     assert len(load_json_list(temp_data_dir / "review_events.json")) == 4
     assert len(load_json_list(temp_data_dir / "claims.json")) == 9
     assert len(load_json_list(temp_data_dir / "claim_relationships.json")) == 5

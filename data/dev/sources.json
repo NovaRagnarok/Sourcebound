@@ -13,6 +13,12 @@
     "abstract": "Clerks tracked the winter rise in bread prices at the Rouen market.",
     "url": null,
     "sync_status": "ready_for_extraction",
+    "workflow_stage": "normalization_completed",
+    "last_synced_at": "2026-04-14T18:54:22.207674+00:00",
+    "last_zotero_version": null,
+    "last_source_checksum": null,
+    "stage_errors": [],
+    "stage_summary": {},
     "raw_metadata_json": null
   },
   {
@@ -29,6 +35,12 @@
     "abstract": "Bakers described household bread tokens and ration loaves during the shortage.",
     "url": null,
     "sync_status": "ready_for_extraction",
+    "workflow_stage": "normalization_completed",
+    "last_synced_at": "2026-04-14T18:54:22.207713+00:00",
+    "last_zotero_version": null,
+    "last_source_checksum": null,
+    "stage_errors": [],
+    "stage_summary": {},
     "raw_metadata_json": null
   },
   {
@@ -45,6 +57,12 @@
     "abstract": "Night barges unloaded grain outside Saint Sever gate before dawn.",
     "url": null,
     "sync_status": "ready_for_extraction",
+    "workflow_stage": "normalization_completed",
+    "last_synced_at": "2026-04-14T18:54:22.207720+00:00",
+    "last_zotero_version": null,
+    "last_source_checksum": null,
+    "stage_errors": [],
+    "stage_summary": {},
     "raw_metadata_json": null
   },
   {
@@ -61,6 +79,12 @@
     "abstract": "The grain bell schedule was recorded for January market control.",
     "url": null,
     "sync_status": "ready_for_extraction",
+    "workflow_stage": "normalization_completed",
+    "last_synced_at": "2026-04-14T18:54:22.207725+00:00",
+    "last_zotero_version": null,
+    "last_source_checksum": null,
+    "stage_errors": [],
+    "stage_summary": {},
     "raw_metadata_json": null
   },
   {
@@ -77,6 +101,12 @@
     "abstract": "A later ordinance revised the hour of the grain bell.",
     "url": null,
     "sync_status": "ready_for_extraction",
+    "workflow_stage": "normalization_completed",
+    "last_synced_at": "2026-04-14T18:54:22.207728+00:00",
+    "last_zotero_version": null,
+    "last_source_checksum": null,
+    "stage_errors": [],
+    "stage_summary": {},
     "raw_metadata_json": null
   },
   {
@@ -93,6 +123,12 @@
     "abstract": "Citizens whispered that merchants hid grain behind shuttered lofts.",
     "url": null,
     "sync_status": "ready_for_extraction",
+    "workflow_stage": "normalization_completed",
+    "last_synced_at": "2026-04-14T18:54:22.207732+00:00",
+    "last_zotero_version": null,
+    "last_source_checksum": null,
+    "stage_errors": [],
+    "stage_summary": {},
     "raw_metadata_json": null
   },
   {
@@ -109,6 +145,12 @@
     "abstract": "Wax tally tablets tracked barley and salt debts by household.",
     "url": null,
     "sync_status": "ready_for_extraction",
+    "workflow_stage": "normalization_completed",
+    "last_synced_at": "2026-04-14T18:54:22.207735+00:00",
+    "last_zotero_version": null,
+    "last_source_checksum": null,
+    "stage_errors": [],
+    "stage_summary": {},
     "raw_metadata_json": null
   },
   {
@@ -125,6 +167,12 @@
     "abstract": "Sailors said shrine lanterns burned blue before the thaw.",
     "url": null,
     "sync_status": "ready_for_extraction",
+    "workflow_stage": "normalization_completed",
+    "last_synced_at": "2026-04-14T18:54:22.207738+00:00",
+    "last_zotero_version": null,
+    "last_source_checksum": null,
+    "stage_errors": [],
+    "stage_summary": {},
     "raw_metadata_json": null
   },
   {
@@ -141,6 +189,12 @@
     "abstract": "A curated note described bread scrip circulating at the market gate.",
     "url": "https://demo.sourcebound.test/archive/bread-scrip",
     "sync_status": "ready_for_extraction",
+    "workflow_stage": "normalization_completed",
+    "last_synced_at": "2026-04-14T18:54:22.207743+00:00",
+    "last_zotero_version": null,
+    "last_source_checksum": null,
+    "stage_errors": [],
+    "stage_summary": {},
     "raw_metadata_json": null
   },
   {
@@ -157,6 +211,12 @@
     "abstract": "A curated note described beadles counting households at the grain bell.",
     "url": "https://demo.sourcebound.test/archive/grain-bell",
     "sync_status": "ready_for_extraction",
+    "workflow_stage": "normalization_completed",
+    "last_synced_at": "2026-04-14T18:54:22.207746+00:00",
+    "last_zotero_version": null,
+    "last_source_checksum": null,
+    "stage_errors": [],
+    "stage_summary": {},
     "raw_metadata_json": null
   }
 ]

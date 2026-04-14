@@ -169,6 +169,7 @@ def test_openapi_includes_operator_mvp_routes() -> None:
         "/v1/sources/{source_id}",
         "/v1/extraction-runs",
         "/v1/candidates",
+        "/v1/candidates/review-queue",
         "/v1/candidates/{candidate_id}",
         "/v1/candidates/{candidate_id}/review",
         "/v1/claims",
@@ -182,6 +183,14 @@ def test_openapi_includes_operator_mvp_routes() -> None:
         "/v1/research/runs/{run_id}/extract",
         "/v1/research/programs",
     } <= paths
+
+
+def test_openapi_types_review_queue_cards() -> None:
+    review_queue = app.openapi()["paths"]["/v1/candidates/review-queue"]["get"]
+    schema = review_queue["responses"]["200"]["content"]["application/json"]["schema"]
+
+    assert schema["type"] == "array"
+    assert schema["items"]["$ref"].endswith("/ReviewQueueCard")
 
 
 def test_root_redirects_to_writer_workspace_alias() -> None:
@@ -293,6 +302,98 @@ def test_operator_flow_routes_share_file_backed_state(temp_data_dir) -> None:
         assert "answer_sections" in query_response.json()
         assert isinstance(query_response.json()["claim_clusters"], list)
         assert isinstance(query_response.json()["answer_sections"], list)
+
+
+def test_review_queue_route_returns_enriched_cards(temp_data_dir) -> None:
+    seed_dev_data()
+
+    with TestClient(app) as client:
+        response = client.get("/v1/candidates/review-queue")
+
+    assert response.status_code == 200
+    body = response.json()
+    card = next(item for item in body if item["candidate_id"] == "cand-grain-bell-beadles")
+    assert card["claim_text"] == "Rouen parish beadles were posted at the grain bell in 1422"
+    assert card["certainty_suggestion"] == "probable"
+    assert card["evidence_quality"] == "supported"
+    assert card["primary_evidence"]["source_title"] == "Curated parish note on grain bell beadles"
+    assert card["primary_evidence"]["excerpt"].startswith("Rouen parish beadles were posted")
+    assert card["primary_evidence"]["context_before"].strip().startswith("Witness depositions")
+    assert card["location_summary"] == "curated input · Rouen · 1422-01-01 to 1422-02-28"
+
+
+def test_review_route_supports_claim_patch_and_deferred_states(temp_data_dir) -> None:
+    seed_dev_data()
+
+    with TestClient(app) as client:
+        approve_response = client.post(
+            "/v1/candidates/cand-grain-bell-beadles/review",
+            json={
+                "decision": "approve",
+                "claim_patch": {
+                    "value": "the grain bell during the January ration roll",
+                    "viewpoint_scope": "parish witnesses",
+                },
+                "notes": "Tightened before approval.",
+            },
+        )
+        assert approve_response.status_code == 200
+        approve_body = approve_response.json()
+        assert approve_body["status"] == "approved"
+        assert approve_body["claim"]["value"] == "the grain bell during the January ration roll"
+        assert approve_body["claim"]["viewpoint_scope"] == "parish witnesses"
+
+        approved_candidate = client.get("/v1/candidates/cand-grain-bell-beadles")
+        assert approved_candidate.status_code == 200
+        assert approved_candidate.json()["review_state"] == "approved"
+        assert approved_candidate.json()["value"] == "the grain bell in 1422"
+
+        needs_edit_response = client.post(
+            "/v1/candidates/cand-blue-lanterns/review",
+            json={
+                "decision": "reject",
+                "defer_state": "needs_edit",
+                "notes": "Keep this in folklore language.",
+            },
+        )
+        assert needs_edit_response.status_code == 200
+        assert needs_edit_response.json()["status"] == "rejected"
+
+        needs_edit_candidate = client.get("/v1/candidates/cand-blue-lanterns")
+        assert needs_edit_candidate.status_code == 200
+        assert needs_edit_candidate.json()["review_state"] == "needs_edit"
+
+        needs_split_response = client.post(
+            "/v1/candidates/cand-grain-bell-timing/review",
+            json={
+                "decision": "reject",
+                "defer_state": "needs_split",
+                "notes": "Split the prime and terce reports.",
+            },
+        )
+        assert needs_split_response.status_code == 200
+        assert needs_split_response.json()["status"] == "rejected"
+
+        needs_split_candidate = client.get("/v1/candidates/cand-grain-bell-timing")
+        assert needs_split_candidate.status_code == 200
+        assert needs_split_candidate.json()["review_state"] == "needs_split"
+
+        workspace_summary = client.get("/v1/workspace/summary")
+        assert workspace_summary.status_code == 200
+        assert workspace_summary.json()["pending_review_count"] == 3
+
+
+def test_review_route_rejects_unedited_approval_for_deferred_candidates(temp_data_dir) -> None:
+    seed_dev_data()
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1/candidates/cand-grain-bell-timing/review",
+            json={"decision": "approve"},
+        )
+
+    assert response.status_code == 409
+    assert "require edits" in response.json()["detail"].lower()
 
 
 def test_query_route_keeps_bread_token_question_topic_first(temp_data_dir) -> None:

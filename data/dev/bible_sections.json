@@ -175,10 +175,13 @@
     },
     "retrieval_metadata": {
       "retrieval_backend": "memory",
+      "retrieval_quality_tier": "memory_ranked",
       "fallback_used": false,
       "fallback_reason": null,
       "seed_query": "Economics And Material Culture bread prices, ration tokens, debt tracking, and market movement market control, winter scarcity, rumor, and ritualized public order bakers, porters, clerks, and households waiting on ration lines Rouen 1421-1422 winter shortage economics daily life institutions ritual rumor",
-      "ranking_strategy": "intent_blended"
+      "ranking_strategy": "intent_blended",
+      "answer_boundary": "direct_answer",
+      "used_nearby_context": true
     },
     "composition_metrics": {
       "thin_section": false,
@@ -414,10 +417,13 @@
     },
     "retrieval_metadata": {
       "retrieval_backend": "memory",
+      "retrieval_quality_tier": "memory_ranked",
       "fallback_used": false,
       "fallback_reason": null,
       "seed_query": "Rumors And Contested Accounts grain bell disputes, hoarding stories, and eerie shrine gossip market control, winter scarcity, rumor, and ritualized public order bakers, porters, clerks, and households waiting on ration lines Rouen 1421-1422 winter shortage economics daily life institutions ritual rumor",
-      "ranking_strategy": "intent_blended"
+      "ranking_strategy": "intent_blended",
+      "answer_boundary": "direct_answer",
+      "used_nearby_context": true
     },
     "composition_metrics": {
       "thin_section": false,
@@ -522,10 +528,13 @@
     },
     "retrieval_metadata": {
       "retrieval_backend": "memory",
+      "retrieval_quality_tier": "memory_ranked",
       "fallback_used": false,
       "fallback_reason": null,
       "seed_query": "Author Decisions narrative defaults for queues, cold weather, and shrine atmosphere market control, winter scarcity, rumor, and ritualized public order bakers, porters, clerks, and households waiting on ration lines Rouen 1421-1422 winter shortage economics daily life institutions ritual rumor",
-      "ranking_strategy": "intent_blended"
+      "ranking_strategy": "intent_blended",
+      "answer_boundary": "direct_answer",
+      "used_nearby_context": false
     },
     "composition_metrics": {
       "thin_section": false,

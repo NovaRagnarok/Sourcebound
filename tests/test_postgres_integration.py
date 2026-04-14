@@ -39,7 +39,7 @@ def test_operator_flow_routes_share_postgres_backed_state(
     assert _table_count(dsn, schema, "source_documents_state") == 10
     assert _table_count(dsn, schema, "text_units") == 10
     assert _table_count(dsn, schema, "extraction_runs") == 2
-    assert _table_count(dsn, schema, "candidates") == 6
+    assert _table_count(dsn, schema, "candidates") == 8
     assert _table_count(dsn, schema, "evidence") == 10
     assert _table_count(dsn, schema, "review_events") == 4
     assert _table_count(dsn, schema, "research_runs") == 1

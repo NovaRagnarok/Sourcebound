@@ -307,8 +307,10 @@ def _seed_source_documents() -> list[SourceDocumentRecord]:
             claim_extraction_status="completed",
             locator="folio 12r",
             raw_text=(
-                "Rouen bread prices rose during the winter shortage in Rouen in 1421, "
-                "and clerks marked the increase in the municipal ledger."
+                "Winter market notes from Rouen show that Rouen bread prices rose during "
+                "the winter shortage in Rouen in 1421, and clerks marked the increase in "
+                "the municipal ledger. Clerks repeated the mark beside each weekly grain "
+                "allotment."
             ),
         ),
         SourceDocumentRecord(
@@ -444,8 +446,9 @@ def _seed_source_documents() -> list[SourceDocumentRecord]:
             claim_extraction_status="completed",
             locator="curated input",
             raw_text=(
-                "Rouen parish beadles were posted at the grain bell in 1422, and witnesses "
-                "described how they counted households before opening the market."
+                "Witness depositions from Rouen report that Rouen parish beadles were posted "
+                "at the grain bell in 1422, and witnesses described how they counted "
+                "households before opening the market. Bakers waited under the arcade."
             ),
         ),
     ]
@@ -539,8 +542,8 @@ def _seed_evidence() -> list[EvidenceSnippet]:
                 "and clerks marked the increase in the municipal ledger."
             ),
             text_unit_id="txt-price-ledger",
-            span_start=0,
-            span_end=117,
+            span_start=40,
+            span_end=157,
             notes="Core economics evidence.",
         ),
         EvidenceSnippet(
@@ -656,8 +659,8 @@ def _seed_evidence() -> list[EvidenceSnippet]:
                 "described how they counted households before opening the market."
             ),
             text_unit_id="txt-research-grain-bell",
-            span_start=0,
-            span_end=137,
+            span_start=45,
+            span_end=182,
             notes="Accepted research finding awaiting review.",
         ),
     ]
@@ -743,6 +746,22 @@ def _seed_candidates() -> list[CandidateClaim]:
             notes="Pending because it is vivid but folkloric.",
         ),
         CandidateClaim(
+            candidate_id="cand-shrine-lantern-omen",
+            subject="Saint Romain shrine lanterns",
+            predicate="were_taken_as",
+            value="an omen before the thaw of 1422",
+            claim_kind=ClaimKind.BELIEF,
+            status_suggestion=ClaimStatus.RUMOR,
+            review_state=ReviewState.NEEDS_EDIT,
+            place="Rouen",
+            time_start="1422-02-01",
+            time_end="1422-02-28",
+            viewpoint_scope="sailors",
+            evidence_ids=["evi-blue-lanterns"],
+            extractor_run_id=_SEED_CORE_RUN_ID,
+            notes="Good atmosphere, but the wording needs to stay explicitly folkloric.",
+        ),
+        CandidateClaim(
             candidate_id="cand-grain-bell-beadles",
             subject="Rouen parish beadles",
             predicate="were_posted_at",
@@ -757,6 +776,21 @@ def _seed_candidates() -> list[CandidateClaim]:
             extractor_run_id=_SEED_RESEARCH_EXTRACT_RUN_ID,
             notes="Strong stage/extract result that still needs review.",
         ),
+        CandidateClaim(
+            candidate_id="cand-grain-bell-timing",
+            subject="Rouen grain bell",
+            predicate="rang_after",
+            value="prime and terce in January 1422",
+            claim_kind=ClaimKind.INSTITUTION,
+            status_suggestion=ClaimStatus.CONTESTED,
+            review_state=ReviewState.NEEDS_SPLIT,
+            place="Rouen",
+            time_start="1422-01-01",
+            time_end="1422-01-31",
+            evidence_ids=["evi-bell-prime", "evi-bell-terce"],
+            extractor_run_id=_SEED_CORE_RUN_ID,
+            notes="Merged contradictory bell timings; split the reports before approval.",
+        ),
     ]
 
 
@@ -767,7 +801,7 @@ def _seed_extraction_runs() -> list[ExtractionRun]:
             status=ExtractionRunStatus.COMPLETED,
             source_count=8,
             text_unit_count=8,
-            candidate_count=4,
+            candidate_count=6,
             started_at="2026-04-12T08:05:00+00:00",
             completed_at="2026-04-12T08:07:00+00:00",
             notes="Core offline fixture extraction across the historical source pack.",

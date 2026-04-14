@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from source_aware_worldbuilding.domain.enums import (
     BibleSectionGenerationStatus,
@@ -376,6 +376,17 @@ class EvidenceSnippet(BaseModel):
     checksum: str | None = None
 
 
+ReviewEvidenceQuality = Literal["supported", "thin", "blind"]
+ReviewWeaknessReason = Literal[
+    "missing_evidence",
+    "missing_span_context",
+    "short_excerpt",
+    "single_snippet",
+    "missing_locator",
+]
+ReviewDeferState = Literal["needs_split", "needs_edit"]
+
+
 class CandidateClaim(BaseModel):
     candidate_id: str
     subject: str
@@ -430,6 +441,50 @@ class ReviewEvent(BaseModel):
     override_status: ClaimStatus | None = None
     notes: str | None = None
     approved_claim_id: str | None = None
+
+
+class ReviewClaimPatch(BaseModel):
+    subject: str | None = None
+    predicate: str | None = None
+    value: str | None = None
+    place: str | None = None
+    time_start: str | None = None
+    time_end: str | None = None
+    viewpoint_scope: str | None = None
+
+    @field_validator("*", mode="before")
+    @classmethod
+    def normalize_blank_strings(cls, value):
+        if isinstance(value, str):
+            value = value.strip()
+            return value or None
+        return value
+
+
+class ReviewEvidencePreview(BaseModel):
+    evidence_id: str
+    source_id: str
+    source_title: str
+    source_type: str | None = None
+    locator: str | None = None
+    excerpt: str
+    context_before: str = ""
+    context_after: str = ""
+    span_start: int | None = None
+    span_end: int | None = None
+    text_unit_id: str | None = None
+    notes: str | None = None
+
+
+class ReviewQueueCard(CandidateClaim):
+    claim_text: str
+    certainty_suggestion: ClaimStatus
+    location_summary: str | None = None
+    evidence_quality: ReviewEvidenceQuality
+    weakness_reasons: list[ReviewWeaknessReason] = Field(default_factory=list)
+    primary_evidence: ReviewEvidencePreview | None = None
+    extra_evidence_count: int = 0
+    evidence_items: list[ReviewEvidencePreview] = Field(default_factory=list)
 
 
 class ExtractionOutput(BaseModel):
@@ -503,7 +558,17 @@ class IntakeResult(BaseModel):
 class ReviewRequest(BaseModel):
     decision: ReviewDecision
     override_status: ClaimStatus | None = None
+    claim_patch: ReviewClaimPatch | None = None
+    defer_state: ReviewDeferState | None = None
     notes: str | None = None
+
+    @model_validator(mode="after")
+    def validate_review_shape(self) -> ReviewRequest:
+        if self.defer_state is not None and self.decision != ReviewDecision.REJECT:
+            raise ValueError("defer_state can only be used with reject decisions")
+        if self.claim_patch is not None and self.decision != ReviewDecision.APPROVE:
+            raise ValueError("claim_patch can only be used with approve decisions")
+        return self
 
 
 class QueryFilter(BaseModel):

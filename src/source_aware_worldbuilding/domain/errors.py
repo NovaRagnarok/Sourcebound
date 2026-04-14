@@ -6,6 +6,10 @@ class WikibaseSyncError(RuntimeError):
     """Raised when canonical Wikibase sync cannot complete."""
 
 
+class ReviewConflictError(RuntimeError):
+    """Raised when a review action conflicts with the candidate's current state."""
+
+
 class ZoteroError(RuntimeError):
     """Base class for Zotero read/write/configuration failures."""
 

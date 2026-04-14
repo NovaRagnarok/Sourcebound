@@ -327,6 +327,8 @@ def get_review_service() -> ReviewService:
         truth_store=get_truth_store(),
         review_store=get_review_store(),
         evidence_store=get_evidence_store(),
+        source_store=get_source_store(),
+        text_unit_store=get_text_unit_store(),
         projection=get_projection(),
     )
 

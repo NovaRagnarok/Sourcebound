@@ -26,6 +26,7 @@
     normalizeDocuments: "/v1/ingest/normalize-documents",
     extractCandidates: "/v1/ingest/extract-candidates",
     candidates: "/v1/candidates",
+    reviewQueue: "/v1/candidates/review-queue",
     reviewCandidate: (candidateId) => `/v1/candidates/${candidateId}/review`,
     claims: "/v1/claims",
     query: "/v1/query",
@@ -59,6 +60,7 @@
     sources: clone(seed.sources),
     evidence: clone(seed.evidence),
     candidates: clone(seed.candidates),
+    reviewQueue: clone(seed.reviewQueue || []),
     claims: clone(seed.claims),
     runs: clone(seed.extractionRuns),
     researchRuns: clone(seed.researchRuns || []),
@@ -88,11 +90,12 @@
     selectedRunId: seed.extractionRuns[0]?.run_id ?? null,
     selectedResearchRunId: seed.researchRuns?.[0]?.run_id ?? null,
     researchRunDetail: null,
-    selectedCandidateId: seed.candidates.find((candidate) => candidate.review_state === "pending")
-      ?.candidate_id ?? seed.candidates[0]?.candidate_id ?? null,
+    selectedCandidateId: getReviewCards(seed).find((candidate) => isUnresolvedReviewState(candidate.review_state))
+      ?.candidate_id ?? getReviewCards(seed)[0]?.candidate_id ?? null,
+    editingCandidateId: null,
     selectedClaimId: seed.claims[0]?.claim_id ?? null,
     filters: {
-      candidates: "pending",
+      candidates: "unresolved",
       claims: "all",
       researchDecision: "all",
       researchReason: "all",
@@ -444,13 +447,40 @@
         return;
       }
 
+      if (action === "toggle-candidate-context") {
+        const candidateId = actionButton.dataset.candidateId;
+        state.selectedCandidateId = state.selectedCandidateId === candidateId ? null : candidateId;
+        if (state.editingCandidateId && state.editingCandidateId !== state.selectedCandidateId) {
+          state.editingCandidateId = null;
+        }
+        persistState();
+        render();
+        return;
+      }
+
+      if (action === "edit-candidate-review") {
+        const candidateId = actionButton.dataset.candidateId;
+        state.selectedCandidateId = candidateId;
+        state.editingCandidateId = candidateId;
+        persistState();
+        render();
+        return;
+      }
+
+      if (action === "cancel-candidate-edit") {
+        state.editingCandidateId = null;
+        persistState();
+        render();
+        return;
+      }
+
       // Submit actions are handled by the form submit listener to avoid duplicate posts.
     });
 
     nodes.app.addEventListener("submit", async (event) => {
       if (event.target.dataset.form === "review") {
         event.preventDefault();
-        await submitReview(event.target);
+        await submitReview(event.target, event.submitter);
       }
 
       if (event.target.dataset.form === "query") {
@@ -699,7 +729,7 @@
     }
 
     try {
-      const [workspaceSummaryResult, sourcesResult, researchRunsResult, researchProgramsResult, runsResult, candidatesResult, claimsResult, runtimeResult, bibleProfilesResult, jobsResult] =
+      const [workspaceSummaryResult, sourcesResult, researchRunsResult, researchProgramsResult, runsResult, candidatesResult, reviewQueueResult, claimsResult, runtimeResult, bibleProfilesResult, jobsResult] =
         await Promise.allSettled([
           fetchJson(API.workspaceSummary),
           fetchJson(API.sources),
@@ -707,6 +737,7 @@
           fetchJson(API.researchPrograms),
           fetchJson(API.runs),
           fetchJson(API.candidates),
+          fetchJson(API.reviewQueue),
           fetchJson(API.claims),
           fetchJson(API.runtimeStatus),
           fetchJson(API.bibleProfiles),
@@ -737,6 +768,10 @@
         state.candidates = candidatesResult.value;
       }
 
+      if (reviewQueueResult.status === "fulfilled") {
+        state.reviewQueue = reviewQueueResult.value;
+      }
+
       if (claimsResult.status === "fulfilled") {
         state.claims = claimsResult.value;
       }
@@ -757,7 +792,7 @@
         }
       }
 
-      const online = [workspaceSummaryResult, sourcesResult, researchRunsResult, researchProgramsResult, runsResult, candidatesResult, claimsResult, runtimeResult, bibleProfilesResult, jobsResult].some(
+      const online = [workspaceSummaryResult, sourcesResult, researchRunsResult, researchProgramsResult, runsResult, candidatesResult, reviewQueueResult, claimsResult, runtimeResult, bibleProfilesResult, jobsResult].some(
         (result) => result.status === "fulfilled"
       );
       const runtimeSummary = summarizeRuntime();
@@ -820,9 +855,24 @@
       state.selectedRunId = state.runs[0].run_id;
     }
 
-    if (!state.selectedCandidateId && state.candidates.length) {
-      state.selectedCandidateId = state.candidates.find((candidate) => candidate.review_state === "pending")
-        ?.candidate_id ?? state.candidates[0].candidate_id;
+    const reviewCards = state.reviewQueue.length ? state.reviewQueue : state.candidates;
+    if (
+      state.selectedCandidateId &&
+      !reviewCards.some((candidate) => candidate.candidate_id === state.selectedCandidateId)
+    ) {
+      state.selectedCandidateId = null;
+    }
+
+    if (!state.selectedCandidateId && reviewCards.length) {
+      state.selectedCandidateId = reviewCards.find((candidate) => isUnresolvedReviewState(candidate.review_state))
+        ?.candidate_id ?? reviewCards[0].candidate_id;
+    }
+
+    if (
+      state.editingCandidateId &&
+      !reviewCards.some((candidate) => candidate.candidate_id === state.editingCandidateId)
+    ) {
+      state.editingCandidateId = null;
     }
 
     if (!state.selectedClaimId && state.claims.length) {
@@ -843,7 +893,7 @@
 
   function updateMetrics() {
     const pendingCount = state.workspaceSummary?.pending_review_count
-      ?? state.candidates.filter((candidate) => candidate.review_state === "pending").length;
+      ?? state.candidates.filter((candidate) => isUnresolvedReviewState(candidate.review_state)).length;
     nodes.metricLabelSources.textContent = "Bible sections";
     nodes.metricSources.textContent = String(state.workspaceSummary?.bible_section_count ?? state.bible.sections.length);
     nodes.metricLabelPending.textContent = "Needs review";
@@ -1031,7 +1081,7 @@
           }
         : null
     );
-    const pendingCandidates = state.candidates.filter((candidate) => candidate.review_state === "pending");
+    const pendingCandidates = state.candidates.filter((candidate) => isUnresolvedReviewState(candidate.review_state));
     const thinCoverage = coverage.filter((item) => item.summary !== "ready");
     const researchRunsNeedingAttention = state.researchRuns.filter((run) =>
       ["queued", "running", "partial"].includes(run.status)
@@ -2025,7 +2075,7 @@
             <p>${escapeHtml(profile?.narrative_focus || "Anchor the period, track what is true, and keep rumors and author choices visibly separate.")}</p>
           </div>
           <div class="funnel">
-            <div><strong>${state.candidates.filter((candidate) => candidate.review_state === "pending").length}</strong><span>Needs review</span></div>
+            <div><strong>${state.candidates.filter((candidate) => isUnresolvedReviewState(candidate.review_state)).length}</strong><span>Needs review</span></div>
             <div><strong>${readyForBible}</strong><span>Eligible canon</span></div>
             <div><strong>${nonReadyCount}</strong><span>Sections not ready</span></div>
           </div>
@@ -2794,62 +2844,37 @@
   }
 
   function renderReviewScreen() {
-    const filteredCandidates = state.candidates.filter((candidate) => {
+    const reviewCards = getReviewCards();
+    const filteredCandidates = reviewCards.filter((candidate) => {
       if (state.filters.candidates === "all") return true;
+      if (state.filters.candidates === "unresolved") return isUnresolvedReviewState(candidate.review_state);
       return candidate.review_state === state.filters.candidates;
-    }).sort((left, right) => {
-      const leftPending = left.review_state === "pending" ? 1 : 0;
-      const rightPending = right.review_state === "pending" ? 1 : 0;
-      const leftPlace = left.place === state.bible.profile?.geography ? 1 : 0;
-      const rightPlace = right.place === state.bible.profile?.geography ? 1 : 0;
-      return rightPending - leftPending || rightPlace - leftPlace || left.subject.localeCompare(right.subject);
     });
-    const selected = filteredCandidates.find((candidate) => candidate.candidate_id === state.selectedCandidateId) ?? filteredCandidates[0];
 
     return `
       <article class="screen fade-in">
         <div class="screen-head">
           <div>
             <h2 data-active-screen>Review New Facts</h2>
-            <p>Review is still the trust gate. Candidate facts wait here until you approve them into canon or reject them as noise.</p>
+            <p>Review is still the trust gate. Each card shows the claim, evidence span, and nearby context so nobody has to approve canon blind.</p>
           </div>
           <div class="screen-actions">
             <div class="chip-bar" role="tablist" aria-label="Candidate filters">
               ${renderFilterChip("candidates", "all", "All")}
+              ${renderFilterChip("candidates", "unresolved", "Needs review")}
               ${renderFilterChip("candidates", "pending", "Pending")}
+              ${renderFilterChip("candidates", "needs_edit", "Needs edit")}
+              ${renderFilterChip("candidates", "needs_split", "Needs split")}
               ${renderFilterChip("candidates", "approved", "Approved")}
               ${renderFilterChip("candidates", "rejected", "Rejected")}
             </div>
           </div>
         </div>
 
-        <div class="split">
-          <div class="surface list">
-            ${filteredCandidates.length
-              ? filteredCandidates
-                  .map(
-                    (candidate) => `
-                      <button class="list-row ${candidate.candidate_id === selected?.candidate_id ? "is-selected" : ""}" type="button" data-select-candidate="${escapeHtml(candidate.candidate_id)}">
-                        <div>
-                          <div class="row-title">${escapeHtml(candidate.subject)}</div>
-                          <div class="row-subtitle">${escapeHtml(candidate.predicate)} · ${escapeHtml(candidate.value)}</div>
-                        </div>
-                        <div class="row-meta">
-                          <span class="pill ${escapeHtml(candidate.review_state)}">${escapeHtml(candidate.review_state)}</span>
-                          <span>${escapeHtml(candidate.place || candidate.claim_kind)}</span>
-                        </div>
-                        <div class="row-meta">${escapeHtml(candidate.status_suggestion)}${candidate.time_start ? ` · ${escapeHtml(candidate.time_start)}` : ""}</div>
-                        <div class="row-meta">${escapeHtml(candidate.evidence_ids.length)} supporting snippet${candidate.evidence_ids.length === 1 ? "" : "s"}</div>
-                      </button>
-                    `
-                  )
-                  .join("")
-              : "<div class='helper' style='padding:14px;'>No candidates match the current filter.</div>"}
-          </div>
-
-          <aside class="detail">
-            ${selected ? renderCandidateDetail(selected) : "<div class='helper'>No candidate selected.</div>"}
-          </aside>
+        <div class="review-card-list">
+          ${filteredCandidates.length
+            ? filteredCandidates.map((candidate) => renderReviewCard(candidate)).join("")
+            : "<div class='detail'><div class='helper'>No candidates match the current filter.</div></div>"}
         </div>
       </article>
     `;
@@ -2870,104 +2895,155 @@
     `;
   }
 
-  function renderCandidateDetail(candidate) {
-    const matchingEvidence = candidate.evidence_ids
-      .map((id) => state.evidence.find((snippet) => snippet.evidence_id === id))
-      .filter(Boolean);
+  function renderReviewCard(candidate) {
+    const expanded = candidate.candidate_id === state.selectedCandidateId;
+    const editing = candidate.candidate_id === state.editingCandidateId;
+    const primary = candidate.primary_evidence;
+    const extraEvidence = (candidate.evidence_items || []).slice(1);
+    const allowSuggestedApproval = canApproveCandidateAsSuggested(candidate);
 
     return `
-      <div class="detail-head">
-        <div>
-          <h3>${escapeHtml(candidate.subject)}</h3>
-          <div class="detail-note">${escapeHtml(candidate.predicate)} · ${escapeHtml(candidate.value)}</div>
+      <form class="detail review-card ${expanded ? "is-expanded" : ""}" data-form="review" data-candidate-id="${escapeHtml(candidate.candidate_id)}">
+        <div class="detail-head">
+          <div>
+            <h3>${escapeHtml(candidate.claim_text || `${candidate.subject} ${candidate.value}`)}</h3>
+            <div class="detail-note">${escapeHtml(primary?.source_title || "No source attached")}</div>
+          </div>
+          <div class="toolbar">
+            <span class="pill ${escapeHtml(candidate.review_state)}">${escapeHtml(candidate.review_state)}</span>
+            <span class="pill ${escapeHtml(candidate.evidence_quality)}">${escapeHtml(candidate.evidence_quality)}</span>
+          </div>
         </div>
-        <span class="pill ${escapeHtml(candidate.review_state)}">${escapeHtml(candidate.review_state)}</span>
-      </div>
-      <div class="detail-grid">
-        <div class="field">
-          <label>Suggested certainty</label>
-          <div>${escapeHtml(candidate.status_suggestion)}</div>
-        </div>
-        <div class="field">
-          <label>Claim kind</label>
-          <div>${escapeHtml(candidate.claim_kind)}</div>
-        </div>
-        <div class="field">
-          <label>Place</label>
-          <div>${escapeHtml(candidate.place || "n/a")}</div>
-        </div>
-        <div class="field">
-          <label>Viewpoint scope</label>
-          <div>${escapeHtml(candidate.viewpoint_scope || "n/a")}</div>
-        </div>
-      </div>
-      <div class="field">
-        <label>Supporting evidence</label>
-        <div class="detail-list">
-          ${matchingEvidence.length
-            ? matchingEvidence
-                .map(
-                  (snippet) => {
-                    const source = state.sources.find((item) => item.source_id === snippet.source_id);
-                    return `
-                    <div class="mini">
-                      <div class="toolbar">
-                        <strong>${escapeHtml(source?.title || snippet.source_id || "Source")}</strong>
-                        <span class="pill probable">${escapeHtml(source?.source_type || "source")}</span>
-                      </div>
-                      <div class="detail-note">${escapeHtml(snippet.locator || "locator unavailable")}</div>
-                      <div>${escapeHtml(snippet.text)}</div>
-                      <div class="detail-note">${escapeHtml(snippet.notes || "No note")}</div>
-                      ${state.workspaceMode === "advanced" ? `
-                        <details class="detail-note">
-                          <summary>Raw extraction details</summary>
-                          <div style="margin-top:8px;">
-                            evidence ${escapeHtml(snippet.evidence_id)}
-                            · text unit ${escapeHtml(snippet.text_unit_id || "n/a")}
-                            · span [${escapeHtml(snippet.span_start ?? "n/a")}, ${escapeHtml(snippet.span_end ?? "n/a")}]
-                          </div>
-                        </details>
-                      ` : ""}
-                    </div>
-                  `;
-                  }
-                )
-                .join("")
-            : "<div class='helper'>No evidence linked to this candidate.</div>"}
-        </div>
-      </div>
-      <form class="detail-stack" data-form="review">
+
         <div class="detail-grid">
           <div class="field">
-            <label>Decision</label>
-            <select name="decision">
-              <option value="approve">Approve</option>
-              <option value="reject">Reject</option>
-            </select>
+            <label>Evidence span</label>
+            <div class="review-excerpt">${escapeHtml(primary?.excerpt || "No evidence excerpt available.")}</div>
           </div>
           <div class="field">
-            <label>Override status</label>
-            <select name="override_status">
-              <option value="">Use suggestion</option>
-              <option value="verified">Verified</option>
-              <option value="probable">Probable</option>
-              <option value="contested">Contested</option>
-              <option value="rumor">Rumor</option>
-              <option value="legend">Legend</option>
-              <option value="author_choice">Author choice</option>
-            </select>
+            <label>Review summary</label>
+            <div class="detail-stack">
+              <div>${escapeHtml(candidate.location_summary || "Location metadata unavailable")}</div>
+              <div>${escapeHtml(candidate.certainty_suggestion || candidate.status_suggestion)}</div>
+              <div>${escapeHtml((candidate.extra_evidence_count || 0) > 0 ? `+${candidate.extra_evidence_count} more evidence span${candidate.extra_evidence_count === 1 ? "" : "s"}` : `${candidate.evidence_ids.length} linked evidence span${candidate.evidence_ids.length === 1 ? "" : "s"}`)}</div>
+            </div>
           </div>
         </div>
-        <div class="field">
-          <label>Review notes</label>
-          <textarea name="notes" placeholder="Add rationale, source concerns, or an editorial note.">${escapeHtml(candidate.notes || "")}</textarea>
+
+        ${candidate.weakness_reasons?.length ? `
+          <div class="inline-metrics review-weaknesses">
+            ${candidate.weakness_reasons.map((reason) => `<span>${escapeHtml(formatReviewWeakness(reason))}</span>`).join("")}
+          </div>
+        ` : ""}
+
+        <div class="toolbar review-actions">
+          <button class="secondary-button" type="button" data-action="toggle-candidate-context" data-candidate-id="${escapeHtml(candidate.candidate_id)}">
+            ${expanded ? "Hide context" : "Expand context"}
+          </button>
+          ${allowSuggestedApproval
+            ? '<button class="primary-button" type="submit" name="review_action" value="approve_suggested">Approve as suggested</button>'
+            : '<span class="helper">Deferred cards need an edited approval before they can enter canon.</span>'}
+          <button class="secondary-button" type="button" data-action="edit-candidate-review" data-candidate-id="${escapeHtml(candidate.candidate_id)}">Approve with edits</button>
+          <button class="secondary-button" type="submit" name="review_action" value="needs_edit">Needs edit</button>
+          <button class="secondary-button" type="submit" name="review_action" value="needs_split">Needs split</button>
+          <button class="secondary-button" type="submit" name="review_action" value="reject">Reject</button>
         </div>
-        <div class="toolbar">
-          <button class="primary-button" type="submit" data-action="review-submit">Submit review</button>
-          <span class="helper">Submitting approval writes to the truth store; rejection only updates the queue.</span>
-        </div>
+
+        ${expanded ? `
+          <div class="detail-stack review-expanded">
+            <div class="field">
+              <label>Context around evidence span</label>
+              <div class="review-context">
+                <span class="review-context-muted">${escapeHtml(primary?.context_before || "")}</span><mark>${escapeHtml(primary?.excerpt || "No span excerpt available.")}</mark><span class="review-context-muted">${escapeHtml(primary?.context_after || "")}</span>
+              </div>
+              <div class="detail-note">${escapeHtml(primary?.locator || "locator unavailable")}${primary?.text_unit_id ? ` · text unit ${escapeHtml(primary.text_unit_id)}` : ""}</div>
+            </div>
+
+            ${extraEvidence.length ? `
+              <div class="field">
+                <label>Additional evidence</label>
+                <div class="detail-list">
+                  ${extraEvidence.map((snippet) => `
+                    <div class="mini">
+                      <div class="toolbar">
+                        <strong>${escapeHtml(snippet.source_title || snippet.source_id)}</strong>
+                        <span class="detail-note">${escapeHtml(snippet.locator || "locator unavailable")}</span>
+                      </div>
+                      <div>${escapeHtml(snippet.excerpt || "No excerpt available.")}</div>
+                    </div>
+                  `).join("")}
+                </div>
+              </div>
+            ` : ""}
+
+            <div class="detail-grid">
+              <div class="field">
+                <label>Suggested certainty</label>
+                <select name="override_status">
+                  <option value="">Use suggestion (${escapeHtml(candidate.status_suggestion)})</option>
+                  <option value="verified">Verified</option>
+                  <option value="probable">Probable</option>
+                  <option value="contested">Contested</option>
+                  <option value="rumor">Rumor</option>
+                  <option value="legend">Legend</option>
+                  <option value="author_choice">Author choice</option>
+                </select>
+              </div>
+              <div class="field">
+                <label>Claim kind</label>
+                <div>${escapeHtml(candidate.claim_kind)}</div>
+              </div>
+            </div>
+
+            <div class="field">
+              <label>Review notes</label>
+              <textarea name="notes" placeholder="Add rationale, source concerns, or a follow-up instruction.">${escapeHtml(candidate.notes || "")}</textarea>
+            </div>
+
+            ${editing ? `
+              <div class="review-edit-grid">
+                <div class="field">
+                  <label>Subject</label>
+                  <input name="patch_subject" value="${escapeHtml(candidate.subject || "")}" />
+                </div>
+                <div class="field">
+                  <label>Predicate</label>
+                  <input name="patch_predicate" value="${escapeHtml(candidate.predicate || "")}" />
+                </div>
+                <div class="field">
+                  <label>Value</label>
+                  <textarea name="patch_value">${escapeHtml(candidate.value || "")}</textarea>
+                </div>
+                <div class="field">
+                  <label>Place</label>
+                  <input name="patch_place" value="${escapeHtml(candidate.place || "")}" />
+                </div>
+                <div class="field">
+                  <label>Time start</label>
+                  <input name="patch_time_start" value="${escapeHtml(candidate.time_start || "")}" />
+                </div>
+                <div class="field">
+                  <label>Time end</label>
+                  <input name="patch_time_end" value="${escapeHtml(candidate.time_end || "")}" />
+                </div>
+                <div class="field">
+                  <label>Viewpoint scope</label>
+                  <input name="patch_viewpoint_scope" value="${escapeHtml(candidate.viewpoint_scope || "")}" />
+                </div>
+              </div>
+              <div class="toolbar">
+                <button class="primary-button" type="submit" name="review_action" value="approve_with_edits">Submit edited approval</button>
+                <button class="secondary-button" type="button" data-action="cancel-candidate-edit">Cancel edit mode</button>
+              </div>
+            ` : ""}
+          </div>
+        ` : ""}
       </form>
     `;
+  }
+
+  function formatReviewWeakness(reason) {
+    return reason.replaceAll("_", " ");
   }
 
   function renderClaimsScreen() {
@@ -3455,7 +3531,17 @@
           console.warn("Could not refresh runs after extraction", error);
         }
       }
-      state.selectedCandidateId = state.candidates.find((candidate) => candidate.review_state === "pending")?.candidate_id ?? state.candidates[0]?.candidate_id ?? null;
+      try {
+        state.reviewQueue = await fetchJson(API.reviewQueue);
+      } catch (error) {
+        console.warn("Could not refresh review queue after extraction", error);
+      }
+      state.selectedCandidateId =
+        state.reviewQueue.find((candidate) => isUnresolvedReviewState(candidate.review_state))?.candidate_id ??
+        state.candidates.find((candidate) => isUnresolvedReviewState(candidate.review_state))?.candidate_id ??
+        state.reviewQueue[0]?.candidate_id ??
+        state.candidates[0]?.candidate_id ??
+        null;
       state.lastSync = new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
       nodes.lastSync.textContent = state.lastSync;
       await refreshRuntimeStatus();
@@ -3486,40 +3572,74 @@
     }
   }
 
-  async function submitReview(form) {
-    const candidateId = state.selectedCandidateId;
+  async function submitReview(form, submitter) {
+    const candidateId = form.dataset.candidateId || state.selectedCandidateId;
     if (!candidateId) {
       setBanner("failed", "No candidate selected", "Pick a candidate before submitting a review.");
       return;
     }
 
+    const candidate = findReviewCandidate(candidateId);
     const formData = new FormData(form);
-    const decision = formData.get("decision");
+    const action = submitter?.value || "approve_suggested";
     const overrideStatus = formData.get("override_status");
     const notes = String(formData.get("notes") || "").trim();
+    const reviewBody = {
+      decision: action === "approve_suggested" || action === "approve_with_edits" ? "approve" : "reject",
+      override_status:
+        action === "approve_suggested" || action === "approve_with_edits"
+          ? (overrideStatus || null)
+          : null,
+      defer_state:
+        action === "needs_edit"
+          ? "needs_edit"
+          : action === "needs_split"
+            ? "needs_split"
+            : null,
+      claim_patch:
+        action === "approve_with_edits"
+          ? compactReviewPatch({
+              subject: formData.get("patch_subject"),
+              predicate: formData.get("patch_predicate"),
+              value: formData.get("patch_value"),
+              place: formData.get("patch_place"),
+              time_start: formData.get("patch_time_start"),
+              time_end: formData.get("patch_time_end"),
+              viewpoint_scope: formData.get("patch_viewpoint_scope"),
+            }, candidate)
+          : null,
+      notes: notes || null,
+    };
 
     applyLoading(true);
     try {
       const payload = await fetchJson(API.reviewCandidate(candidateId), {
         method: "POST",
-        body: {
-          decision,
-          override_status: overrideStatus || null,
-          notes: notes || null,
-        },
+        body: reviewBody,
       });
 
       if (payload.status === "rejected") {
+        const nextState = reviewBody.defer_state || "rejected";
         state.candidates = state.candidates.map((candidate) =>
-          candidate.candidate_id === candidateId ? { ...candidate, review_state: "rejected" } : candidate
+          candidate.candidate_id === candidateId ? { ...candidate, review_state: nextState } : candidate
         );
-        setBanner("live", "Candidate rejected", `Candidate ${candidateId} is now marked rejected.`);
+        setBanner(
+          "live",
+          nextState === "rejected" ? "Candidate rejected" : "Candidate deferred",
+          nextState === "rejected"
+            ? `Candidate ${candidateId} is now marked rejected.`
+            : `Candidate ${candidateId} is now flagged ${nextState.replaceAll("_", " ")}.`
+        );
       } else if (payload.claim) {
         state.candidates = state.candidates.map((candidate) =>
           candidate.candidate_id === candidateId ? { ...candidate, review_state: "approved" } : candidate
         );
         state.claims = [payload.claim, ...state.claims.filter((claim) => claim.claim_id !== payload.claim.claim_id)];
-        setBanner("live", "Candidate approved", `Claim ${payload.claim.claim_id} was written to the truth store.`);
+        setBanner(
+          "live",
+          action === "approve_with_edits" ? "Edited candidate approved" : "Candidate approved",
+          `Claim ${payload.claim.claim_id} was written to the truth store.`
+        );
       }
 
       await refreshAfterReview(candidateId);
@@ -3540,20 +3660,23 @@
 
   async function refreshAfterReview(candidateId) {
     try {
-      const [candidates, claims, workspaceSummary] = await Promise.all([
+      const [candidates, reviewQueue, claims, workspaceSummary] = await Promise.all([
         fetchJson(API.candidates),
+        fetchJson(API.reviewQueue),
         fetchJson(API.claims),
         fetchJson(API.workspaceSummary),
       ]);
       state.candidates = candidates;
+      state.reviewQueue = reviewQueue;
       state.claims = claims;
       state.workspaceSummary = workspaceSummary;
       await refreshRuntimeStatus();
       state.selectedCandidateId =
-        state.candidates.find((candidate) => candidate.review_state === "pending")?.candidate_id ??
-        state.candidates.find((candidate) => candidate.candidate_id === candidateId)?.candidate_id ??
-        state.candidates[0]?.candidate_id ??
+        state.reviewQueue.find((candidate) => isUnresolvedReviewState(candidate.review_state))?.candidate_id ??
+        state.reviewQueue.find((candidate) => candidate.candidate_id === candidateId)?.candidate_id ??
+        state.reviewQueue[0]?.candidate_id ??
         null;
+      state.editingCandidateId = null;
       updateSelectionFallbacks();
       setApiStatus(true, "Review sync complete.");
     } catch (error) {
@@ -4181,7 +4304,7 @@
           await refreshLiveData({ quiet: true });
           await refreshResearchDetail(runId, { quiet: true });
           state.selectedCandidateId =
-            state.candidates.find((candidate) => candidate.review_state === "pending")?.candidate_id ??
+            state.candidates.find((candidate) => isUnresolvedReviewState(candidate.review_state))?.candidate_id ??
             state.candidates[0]?.candidate_id ??
             null;
           if (finishedJob.status === "completed") {
@@ -4296,6 +4419,39 @@
     if (direct.has(claimId)) return "verified";
     if (adjacent.has(claimId)) return "probable";
     return "queued";
+  }
+
+  function isUnresolvedReviewState(reviewState) {
+    return ["pending", "needs_split", "needs_edit"].includes(reviewState);
+  }
+
+  function isDeferredReviewState(reviewState) {
+    return ["needs_split", "needs_edit"].includes(reviewState);
+  }
+
+  function canApproveCandidateAsSuggested(candidate) {
+    return !isDeferredReviewState(candidate?.review_state);
+  }
+
+  function getReviewCards(sourceState = state) {
+    return sourceState.reviewQueue?.length ? sourceState.reviewQueue : sourceState.candidates;
+  }
+
+  function findReviewCandidate(candidateId) {
+    return getReviewCards().find((candidate) => candidate.candidate_id === candidateId)
+      ?? state.candidates.find((candidate) => candidate.candidate_id === candidateId)
+      ?? null;
+  }
+
+  function compactReviewPatch(patch, candidate = null) {
+    const entries = Object.entries(patch || {}).reduce((accumulator, [key, rawValue]) => {
+      const value = nullableString(rawValue);
+      if (value && value !== nullableString(candidate?.[key])) {
+        accumulator.push([key, value]);
+      }
+      return accumulator;
+    }, []);
+    return entries.length ? Object.fromEntries(entries) : null;
   }
 
   function nullableString(value) {

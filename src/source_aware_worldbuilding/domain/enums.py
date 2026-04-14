@@ -19,6 +19,15 @@ class ReviewState(StrEnum):
     SUPERSEDED = "superseded"
 
 
+UNRESOLVED_REVIEW_STATES = frozenset(
+    {
+        ReviewState.PENDING,
+        ReviewState.NEEDS_SPLIT,
+        ReviewState.NEEDS_EDIT,
+    }
+)
+
+
 class ClaimKind(StrEnum):
     PERSON = "person"
     PLACE = "place"

@@ -775,6 +775,21 @@ a {
   background: rgba(91, 61, 120, 0.12);
 }
 
+.pill.supported {
+  color: var(--success);
+  background: rgba(47, 106, 77, 0.11);
+}
+
+.pill.thin {
+  color: var(--accent);
+  background: rgba(155, 90, 47, 0.11);
+}
+
+.pill.blind {
+  color: var(--danger);
+  background: rgba(159, 63, 53, 0.11);
+}
+
 .detail {
   display: grid;
   gap: 12px;
@@ -860,6 +875,79 @@ a {
   border: 1px solid var(--line);
   border-radius: 14px;
   background: rgba(255, 255, 255, 0.68);
+}
+
+.review-card-list {
+  display: grid;
+  gap: 14px;
+}
+
+.review-card {
+  gap: 14px;
+  padding: 16px;
+  background:
+    linear-gradient(135deg, rgba(255, 252, 247, 0.96), rgba(248, 243, 236, 0.92));
+}
+
+.review-card.is-expanded {
+  border-color: rgba(155, 90, 47, 0.28);
+  box-shadow: 0 14px 28px rgba(25, 22, 20, 0.06);
+}
+
+.review-excerpt {
+  font-size: 1rem;
+  line-height: 1.55;
+}
+
+.review-expanded {
+  padding-top: 6px;
+  border-top: 1px solid rgba(25, 22, 20, 0.08);
+}
+
+.review-context {
+  padding: 14px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.82);
+  border: 1px solid var(--line);
+  line-height: 1.65;
+}
+
+.review-context mark {
+  padding: 0 4px;
+  border-radius: 6px;
+  background: rgba(155, 90, 47, 0.18);
+  color: inherit;
+}
+
+.review-context-muted {
+  color: var(--muted);
+}
+
+.review-actions {
+  align-items: stretch;
+}
+
+.review-actions .secondary-button,
+.review-actions .primary-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.review-weaknesses span {
+  background: rgba(25, 22, 20, 0.04);
+}
+
+.review-edit-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.review-edit-grid .field:first-child,
+.review-edit-grid .field:nth-child(2),
+.review-edit-grid .field:nth-child(3) {
+  grid-column: span 2;
 }
 
 .inline-metrics {
@@ -1263,8 +1351,15 @@ a {
 
   .query-row,
   .detail-grid,
-  .list-row {
+  .list-row,
+  .review-edit-grid {
     grid-template-columns: 1fr;
+  }
+
+  .review-edit-grid .field:first-child,
+  .review-edit-grid .field:nth-child(2),
+  .review-edit-grid .field:nth-child(3) {
+    grid-column: span 1;
   }
 
   .workspace-panel,

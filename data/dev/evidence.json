@@ -5,8 +5,8 @@
     "locator": "folio 12r",
     "text": "Rouen bread prices rose during the winter shortage in Rouen in 1421, and clerks marked the increase in the municipal ledger.",
     "text_unit_id": "txt-price-ledger",
-    "span_start": 0,
-    "span_end": 117,
+    "span_start": 40,
+    "span_end": 157,
     "notes": "Core economics evidence.",
     "checksum": null
   },
@@ -104,8 +104,8 @@
     "locator": "curated input",
     "text": "Rouen parish beadles were posted at the grain bell in 1422, and witnesses described how they counted households before opening the market.",
     "text_unit_id": "txt-research-grain-bell",
-    "span_start": 0,
-    "span_end": 137,
+    "span_start": 45,
+    "span_end": 182,
     "notes": "Accepted research finding awaiting review.",
     "checksum": null
   }

@@ -1,14 +1,25 @@
 from pathlib import Path
 
+import pytest
+
 from source_aware_worldbuilding.adapters.file_backed import (
     FileCandidateStore,
     FileEvidenceStore,
     FileReviewStore,
+    FileSourceStore,
+    FileTextUnitStore,
 )
 from source_aware_worldbuilding.cli import seed_dev_data
 from source_aware_worldbuilding.domain.enums import ClaimStatus, ReviewDecision, ReviewState
-from source_aware_worldbuilding.domain.errors import WikibaseSyncError
-from source_aware_worldbuilding.domain.models import ApprovedClaim, ClaimRelationship, ReviewRequest
+from source_aware_worldbuilding.domain.errors import ReviewConflictError, WikibaseSyncError
+from source_aware_worldbuilding.domain.models import (
+    ApprovedClaim,
+    CandidateClaim,
+    ClaimKind,
+    ClaimRelationship,
+    ReviewClaimPatch,
+    ReviewRequest,
+)
 from source_aware_worldbuilding.services.review import ReviewService
 
 
@@ -47,6 +58,8 @@ def build_review_service(
             truth_store=truth_store,
             review_store=review_store,
             evidence_store=evidence_store,
+            source_store=FileSourceStore(data_dir),
+            text_unit_store=FileTextUnitStore(data_dir),
         ),
     )
 
@@ -118,6 +131,141 @@ def test_review_override_can_mark_author_choice(temp_data_dir: Path) -> None:
         review_store.list_reviews("cand-blue-lanterns")[0].override_status
         == ClaimStatus.AUTHOR_CHOICE
     )
+
+
+def test_review_approve_can_patch_claim_without_mutating_candidate(temp_data_dir: Path) -> None:
+    seed_dev_data()
+    candidate_store, truth_store, _, service = build_review_service(temp_data_dir)
+
+    approved = service.review_candidate(
+        "cand-grain-bell-beadles",
+        ReviewRequest(
+            decision=ReviewDecision.APPROVE,
+            claim_patch=ReviewClaimPatch(
+                value="the grain bell during the January ration roll",
+                viewpoint_scope="parish witnesses",
+            ),
+            notes="Tightened wording before approval.",
+        ),
+    )
+
+    assert approved is not None
+    assert approved.value == "the grain bell during the January ration roll"
+    assert approved.viewpoint_scope == "parish witnesses"
+    assert approved.notes == "Tightened wording before approval."
+    stored_candidate = candidate_store.get_candidate("cand-grain-bell-beadles")
+    assert stored_candidate is not None
+    assert stored_candidate.value == "the grain bell in 1422"
+    assert stored_candidate.review_state == ReviewState.APPROVED
+    assert len(truth_store.list_claims()) == 1
+
+
+def test_review_reject_can_defer_candidate_for_edit(temp_data_dir: Path) -> None:
+    seed_dev_data()
+    candidate_store, truth_store, review_store, service = build_review_service(temp_data_dir)
+
+    rejected = service.review_candidate(
+        "cand-blue-lanterns",
+        ReviewRequest(
+            decision=ReviewDecision.REJECT,
+            defer_state="needs_edit",
+            notes="Keep the folklore framing explicit.",
+        ),
+    )
+
+    assert rejected is None
+    stored_candidate = candidate_store.get_candidate("cand-blue-lanterns")
+    assert stored_candidate is not None
+    assert stored_candidate.review_state == ReviewState.NEEDS_EDIT
+    assert truth_store.list_claims() == []
+    assert review_store.list_reviews("cand-blue-lanterns")[0].decision == ReviewDecision.REJECT
+
+
+def test_deferred_candidate_requires_meaningful_edit_before_approval(
+    temp_data_dir: Path,
+) -> None:
+    seed_dev_data()
+    candidate_store, truth_store, review_store, service = build_review_service(temp_data_dir)
+    review_count_before = len(review_store.list_reviews())
+
+    with pytest.raises(ReviewConflictError):
+        service.review_candidate(
+            "cand-grain-bell-timing",
+            ReviewRequest(decision=ReviewDecision.APPROVE),
+        )
+
+    stored_candidate = candidate_store.get_candidate("cand-grain-bell-timing")
+    assert stored_candidate is not None
+    assert stored_candidate.review_state == ReviewState.NEEDS_SPLIT
+    assert truth_store.list_claims() == []
+    assert len(review_store.list_reviews()) == review_count_before
+
+
+def test_review_queue_cards_include_context_and_source_title(temp_data_dir: Path) -> None:
+    seed_dev_data()
+    _, _, _, service = build_review_service(temp_data_dir)
+
+    cards = service.list_review_queue()
+    card = next(item for item in cards if item.candidate_id == "cand-grain-bell-beadles")
+
+    assert card.claim_text == "Rouen parish beadles were posted at the grain bell in 1422"
+    assert card.evidence_quality == "supported"
+    assert card.primary_evidence is not None
+    assert card.primary_evidence.source_title == "Curated parish note on grain bell beadles"
+    assert card.primary_evidence.context_before.strip().startswith("Witness depositions")
+    assert card.primary_evidence.context_after.strip().startswith("Bakers waited")
+    assert card.primary_evidence.excerpt.startswith("Rouen parish beadles were posted")
+    assert card.location_summary == "curated input · Rouen · 1422-01-01 to 1422-02-28"
+
+
+def test_review_queue_marks_thin_and_blind_candidates(temp_data_dir: Path) -> None:
+    seed_dev_data()
+    candidate_store, _, _, service = build_review_service(temp_data_dir)
+    candidate_store.save_candidates(
+        [
+            CandidateClaim(
+                candidate_id="cand-blind-ledger",
+                subject="Rouen market clerk",
+                predicate="recorded",
+                value="an unsupported side note",
+                claim_kind=ClaimKind.PRACTICE,
+                status_suggestion=ClaimStatus.PROBABLE,
+                review_state=ReviewState.PENDING,
+                place="Rouen",
+                evidence_ids=["missing-evidence"],
+                extractor_run_id="extract-rouen-core",
+                notes="Intentionally missing evidence for queue-card fallback coverage.",
+            )
+        ]
+    )
+
+    cards = service.list_review_queue()
+    thin_card = next(item for item in cards if item.candidate_id == "cand-shrine-lantern-omen")
+    blind_card = next(item for item in cards if item.candidate_id == "cand-blind-ledger")
+
+    assert thin_card.evidence_quality == "thin"
+    assert "missing_span_context" in thin_card.weakness_reasons
+    assert blind_card.evidence_quality == "blind"
+    assert "missing_evidence" in blind_card.weakness_reasons
+    assert blind_card.primary_evidence is None
+
+
+def test_review_queue_keeps_primary_evidence_and_extra_snippets_ordered(
+    temp_data_dir: Path,
+) -> None:
+    seed_dev_data()
+    _, _, _, service = build_review_service(temp_data_dir)
+
+    cards = service.list_review_queue()
+    card = next(item for item in cards if item.candidate_id == "cand-grain-bell-timing")
+
+    assert card.primary_evidence is not None
+    assert card.primary_evidence.evidence_id == "evi-bell-prime"
+    assert card.extra_evidence_count == 1
+    assert [item.evidence_id for item in card.evidence_items] == [
+        "evi-bell-prime",
+        "evi-bell-terce",
+    ]
 
 
 def test_review_missing_candidate_returns_none(temp_data_dir: Path) -> None:

@@ -3,7 +3,7 @@
     "text_unit_id": "txt-price-ledger",
     "source_id": "src-price-ledger",
     "locator": "folio 12r",
-    "text": "Rouen bread prices rose during the winter shortage in Rouen in 1421, and clerks marked the increase in the municipal ledger.",
+    "text": "Winter market notes from Rouen show that Rouen bread prices rose during the winter shortage in Rouen in 1421, and clerks marked the increase in the municipal ledger. Clerks repeated the mark beside each weekly grain allotment.",
     "ordinal": 1,
     "checksum": "seed-01",
     "notes": null
@@ -84,7 +84,7 @@
     "text_unit_id": "txt-research-grain-bell",
     "source_id": "research-source-grain-bell",
     "locator": "curated input",
-    "text": "Rouen parish beadles were posted at the grain bell in 1422, and witnesses described how they counted households before opening the market.",
+    "text": "Witness depositions from Rouen report that Rouen parish beadles were posted at the grain bell in 1422, and witnesses described how they counted households before opening the market. Bakers waited under the arcade.",
     "ordinal": 1,
     "checksum": "seed-10",
     "notes": null
