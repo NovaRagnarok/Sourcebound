@@ -143,6 +143,7 @@ def test_openapi_includes_operator_mvp_routes() -> None:
     paths = set(app.openapi()["paths"])
     assert {
         "/health",
+        "/v1/workspace/summary",
         "/v1/bible/profiles",
         "/v1/bible/profiles/{project_id}",
         "/v1/bible/sections",
@@ -179,6 +180,14 @@ def test_openapi_includes_operator_mvp_routes() -> None:
     } <= paths
 
 
+def test_root_redirects_to_writer_workspace_alias() -> None:
+    with TestClient(app) as client:
+        response = client.get("/", follow_redirects=False)
+
+    assert response.status_code in {302, 307}
+    assert response.headers["location"] == "/workspace/"
+
+
 def test_runtime_health_route_reports_degraded_when_quality_layers_are_missing(monkeypatch) -> None:
     monkeypatch.setattr(settings, "app_state_backend", "file")
     monkeypatch.setattr(settings, "app_truth_backend", "file")
@@ -203,6 +212,13 @@ def test_operator_flow_routes_share_file_backed_state(temp_data_dir) -> None:
     seed_dev_data()
 
     with TestClient(app) as client:
+        workspace_summary = client.get("/v1/workspace/summary")
+        assert workspace_summary.status_code == 200
+        summary_body = workspace_summary.json()
+        assert summary_body["project"]["project_id"] == "project-rouen-winter"
+        assert summary_body["next_actions"]
+        assert "screen" in summary_body["next_actions"][0]
+
         sources_before = client.get("/v1/sources")
         assert sources_before.status_code == 200
         assert len(sources_before.json()) == 10

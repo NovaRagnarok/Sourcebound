@@ -20,6 +20,7 @@ from source_aware_worldbuilding.api.routes.query import router as query_router
 from source_aware_worldbuilding.api.routes.research import router as research_router
 from source_aware_worldbuilding.api.routes.runs import router as runs_router
 from source_aware_worldbuilding.api.routes.sources import router as sources_router
+from source_aware_worldbuilding.api.routes.workspace import router as workspace_router
 from source_aware_worldbuilding.services.status import enforce_runtime_startup_checks
 from source_aware_worldbuilding.settings import settings
 
@@ -48,11 +49,13 @@ app.include_router(research_router)
 app.include_router(candidates_router)
 app.include_router(claims_router)
 app.include_router(query_router)
+app.include_router(workspace_router)
 
 frontend_dir = Path(__file__).resolve().parents[3] / "frontend" / "operator-ui"
 if settings.app_ui_enabled and frontend_dir.exists():
     app.mount("/operator", StaticFiles(directory=frontend_dir, html=True), name="operator")
+    app.mount("/workspace", StaticFiles(directory=frontend_dir, html=True), name="workspace")
 
     @app.get("/", include_in_schema=False)
     def root() -> RedirectResponse:
-        return RedirectResponse(url="/operator/")
+        return RedirectResponse(url="/workspace/")

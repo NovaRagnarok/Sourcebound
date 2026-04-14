@@ -258,6 +258,17 @@ class QueryService:
         ]
         evidence = self._evidence_for_claims(surfaced_claims)
         sources = self._sources_for_evidence(evidence)
+        nearby_claims = self._nearby_claims(
+            request,
+            ranked_matches,
+            matched,
+            direct_match_ids,
+            answer_boundary=self._answer_boundary(
+                matched,
+                direct_match_ids,
+                adjacent_context_ids,
+            ),
+        )
 
         answer_boundary = self._answer_boundary(
             matched,
@@ -289,12 +300,18 @@ class QueryService:
         certainty_summary = dict(Counter(claim.status.value for claim in matched))
         coverage_gaps = self._coverage_gaps(matched, request)
         recommended_next_research = self._recommended_next_research(coverage_gaps, request)
+        suggested_follow_ups = self._suggested_follow_ups(
+            request,
+            nearby_claims,
+            coverage_gaps,
+        )
 
         return QueryResult(
             question=request.question,
             mode=request.mode,
             answer=answer,
             supporting_claims=matched[:5],
+            nearby_claims=nearby_claims,
             related_claims=related_claims,
             claim_clusters=claim_clusters,
             answer_sections=answer_sections,
@@ -305,6 +322,7 @@ class QueryService:
             coverage_gaps=coverage_gaps,
             contradiction_flags=contradiction_flags,
             recommended_next_research=recommended_next_research,
+            suggested_follow_ups=suggested_follow_ups,
             direct_match_claim_ids=direct_match_ids,
             adjacent_context_claim_ids=adjacent_context_ids,
             metadata=metadata,
@@ -524,6 +542,59 @@ class QueryService:
             elif "evidence" in lower:
                 prompts.append(f"Find better-cited sources for: {request.question}")
         return prompts
+
+    def _nearby_claims(
+        self,
+        request: QueryRequest,
+        ranked_matches: list[ApprovedClaim],
+        matched: list[ApprovedClaim],
+        direct_match_ids: list[str],
+        *,
+        answer_boundary: str,
+    ) -> list[ApprovedClaim]:
+        direct_ids = set(direct_match_ids)
+        if answer_boundary == "adjacent_context":
+            nearby = [claim for claim in matched if claim.claim_id not in direct_ids]
+            return nearby[:3]
+        if answer_boundary == "research_gap":
+            if request.mode == QueryMode.STRICT_FACTS:
+                return [
+                    claim
+                    for claim in ranked_matches
+                    if claim.status.value in {"verified", "probable"}
+                ][:3]
+            return ranked_matches[:3]
+        return [claim for claim in matched if claim.claim_id not in direct_ids][:3]
+
+    def _suggested_follow_ups(
+        self,
+        request: QueryRequest,
+        nearby_claims: list[ApprovedClaim],
+        coverage_gaps: list[str],
+    ) -> list[str]:
+        suggestions: list[str] = []
+        if nearby_claims:
+            lead = nearby_claims[0]
+            if lead.place:
+                suggestions.append(f"What approved canon do we have for {lead.place} that is directly tied to this scene?")
+            suggestions.append(f"What directly documented detail would confirm or reject {lead.subject.lower()}?")
+            if lead.time_start or lead.time_end:
+                anchor = lead.time_start or lead.time_end
+                suggestions.append(f"What else is firmly dated around {anchor}?")
+        for gap in coverage_gaps:
+            lower = gap.lower()
+            if "does not directly answer" in lower:
+                suggestions.append("What specific detail is missing enough that it should trigger research before drafting?")
+            elif "verified" in lower:
+                suggestions.append("Which part of this answer still rests on probable rather than verified canon?")
+        seen: set[str] = set()
+        deduped: list[str] = []
+        for item in suggestions:
+            if item in seen:
+                continue
+            seen.add(item)
+            deduped.append(item)
+        return deduped[:4]
 
     def _search_projection(
         self,

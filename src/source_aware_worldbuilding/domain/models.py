@@ -333,6 +333,7 @@ class QueryResult(BaseModel):
     mode: QueryMode
     answer: str
     supporting_claims: list[ApprovedClaim] = Field(default_factory=list)
+    nearby_claims: list[ApprovedClaim] = Field(default_factory=list)
     related_claims: list[ClaimRelationship] = Field(default_factory=list)
     claim_clusters: list[ClaimCluster] = Field(default_factory=list)
     answer_sections: list[AnswerSection] = Field(default_factory=list)
@@ -343,9 +344,56 @@ class QueryResult(BaseModel):
     coverage_gaps: list[str] = Field(default_factory=list)
     contradiction_flags: list[str] = Field(default_factory=list)
     recommended_next_research: list[str] = Field(default_factory=list)
+    suggested_follow_ups: list[str] = Field(default_factory=list)
     direct_match_claim_ids: list[str] = Field(default_factory=list)
     adjacent_context_claim_ids: list[str] = Field(default_factory=list)
     metadata: QueryResultMetadata = Field(default_factory=QueryResultMetadata)
+
+
+class WorkspaceAction(BaseModel):
+    action_id: str
+    title: str
+    summary: str
+    screen: Literal["workspace", "bible", "research", "review", "ask", "sources", "runs", "claims"]
+    tone: Literal["verified", "probable", "contested", "queued", "author_choice"] = "queued"
+    badge: str | None = None
+
+
+class WorkspaceBackgroundItem(BaseModel):
+    item_id: str
+    title: str
+    summary: str
+    status_label: str
+    screen: Literal["runs", "research", "bible"] = "runs"
+
+
+class WorkspaceSectionSnapshot(BaseModel):
+    section_id: str
+    title: str
+    section_type: BibleSectionType
+    generation_status: BibleSectionGenerationStatus
+    ready_for_writer: bool = False
+    has_manual_edits: bool = False
+    claim_count: int = 0
+    source_count: int = 0
+    evidence_count: int = 0
+    summary: str
+    coverage_gaps: list[str] = Field(default_factory=list)
+    recommended_next_research: list[str] = Field(default_factory=list)
+    latest_job: JobSummary | None = None
+
+
+class WorkspaceSummary(BaseModel):
+    project: BibleProjectProfile | None = None
+    current_section: WorkspaceSectionSnapshot | None = None
+    next_actions: list[WorkspaceAction] = Field(default_factory=list)
+    background_items: list[WorkspaceBackgroundItem] = Field(default_factory=list)
+    pending_review_count: int = 0
+    reviewed_canon_count: int = 0
+    bible_section_count: int = 0
+    evidence_count: int = 0
+    active_background_count: int = 0
+    thin_section_count: int = 0
 
 
 class BibleCompositionDefaults(BaseModel):

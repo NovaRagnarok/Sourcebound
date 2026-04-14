@@ -4,14 +4,14 @@ Sourcebound is a source-aware worldbuilding workbench. It ingests source
 material, normalizes it into text units, extracts candidate claims, routes
 those claims through human review, stores approved canon behind a truth-store
 port, and serves that canon through an API, persisted background jobs, and an
-operator UI.
+writer-first workspace UI.
 
 Today the repo is past the original seed stage. It already ships:
 
 - a FastAPI backend with intake, ingestion, research, review, Bible workspace,
   export, query, jobs, and health routes
 - a Typer CLI for local development, runtime checks, seeding, intake, and benchmarking
-- a browser-based operator UI at `/operator/`
+- a browser-based writer workspace at `/workspace/` with advanced utilities still available at `/operator/`
 - persisted background jobs with an in-process worker enabled by default
 - Postgres-backed app state and Postgres-backed canon as the default stack
 - file-backed and SQLite-backed state adapters for lighter local workflows
@@ -22,7 +22,7 @@ Today the repo is past the original seed stage. It already ships:
 The implemented end-to-end flow looks like this:
 
 ```text
-Zotero or operator intake
+Zotero or manual intake
   -> source documents
   -> normalized text units
   -> candidate claims + evidence
@@ -52,11 +52,11 @@ Important reality checks for the current repo:
 - `APP_JOB_WORKER_ENABLED` defaults to `true`
 - `APP_UI_ENABLED` defaults to `true`
 - extraction uses GraphRAG when enabled, otherwise the heuristic adapter
-- the operator UI is already shipped, not planned
+- the writer workspace is already shipped, not planned
 - lore packet export is implemented
 - live integration tests exist for Zotero, Qdrant, and Wikibase but are opt-in
 - long-running research and Bible composition routes now queue persisted
-  background jobs and are polled by the operator UI
+  background jobs and are polled by the workspace UI
 
 ## Quick Start
 
@@ -114,7 +114,8 @@ If you plan to rely on semantic retrieval in a live runtime, initialize Qdrant b
 Then open:
 
 - API docs: `http://localhost:8000/docs`
-- operator UI: `http://localhost:8000/operator/`
+- writer workspace: `http://localhost:8000/workspace/`
+- advanced utilities alias: `http://localhost:8000/operator/`
 - runtime health: `http://localhost:8000/health/runtime`
 
 ## Development Modes
@@ -135,8 +136,8 @@ QDRANT_URL=http://localhost:6333
 APP_STRICT_STARTUP_CHECKS=true
 ```
 
-Use this when you want the full operator flow, Postgres-backed review state,
-and Postgres-backed canon.
+Use this when you want the full writer workstation flow, Postgres-backed review
+state, and Postgres-backed canon.
 Qdrant is the recommended local retrieval path, but it remains optional.
 
 ### Zero-infra local mode
@@ -189,7 +190,7 @@ Main commands:
 
 The CLI focuses on runtime checks, seed data, and ingestion. Long-running
 research, Bible composition, regeneration, and export work are mainly driven
-through the API and operator UI and tracked as persisted jobs.
+through the API and workspace UI and tracked as persisted jobs.
 
 Useful examples:
 
@@ -297,7 +298,7 @@ The intended daily-writing loop is:
 6. keep drafting in the manual section text without fear of regeneration overwriting it
 
 The seed dataset already includes a sample project, research run, and Bible
-sections so the operator UI is useful immediately after `saw seed-dev-data`.
+sections so the workspace UI is useful immediately after `saw seed-dev-data`.
 
 ## Minimal Deployment Notes
 

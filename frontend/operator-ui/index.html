@@ -23,7 +23,7 @@
           <div class="brand-mark">SB</div>
           <div>
             <div class="brand-name">Sourcebound</div>
-            <div class="brand-subtitle">Lore Workstation</div>
+            <div class="brand-subtitle">Writer Workstation</div>
           </div>
         </div>
 
@@ -33,24 +33,27 @@
             <a class="nav-item" href="#workspace" data-nav="workspace">Workspace</a>
             <a class="nav-item" href="#bible" data-nav="bible">Bible</a>
             <a class="nav-item" href="#research" data-nav="research">Research</a>
-            <a class="nav-item" href="#review" data-nav="review">Canon Review</a>
+            <a class="nav-item" href="#review" data-nav="review">Review New Facts</a>
             <a class="nav-item" href="#ask" data-nav="ask">Ask</a>
           </nav>
         </div>
 
-        <div class="nav-stack nav-stack-secondary">
+        <div class="nav-stack nav-stack-secondary" id="advanced-nav">
           <div class="rail-label">Utilities</div>
           <nav class="nav" aria-label="Supporting utility screens">
             <a class="nav-item nav-item-secondary" href="#sources" data-nav="sources">Sources</a>
-            <a class="nav-item nav-item-secondary" href="#runs" data-nav="runs">Jobs & Runs</a>
-            <a class="nav-item nav-item-secondary" href="#claims" data-nav="claims">Claims</a>
+            <a class="nav-item nav-item-secondary" href="#runs" data-nav="runs">Background Work</a>
+            <a class="nav-item nav-item-secondary" href="#claims" data-nav="claims">Canon Ledger</a>
           </nav>
         </div>
 
         <section class="rail-card" aria-label="Live status">
-          <div class="rail-label">Mode</div>
-          <div id="mode-badge" class="status-pill status-pill-muted">Connecting</div>
-          <div id="connection-summary" class="rail-note">Waiting for API handshake.</div>
+          <div class="rail-label">Workspace Mode</div>
+          <div class="toolbar toolbar-compact">
+            <div id="mode-badge" class="status-pill status-pill-muted">Writer mode</div>
+            <button id="mode-toggle" class="ghost-button ghost-button-rail" type="button">Show advanced tools</button>
+          </div>
+          <div id="connection-summary" class="rail-note">Writer mode keeps the daily path focused on research, review, bible work, and asking canon.</div>
         </section>
 
         <section class="rail-card">
@@ -74,8 +77,8 @@
               Stay oriented on the active project, the canon that is ready, and the next writing move.
             </p>
           </div>
-          <div class="topbar-meta">
-            <div class="meta-block">
+          <div class="topbar-meta" id="topbar-meta">
+            <div class="meta-block" id="api-meta">
               <span class="meta-label">API</span>
               <span id="api-base" class="meta-value">Same origin</span>
             </div>

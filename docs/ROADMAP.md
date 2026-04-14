@@ -6,7 +6,7 @@ The repo is well beyond the initial scaffold.
 
 Already shipped:
 
-- operator UI mounted at `/operator/`
+- writer workspace mounted at `/workspace/` with `/operator/` retained as an advanced alias
 - ingestion, intake, review, query, export, and runtime-health APIs
 - research runs with staging and extract handoff
 - Postgres-backed app state
@@ -26,7 +26,7 @@ Still notably incomplete or provisional:
 Focus: make the documented Postgres-first stack feel boring and dependable.
 
 - tighten `.env.example` around the current defaults and optional integrations
-- keep operator flow smooth in the Postgres-backed path
+- keep the writer-first flow smooth in the Postgres-backed path
 - harden runtime status and setup diagnostics
 - continue closing gaps between file-backed tests and Postgres-backed behavior
 
@@ -36,7 +36,7 @@ Focus: make Zotero-backed intake and normalization the standard source workflow.
 
 - improve source-document discovery and attachment handling
 - make `zotero-check` and intake tooling better at surfacing config or API issues
-- reduce friction between operator intake and pull-based ingest
+- reduce friction between manual intake and pull-based ingest
 - validate the loop on a narrow but real pilot corpus
 
 ## Phase 3 — Extraction Upgrade

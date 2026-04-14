@@ -10,7 +10,7 @@ Sourcebound is still a modular monolith with explicit ports and adapters, but it
 - human review
 - approved canon storage
 - query and export surfaces
-- operator-facing research runs
+- writer-facing research runs with advanced utility controls
 
 The design goal remains the same: keep the workflow in one Python codebase while preserving clean seams around external systems.
 
@@ -91,8 +91,8 @@ Concrete implementations behind the ports:
 
 ### API and UI
 
-- FastAPI exposes the workflow and operator routes
-- the operator UI is a shipped static frontend mounted at `/operator/`
+- FastAPI exposes the workflow and utility routes
+- the writer workspace is a shipped static frontend mounted at `/workspace/`, with `/operator/` kept as an advanced alias
 
 ## Storage Model
 

@@ -325,6 +325,17 @@ a {
     background 160ms ease;
 }
 
+.ghost-button-rail {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.12);
+  color: #f7f0e6;
+}
+
+.toolbar-compact {
+  align-items: center;
+  justify-content: space-between;
+}
+
 .ghost-button:hover,
 .primary-button:hover,
 .secondary-button:hover {
@@ -435,6 +446,16 @@ a {
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
+}
+
+.workspace-next-move {
+  display: grid;
+  gap: 6px;
+  max-width: 44ch;
+  padding: 14px 16px;
+  border: 1px solid rgba(41, 94, 89, 0.16);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.72);
 }
 
 .workspace-keyline {
@@ -803,6 +824,20 @@ a {
   border-radius: 14px;
   background: rgba(255, 255, 255, 0.82);
   color: var(--ink);
+}
+
+.disclosure {
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.56);
+}
+
+.disclosure summary {
+  cursor: pointer;
+  font-size: 0.84rem;
+  font-weight: 700;
+  color: var(--accent-2);
 }
 
 .field textarea {

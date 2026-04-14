@@ -338,10 +338,16 @@ def test_query_gap_first_mode_does_not_substitute_adjacent_canon_for_narrow_ques
     assert result.metadata.answer_boundary == "research_gap"
     assert result.direct_match_claim_ids == []
     assert result.adjacent_context_claim_ids == []
+    assert [claim.claim_id for claim in result.nearby_claims] == [
+        "claim-verified-1",
+        "claim-probable-1",
+    ]
+    assert all(claim.status in {ClaimStatus.VERIFIED, ClaimStatus.PROBABLE} for claim in result.nearby_claims)
     assert result.recommended_next_research == [
         "Find directly documented evidence for: How were bread tokens handled in "
         "Rouen during the winter shortage?"
     ]
+    assert result.suggested_follow_ups
 
 
 def test_query_strict_facts_reports_gap_when_only_uncertain_claims_remain(
@@ -403,6 +409,8 @@ def test_query_strict_facts_reports_gap_when_only_uncertain_claims_remain(
     assert result.sources == []
     assert result.answer.startswith("Approved canon does not directly answer this question yet")
     assert result.metadata.retrieval_backend == "memory"
+    assert result.nearby_claims == []
+    assert result.suggested_follow_ups == []
 
 
 def test_query_uses_projection_when_available(temp_data_dir: Path) -> None:
@@ -1127,6 +1135,7 @@ def test_query_narrow_topic_prefers_bread_token_claims_and_caps_unrelated_canon(
     assert result.metadata.answer_boundary == "direct_answer"
     assert result.direct_match_claim_ids[:1] == ["claim-token"]
     assert "claim-scrip" in result.adjacent_context_claim_ids
+    assert [claim.claim_id for claim in result.nearby_claims] == ["claim-scrip"]
     assert all("claim-price" not in section.claim_ids for section in result.answer_sections)
     assert result.claim_clusters[0].lead_claim_id == "claim-token"
 

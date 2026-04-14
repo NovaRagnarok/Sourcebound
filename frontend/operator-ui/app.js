@@ -1,5 +1,6 @@
 (() => {
   const API = {
+    workspaceSummary: "/v1/workspace/summary",
     runtimeStatus: "/health/runtime",
     jobs: "/v1/jobs",
     job: (jobId) => `/v1/jobs/${jobId}`,
@@ -32,13 +33,25 @@
 
   const seed = window.SOURCEBOUND_SEED_DATA;
   const knownScreens = new Set(["workspace", "sources", "research", "bible", "runs", "review", "claims", "ask"]);
+  const advancedOnlyScreens = new Set(["sources", "runs", "claims"]);
+  const knownQueryModes = new Set([
+    "strict_facts",
+    "contested_views",
+    "rumor_and_legend",
+    "character_knowledge",
+    "open_exploration",
+  ]);
+  const writerQueryModes = new Set(["strict_facts", "contested_views", "rumor_and_legend"]);
   const state = {
     apiBase: normalizeBase(window.SOURCEBOUND_API_BASE || ""),
     activeScreen: currentScreen(),
+    workspaceMode: "writer",
     apiOnline: false,
+    apiStatusMessage: "",
     lastSync: "Idle",
     banner: null,
     loading: false,
+    workspaceSummary: null,
     runtimeStatus: null,
     jobs: [],
     sources: clone(seed.sources),
@@ -135,10 +148,13 @@
     title: document.getElementById("screen-title"),
     summary: document.getElementById("screen-summary"),
     apiBase: document.getElementById("api-base"),
+    apiMeta: document.getElementById("api-meta"),
     lastSync: document.getElementById("last-sync"),
     modeBadge: document.getElementById("mode-badge"),
+    modeToggle: document.getElementById("mode-toggle"),
     connectionSummary: document.getElementById("connection-summary"),
     refreshAll: document.getElementById("refresh-all"),
+    advancedNav: document.getElementById("advanced-nav"),
     metricSources: document.getElementById("metric-sources"),
     metricLabelSources: document.getElementById("metric-label-sources"),
     metricPending: document.getElementById("metric-pending"),
@@ -163,14 +179,14 @@
         "Supporting utility for source intake, linked evidence, and staged material feeding extraction.",
     },
     runs: {
-      title: "Jobs & Runs",
+      title: "Background Work",
       summary:
-        "Supporting workflow status for extraction, bible composition, export, and other background jobs.",
+        "Supporting workflow status for extraction, bible composition, export, and other jobs running behind the writing flow.",
     },
     research: {
       title: "Research",
       summary:
-        "Run focused research, stage findings into sources, and push the strongest material toward review and composition.",
+        "Fill a writing gap with a focused brief, then send the strongest accepted leads toward review.",
     },
     bible: {
       title: "Bible",
@@ -178,19 +194,19 @@
         "Shape reviewed canon into editable notebook pages with visible trust boundaries, uncertainty, and provenance.",
     },
     review: {
-      title: "Canon Review",
+      title: "Review New Facts",
       summary:
-        "Approve, reject, or override extracted candidates before they cross the canon trust boundary.",
+        "Approve or reject candidate facts before they cross the canon trust boundary.",
     },
     claims: {
-      title: "Claims",
+      title: "Canon Ledger",
       summary:
         "Supporting utility for inspecting reviewed claims and their evidence links in detail.",
     },
     ask: {
-      title: "Ask",
+      title: "Ask Canon",
       summary:
-        "Ask questions against reviewed canon with explicit mode controls and surfaced provenance.",
+        "Pressure-test the approved record for the current project without crossing the trust boundary.",
     },
   };
 
@@ -202,6 +218,8 @@
   async function boot() {
     bindGlobalEvents();
     hydrateFromStorage();
+    syncWorkspaceView();
+    replaceHash(state.activeScreen);
     await refreshLiveData({ quiet: true });
     if (state.bible.projectId) {
       await refreshBibleWorkspace({ quiet: true, projectId: state.bible.projectId });
@@ -214,7 +232,8 @@
 
   function bindGlobalEvents() {
     window.addEventListener("hashchange", () => {
-      state.activeScreen = currentScreen();
+      state.activeScreen = normalizeScreen(currentScreen(), state.workspaceMode);
+      replaceHash(state.activeScreen);
       if (
         state.activeScreen === "research" &&
         state.selectedResearchRunId &&
@@ -228,6 +247,13 @@
     });
 
     nodes.refreshAll.addEventListener("click", () => refreshLiveData());
+    nodes.modeToggle.addEventListener("click", () => {
+      state.workspaceMode = state.workspaceMode === "writer" ? "advanced" : "writer";
+      syncWorkspaceView();
+      replaceHash(state.activeScreen);
+      persistState();
+      render();
+    });
 
     nodes.app.addEventListener("click", async (event) => {
       const sourceButton = event.target.closest("[data-select-source]");
@@ -307,7 +333,8 @@
       }
 
       if (queryModeButton) {
-        state.query.mode = queryModeButton.dataset.queryMode;
+        state.query.mode = normalizeQueryMode(queryModeButton.dataset.queryMode, state.workspaceMode);
+        persistState();
         render();
         return;
       }
@@ -360,6 +387,15 @@
 
       if (action === "regenerate-bible-section") {
         await regenerateBibleSection(state.bible.selectedSectionId);
+        return;
+      }
+
+      if (action === "launch-gap-research") {
+        seedResearchFromCurrentGap();
+        state.activeScreen = "research";
+        location.hash = "#research";
+        persistState();
+        render();
         return;
       }
 
@@ -450,6 +486,9 @@
       if (saved.query) {
         state.query = { ...state.query, ...saved.query };
       }
+      if (saved.workspaceMode) {
+        state.workspaceMode = saved.workspaceMode;
+      }
       if (saved.filters) {
         state.filters = { ...state.filters, ...saved.filters };
       }
@@ -480,6 +519,7 @@
         STORAGE_KEY,
         JSON.stringify({
           query: state.query,
+          workspaceMode: state.workspaceMode,
           filters: state.filters,
           runs: state.runs,
           researchDraft: state.researchDraft,
@@ -498,6 +538,51 @@
     return knownScreens.has(hash) ? hash : "workspace";
   }
 
+  function normalizeWorkspaceMode(mode) {
+    return mode === "advanced" ? "advanced" : "writer";
+  }
+
+  function normalizeQueryMode(mode, workspaceMode = state.workspaceMode) {
+    if (!knownQueryModes.has(mode)) {
+      return "strict_facts";
+    }
+    if (workspaceMode !== "advanced" && !writerQueryModes.has(mode)) {
+      return "strict_facts";
+    }
+    return mode;
+  }
+
+  function normalizeScreen(screen, workspaceMode = state.workspaceMode) {
+    if (!knownScreens.has(screen)) {
+      return "workspace";
+    }
+    if (workspaceMode !== "advanced" && advancedOnlyScreens.has(screen)) {
+      return "workspace";
+    }
+    return screen;
+  }
+
+  function syncWorkspaceView() {
+    state.workspaceMode = normalizeWorkspaceMode(state.workspaceMode);
+    state.query.mode = normalizeQueryMode(state.query.mode, state.workspaceMode);
+    state.activeScreen = normalizeScreen(state.activeScreen, state.workspaceMode);
+  }
+
+  function replaceHash(screen) {
+    const target = `#${screen}`;
+    if (!window.location.hash && screen === "workspace") {
+      return;
+    }
+    if (window.location.hash === target) {
+      return;
+    }
+    window.history.replaceState(
+      window.history.state,
+      "",
+      `${window.location.pathname}${window.location.search}${target}`
+    );
+  }
+
   function normalizeBase(base) {
     if (!base) return "";
     return base.endsWith("/") ? base.slice(0, -1) : base;
@@ -505,6 +590,26 @@
 
   function clone(value) {
     return JSON.parse(JSON.stringify(value));
+  }
+
+  function seedResearchFromCurrentGap() {
+    const selectedSection =
+      state.bible.sections.find((section) => section.section_id === state.bible.selectedSectionId)
+      ?? state.bible.sections[0]
+      ?? null;
+    const gapPrompt = selectedSection?.recommended_next_research?.[0]
+      || state.workspaceSummary?.current_section?.recommended_next_research?.[0]
+      || selectedSection?.coverage_gaps?.[0]
+      || state.workspaceSummary?.current_section?.coverage_gaps?.[0]
+      || state.bible.profile?.narrative_focus
+      || "";
+    state.researchDraft.topic = gapPrompt;
+    state.researchDraft.locale = selectedSection?.generation_filters?.place || state.bible.profile?.geography || state.researchDraft.locale;
+    state.researchDraft.audience = state.bible.profile?.social_lens || state.researchDraft.audience;
+    state.researchDraft.time_start = selectedSection?.generation_filters?.time_start || state.bible.profile?.time_start || state.researchDraft.time_start;
+    state.researchDraft.time_end = selectedSection?.generation_filters?.time_end || state.bible.profile?.time_end || state.researchDraft.time_end;
+    state.researchDraft.desired_facets = (state.bible.profile?.desired_facets || []).join(", ");
+    state.researchDraft.domain_hints = selectedSection?.title || state.bible.profile?.narrative_focus || state.researchDraft.domain_hints;
   }
 
   function escapeHtml(value) {
@@ -569,36 +674,20 @@
 
   function setApiStatus(online, message) {
     state.apiOnline = online;
-    const runtime = state.runtimeStatus;
-    let badgeClass = "status-pill status-pill-muted";
-    let badgeLabel = online ? "Live API" : "Seed fallback";
-
-    if (online && runtime?.overall_status === "ready") {
-      badgeClass = "status-pill status-pill-live";
-      badgeLabel = "Runtime healthy";
-    } else if (online && runtime?.overall_status === "degraded") {
-      badgeClass = "status-pill status-pill-warning";
-      badgeLabel = "Runtime degraded";
-    } else if (online && runtime) {
-      badgeClass = "status-pill status-pill-warning";
-      badgeLabel = "Runtime blocked";
-    }
-
-    nodes.modeBadge.className = badgeClass;
-    nodes.modeBadge.textContent = badgeLabel;
-    nodes.connectionSummary.textContent = message;
+    state.apiStatusMessage = message;
     nodes.apiBase.textContent = state.apiBase || "Same origin";
   }
 
   async function refreshLiveData({ quiet = false } = {}) {
     applyLoading(true);
     if (!quiet) {
-      setBanner("pending", "Refreshing", "Pulling live sources, bible workspace, research runs, extraction runs, candidates, and claims from the API.");
+      setBanner("pending", "Refreshing", "Pulling the current project, review queue, bible workspace, research runs, and supporting utilities from the API.");
     }
 
     try {
-      const [sourcesResult, researchRunsResult, researchProgramsResult, runsResult, candidatesResult, claimsResult, runtimeResult, bibleProfilesResult, jobsResult] =
+      const [workspaceSummaryResult, sourcesResult, researchRunsResult, researchProgramsResult, runsResult, candidatesResult, claimsResult, runtimeResult, bibleProfilesResult, jobsResult] =
         await Promise.allSettled([
+          fetchJson(API.workspaceSummary),
           fetchJson(API.sources),
           fetchJson(API.researchRuns),
           fetchJson(API.researchPrograms),
@@ -609,6 +698,10 @@
           fetchJson(API.bibleProfiles),
           fetchJson(API.jobs),
         ]);
+
+      if (workspaceSummaryResult.status === "fulfilled") {
+        state.workspaceSummary = workspaceSummaryResult.value;
+      }
 
       if (sourcesResult.status === "fulfilled") {
         state.sources = sourcesResult.value;
@@ -650,14 +743,14 @@
         }
       }
 
-      const online = [sourcesResult, researchRunsResult, researchProgramsResult, runsResult, candidatesResult, claimsResult, runtimeResult, bibleProfilesResult, jobsResult].some(
+      const online = [workspaceSummaryResult, sourcesResult, researchRunsResult, researchProgramsResult, runsResult, candidatesResult, claimsResult, runtimeResult, bibleProfilesResult, jobsResult].some(
         (result) => result.status === "fulfilled"
       );
       const runtimeSummary = summarizeRuntime();
       setApiStatus(
         online,
         online
-          ? runtimeSummary || "Live sources, bible workspace, research runs, extraction runs, candidates, claims, and runtime status loaded."
+          ? runtimeSummary || "Live project, bible workspace, review queue, research runs, and utilities loaded."
           : "Using seed data until the API responds."
       );
       updateMetrics();
@@ -669,7 +762,7 @@
           online ? "live" : "queued",
           online ? "Live data synced" : "Seed data retained",
           online
-            ? "Sources, bible workspace, research runs, extraction runs, candidates, and claims refreshed from the backend."
+            ? "Project summary, bible workspace, research runs, review queue, and utilities refreshed from the backend."
             : "The UI stayed operational with local seed records."
         );
       }
@@ -726,18 +819,20 @@
   }
 
   function updateMetrics() {
-    const pendingCount = state.candidates.filter((candidate) => candidate.review_state === "pending").length;
+    const pendingCount = state.workspaceSummary?.pending_review_count
+      ?? state.candidates.filter((candidate) => candidate.review_state === "pending").length;
     nodes.metricLabelSources.textContent = "Bible sections";
-    nodes.metricSources.textContent = String(state.bible.sections.length);
+    nodes.metricSources.textContent = String(state.workspaceSummary?.bible_section_count ?? state.bible.sections.length);
     nodes.metricLabelPending.textContent = "Needs review";
     nodes.metricPending.textContent = String(pendingCount);
     nodes.metricLabelClaims.textContent = "Reviewed canon";
-    nodes.metricClaims.textContent = String(state.claims.length);
+    nodes.metricClaims.textContent = String(state.workspaceSummary?.reviewed_canon_count ?? state.claims.length);
     nodes.metricLabelEvidence.textContent = "Evidence snippets";
-    nodes.metricEvidence.textContent = String(state.evidence.length);
+    nodes.metricEvidence.textContent = String(state.workspaceSummary?.evidence_count ?? state.evidence.length);
   }
 
   function render() {
+    renderChrome();
     updateNavigation();
     updateHeader();
     updateMetrics();
@@ -747,8 +842,25 @@
     wireScreenTitle();
   }
 
+  function renderChrome() {
+    const isAdvanced = state.workspaceMode === "advanced";
+    document.body.dataset.workspaceMode = state.workspaceMode;
+    nodes.advancedNav.hidden = !isAdvanced;
+    nodes.apiMeta.hidden = !isAdvanced;
+    nodes.modeBadge.className = isAdvanced ? "status-pill status-pill-warning" : "status-pill status-pill-live";
+    nodes.modeBadge.textContent = isAdvanced ? "Advanced mode" : "Writer mode";
+    nodes.modeToggle.textContent = isAdvanced ? "Hide advanced tools" : "Show advanced tools";
+    if (isAdvanced) {
+      nodes.connectionSummary.textContent = state.apiStatusMessage || "Advanced utilities are visible for auditing, troubleshooting, and policy controls.";
+    } else if (!state.apiOnline) {
+      nodes.connectionSummary.textContent = "Live data is unavailable right now. The workspace stays usable with seed data.";
+    } else {
+      nodes.connectionSummary.textContent = "Writer mode keeps the daily path focused on research, review, bible work, and asking canon.";
+    }
+  }
+
   function renderRuntimeOverview() {
-    if (state.activeScreen !== "workspace") {
+    if (state.activeScreen !== "workspace" || state.workspaceMode !== "advanced") {
       nodes.runtimePanel.innerHTML = "";
       return;
     }
@@ -873,27 +985,65 @@
   }
 
   function renderWorkspaceScreen() {
-    const profile = state.bible.profile;
+    const advanced = state.workspaceMode === "advanced";
+    const profile = state.workspaceSummary?.project || state.bible.profile;
     const coverage = buildBibleCoverage(profile, state.bible.sections, state.claims);
-    const selectedSection =
+    const fallbackSection =
       state.bible.sections.find((section) => section.section_id === state.bible.selectedSectionId) ??
       state.bible.sections[0] ??
       null;
+    const selectedSection = state.workspaceSummary?.current_section || (
+      fallbackSection
+        ? {
+            section_id: fallbackSection.section_id,
+            title: fallbackSection.title,
+            generation_status: fallbackSection.generation_status,
+            ready_for_writer: fallbackSection.ready_for_writer,
+            has_manual_edits: fallbackSection.has_manual_edits,
+            claim_count: fallbackSection.references.claim_ids.length,
+            source_count: fallbackSection.references.source_ids.length,
+            summary: fallbackSection.coverage_gaps?.[0] || renderBibleGenerationSummary(fallbackSection),
+            coverage_gaps: fallbackSection.coverage_gaps || [],
+            recommended_next_research: fallbackSection.recommended_next_research || [],
+          }
+        : null
+    );
     const pendingCandidates = state.candidates.filter((candidate) => candidate.review_state === "pending");
     const thinCoverage = coverage.filter((item) => item.summary !== "ready");
     const researchRunsNeedingAttention = state.researchRuns.filter((run) =>
       ["queued", "running", "partial"].includes(run.status)
     );
-    const writerActions = buildWorkspaceActions({
-      profile,
-      pendingCandidates,
-      thinCoverage,
-      selectedSection,
-      researchRunsNeedingAttention,
-    });
-    const activeJobs = collectWorkspaceJobs();
+    const writerActions = state.workspaceSummary?.next_actions?.length
+      ? state.workspaceSummary.next_actions
+      : buildWorkspaceActions({
+          profile,
+          pendingCandidates,
+          thinCoverage,
+          selectedSection: fallbackSection,
+          researchRunsNeedingAttention,
+        }).map((item, index) => ({
+          action_id: `fallback-${index}`,
+          title: item.title,
+          summary: item.summary,
+          screen: item.href,
+          tone: item.tone,
+          badge: item.badge,
+        }));
+    const visibleWriterActions = advanced
+      ? writerActions
+      : writerActions.filter((item) => !advancedOnlyScreens.has(item.screen));
+    const activeJobs = state.workspaceSummary?.background_items?.length
+      ? state.workspaceSummary.background_items
+      : collectWorkspaceJobs().map((item) => ({
+          item_id: item.job.job_id,
+          title: item.label,
+          summary: item.summary,
+          status_label: item.job.status_label || item.job.status,
+          screen: "runs",
+        }));
     const projectPeriod =
       profile?.era || [profile?.time_start, profile?.time_end].filter(Boolean).join(" to ") || "Not set";
+    const nextMove = visibleWriterActions[0];
 
     return `
       <article class="screen fade-in">
@@ -907,10 +1057,22 @@
                   "Define the project focus, review canon, and turn evidence-backed material into usable notebook pages."
               )}
             </p>
+            ${
+              nextMove
+                ? `
+                  <div class="workspace-next-move">
+                    <span class="rail-label">Recommended next move</span>
+                    <strong>${escapeHtml(nextMove.title)}</strong>
+                    <div class="detail-note">${escapeHtml(nextMove.summary)}</div>
+                  </div>
+                `
+                : ""
+            }
             <div class="workspace-hero-actions">
-              <a class="primary-button" href="#research">Start research</a>
-              <a class="secondary-button" href="#review">Review canon</a>
-              <a class="secondary-button" href="#bible">Compose bible</a>
+              <a class="primary-button" href="#bible">Open Bible</a>
+              <a class="secondary-button" href="#review">Review</a>
+              <button class="secondary-button" type="button" data-action="launch-gap-research">Fill gap</button>
+              <a class="secondary-button" href="#ask">Ask canon</a>
             </div>
           </div>
           <div class="workspace-hero-meta">
@@ -926,6 +1088,10 @@
               <span>Trust boundary</span>
               <strong>Review gates canon; manual text stays separate</strong>
             </div>
+            <div class="workspace-keyline">
+              <span>What needs attention</span>
+              <strong>${escapeHtml(nextMove?.badge || `${state.workspaceSummary?.pending_review_count ?? pendingCandidates.length} waiting`)}</strong>
+            </div>
           </div>
         </section>
 
@@ -939,15 +1105,15 @@
               <span class="pill probable">${escapeHtml(writerActions.length)}</span>
             </div>
             <div class="workspace-action-list">
-              ${writerActions
+              ${visibleWriterActions
                 .map(
                   (item) => `
-                    <a class="workspace-action" href="#${escapeHtml(item.href)}">
+                    <a class="workspace-action" href="#${escapeHtml(item.screen)}">
                       <div>
                         <strong>${escapeHtml(item.title)}</strong>
                         <div class="detail-note">${escapeHtml(item.summary)}</div>
                       </div>
-                      <span class="pill ${escapeHtml(item.tone)}">${escapeHtml(item.badge)}</span>
+                      <span class="pill ${escapeHtml(item.tone)}">${escapeHtml(item.badge || "open")}</span>
                     </a>
                   `
                 )
@@ -990,25 +1156,25 @@
               </div>
               <a class="secondary-button" href="#bible">Open Bible</a>
             </div>
-            ${
-              selectedSection
-                ? `
+              ${
+                selectedSection
+                  ? `
                   <div class="inline-metrics">
-                    <span>${escapeHtml(selectedSection.references.claim_ids.length)} claims</span>
-                    <span>${escapeHtml(selectedSection.references.source_ids.length)} sources</span>
-                    <span>${escapeHtml(renderBibleGenerationLabel(selectedSection))}</span>
+                    <span>${escapeHtml(selectedSection.claim_count)} claims</span>
+                    <span>${escapeHtml(selectedSection.source_count)} sources</span>
+                    <span>${escapeHtml(selectedSection.ready_for_writer ? "writer-ready" : "needs support")}</span>
                   </div>
                   <div class="workspace-section-preview">
                     <h4>${escapeHtml(selectedSection.title)}</h4>
-                    <p>${escapeHtml(renderBibleGenerationSummary(selectedSection))}</p>
+                    <p>${escapeHtml(selectedSection.summary)}</p>
                   </div>
                   <div class="detail-list">
                     <div class="mini">
                       <div class="toolbar">
                         <strong>Generated baseline</strong>
-                        <span class="pill ${escapeHtml(renderBibleGenerationTone(selectedSection.generation_status))}">${escapeHtml(renderBibleGenerationLabel(selectedSection))}</span>
+                        <span class="pill ${escapeHtml(renderBibleGenerationTone(selectedSection.generation_status))}">${escapeHtml(selectedSection.ready_for_writer ? "writer-ready" : "thin baseline")}</span>
                       </div>
-                      <div class="detail-note">${escapeHtml(renderBibleManualState(selectedSection))}</div>
+                      <div class="detail-note">${escapeHtml(selectedSection.has_manual_edits ? "Manual text is already in play for this section." : "The current section is still mostly generated." )}</div>
                     </div>
                     ${
                       (selectedSection.coverage_gaps || []).length
@@ -1016,7 +1182,12 @@
                             .slice(0, 3)
                             .map((item) => `<div class="warning">${escapeHtml(item)}</div>`)
                             .join("")
-                        : "<div class='helper'>No coverage gaps recorded for the selected section.</div>"
+                        : ((selectedSection.recommended_next_research || []).length
+                            ? selectedSection.recommended_next_research
+                                .slice(0, 2)
+                                .map((item) => `<div class="warning">${escapeHtml(item)}</div>`)
+                                .join("")
+                            : "<div class='helper'>No coverage gaps recorded for the selected section.</div>")
                     }
                   </div>
                 `
@@ -1030,7 +1201,7 @@
                 <h3>Workflow status</h3>
                 <div class="detail-note">Jobs stay visible here as support, not the main event.</div>
               </div>
-              <a class="secondary-button" href="#runs">Open utilities</a>
+              ${advanced ? '<a class="secondary-button" href="#runs">Open utilities</a>' : ""}
             </div>
             <div class="detail-list">
               ${
@@ -1041,8 +1212,8 @@
                         (item) => `
                           <div class="mini">
                             <div class="toolbar">
-                              <strong>${escapeHtml(item.label)}</strong>
-                              ${renderJobPill(item.job)}
+                              <strong>${escapeHtml(item.title)}</strong>
+                              <span class="pill probable">${escapeHtml(item.status_label)}</span>
                             </div>
                             <div class="detail-note">${escapeHtml(item.summary)}</div>
                           </div>
@@ -1176,7 +1347,7 @@
         <div class="screen-head">
           <div>
             <h2 data-active-screen>Sources</h2>
-            <p>Use source intake when you need to inspect imported material feeding the writing workflow. Pull from Zotero for live records or inspect the seed catalog while the backend is file-backed.</p>
+            <p>Advanced utility for source intake and auditing. Use this when you need to inspect imported material feeding the writing workflow.</p>
           </div>
           <div class="screen-actions">
             <button class="secondary-button" type="button" data-action="pull-sources">Pull Zotero sources</button>
@@ -1288,13 +1459,14 @@
       ? state.researchPrograms
       : [{ program_id: "default", name: "Generic Subject / Era Research", built_in: true }];
     const selectedProgramId = state.researchDraft.program_id || "default";
+    const advanced = state.workspaceMode === "advanced";
 
     return `
       <article class="screen fade-in">
         <div class="screen-head">
           <div>
             <h2 data-active-screen>Research</h2>
-            <p>Start a bounded scout run from a brief, then stage accepted findings as text-backed sources before normal extraction and review.</p>
+            <p>Start with the gap you need to fill for the book, then send the strongest accepted leads through the normal review gate.</p>
           </div>
           <div class="screen-actions">
             <button class="secondary-button" type="button" data-action="refresh-research">Refresh selected run</button>
@@ -1306,134 +1478,139 @@
             <form class="detail" data-form="research-run">
               <div class="detail-head">
                 <div>
-                  <h3>New research run</h3>
-                  <div class="detail-note">Generic by default: topic, era, optional locale, and a reusable program.</div>
+                  <h3>Fill a writing gap</h3>
+                  <div class="detail-note">Describe the scene problem, period, place, and audience lens. Advanced scouting controls stay available when you need them.</div>
                 </div>
                 <span class="pill queued">brief</span>
               </div>
               <div class="detail-grid">
                 <div class="field">
                   <label for="research-topic">Topic</label>
-                  <input id="research-topic" name="topic" value="${escapeHtml(state.researchDraft.topic)}" placeholder="2003 DJ and music scene" required />
+                  <input id="research-topic" name="topic" value="${escapeHtml(state.researchDraft.topic)}" placeholder="What detail do I need for the next scene?" required />
                 </div>
                 <div class="field">
-                  <label for="research-program">Research program</label>
-                  <select id="research-program" name="program_id">
-                    ${availablePrograms
-                      .map(
-                        (program) => `
-                          <option value="${escapeHtml(program.program_id)}" ${program.program_id === selectedProgramId ? "selected" : ""}>
-                            ${escapeHtml(program.name)}${program.built_in ? " (built-in)" : ""}
-                          </option>
-                        `
-                      )
-                      .join("")}
-                  </select>
+                  <label for="research-focal-year">Focal year or period</label>
+                  <input id="research-focal-year" name="focal_year" value="${escapeHtml(state.researchDraft.focal_year)}" placeholder="1422" />
                 </div>
                 <div class="field">
-                  <label for="research-adapter">Scout adapter</label>
-                  <select id="research-adapter" name="adapter_id">
-                    <option value="web_open" ${state.researchDraft.adapter_id === "web_open" ? "selected" : ""}>web_open</option>
-                    <option value="curated_inputs" ${state.researchDraft.adapter_id === "curated_inputs" ? "selected" : ""}>curated_inputs</option>
-                  </select>
-                </div>
-                <div class="field">
-                  <label for="research-focal-year">Focal year</label>
-                  <input id="research-focal-year" name="focal_year" value="${escapeHtml(state.researchDraft.focal_year)}" placeholder="2003" />
-                </div>
-                <div class="field">
-                  <label for="research-locale">Locale</label>
-                  <input id="research-locale" name="locale" value="${escapeHtml(state.researchDraft.locale)}" placeholder="Berlin, UK garage clubs, Bay Area" />
+                  <label for="research-locale">Place</label>
+                  <input id="research-locale" name="locale" value="${escapeHtml(state.researchDraft.locale)}" placeholder="Rouen" />
                 </div>
                 <div class="field">
                   <label for="research-time-start">Time start</label>
-                  <input id="research-time-start" name="time_start" value="${escapeHtml(state.researchDraft.time_start)}" placeholder="2002-01-01" />
+                  <input id="research-time-start" name="time_start" value="${escapeHtml(state.researchDraft.time_start)}" placeholder="1421-12-01" />
                 </div>
                 <div class="field">
                   <label for="research-time-end">Time end</label>
-                  <input id="research-time-end" name="time_end" value="${escapeHtml(state.researchDraft.time_end)}" placeholder="2004-12-31" />
+                  <input id="research-time-end" name="time_end" value="${escapeHtml(state.researchDraft.time_end)}" placeholder="1422-02-28" />
                 </div>
                 <div class="field">
                   <label for="research-audience">Audience / lens</label>
-                  <input id="research-audience" name="audience" value="${escapeHtml(state.researchDraft.audience)}" placeholder="clubgoers, record collectors, city historians" />
+                  <input id="research-audience" name="audience" value="${escapeHtml(state.researchDraft.audience)}" placeholder="bakers, dockworkers, clerks, households in ration lines" />
                 </div>
                 <div class="field">
-                  <label for="research-domain-hints">Domain hints</label>
-                  <input id="research-domain-hints" name="domain_hints" value="${escapeHtml(state.researchDraft.domain_hints)}" placeholder="vinyl, mixtapes, nightlife" />
+                  <label for="research-domain-hints">Scene need</label>
+                  <input id="research-domain-hints" name="domain_hints" value="${escapeHtml(state.researchDraft.domain_hints)}" placeholder="market movement, bell timing, ration tokens, shrine ritual" />
                 </div>
                 <div class="field">
                   <label for="research-desired-facets">Desired facets</label>
-                  <input id="research-desired-facets" name="desired_facets" value="${escapeHtml(state.researchDraft.desired_facets)}" placeholder="people, practices, objects_technology, media_culture" />
+                  <input id="research-desired-facets" name="desired_facets" value="${escapeHtml(state.researchDraft.desired_facets)}" placeholder="people, practices, institutions, objects_technology" />
                 </div>
                 <div class="field">
-                  <label for="research-preferred-source-types">Preferred source types</label>
-                  <input id="research-preferred-source-types" name="preferred_source_types" value="${escapeHtml(state.researchDraft.preferred_source_types)}" placeholder="news, archive, educational" />
+                  <label for="research-curated-title">Optional source title</label>
+                  <input id="research-curated-title" name="curated_title" value="${escapeHtml(state.researchDraft.curated_title)}" placeholder="Pasted note or known source title" />
                 </div>
                 <div class="field">
-                  <label for="research-excluded-source-types">Excluded source types</label>
-                  <input id="research-excluded-source-types" name="excluded_source_types" value="${escapeHtml(state.researchDraft.excluded_source_types)}" placeholder="social, forum" />
+                  <label for="research-curated-url">Optional source URL</label>
+                  <input id="research-curated-url" name="curated_url" value="${escapeHtml(state.researchDraft.curated_url)}" placeholder="Optional URL for curated mode or a known lead" />
                 </div>
-                <div class="field">
-                  <label for="research-coverage-targets">Coverage targets</label>
-                  <input id="research-coverage-targets" name="coverage_targets" value="${escapeHtml(state.researchDraft.coverage_targets)}" placeholder="people:2, events:2, objects_technology:3" />
-                </div>
-                <div class="field">
-                  <label for="research-max-queries">Max queries</label>
-                  <input id="research-max-queries" name="max_queries" type="number" min="1" value="${escapeHtml(state.researchDraft.max_queries)}" />
-                </div>
-                <div class="field">
-                  <label for="research-max-results-per-query">Results / query</label>
-                  <input id="research-max-results-per-query" name="max_results_per_query" type="number" min="1" value="${escapeHtml(state.researchDraft.max_results_per_query)}" />
-                </div>
-                <div class="field">
-                  <label for="research-max-findings">Max findings</label>
-                  <input id="research-max-findings" name="max_findings" type="number" min="1" value="${escapeHtml(state.researchDraft.max_findings)}" />
-                </div>
-                <div class="field">
-                  <label for="research-max-per-facet">Max / facet</label>
-                  <input id="research-max-per-facet" name="max_per_facet" type="number" min="1" value="${escapeHtml(state.researchDraft.max_per_facet)}" />
-                </div>
-                <div class="field">
-                  <label for="research-total-fetch-time">Fetch budget (s)</label>
-                  <input id="research-total-fetch-time" name="total_fetch_time_seconds" type="number" min="1" value="${escapeHtml(state.researchDraft.total_fetch_time_seconds)}" />
-                </div>
-                <div class="field">
-                  <label for="research-per-host-fetch-cap">Per-host cap</label>
-                  <input id="research-per-host-fetch-cap" name="per_host_fetch_cap" type="number" min="1" value="${escapeHtml(state.researchDraft.per_host_fetch_cap)}" />
-                </div>
-                <div class="field">
-                  <label for="research-retry-attempts">Retry attempts</label>
-                  <input id="research-retry-attempts" name="retry_attempts" type="number" min="1" value="${escapeHtml(state.researchDraft.retry_attempts)}" />
-                </div>
-                <div class="field">
-                  <label for="research-retry-backoff-base-ms">Backoff base (ms)</label>
-                  <input id="research-retry-backoff-base-ms" name="retry_backoff_base_ms" type="number" min="1" value="${escapeHtml(state.researchDraft.retry_backoff_base_ms)}" />
-                </div>
-                <div class="field">
-                  <label for="research-retry-backoff-max-ms">Backoff max (ms)</label>
-                  <input id="research-retry-backoff-max-ms" name="retry_backoff_max_ms" type="number" min="1" value="${escapeHtml(state.researchDraft.retry_backoff_max_ms)}" />
-                </div>
-                <div class="field">
-                  <label for="research-allow-domains">Allow domains</label>
-                  <input id="research-allow-domains" name="allow_domains" value="${escapeHtml(state.researchDraft.allow_domains)}" placeholder="archive.example.org, bbc.co.uk" />
-                </div>
-                <div class="field">
-                  <label for="research-deny-domains">Deny domains</label>
-                  <input id="research-deny-domains" name="deny_domains" value="${escapeHtml(state.researchDraft.deny_domains)}" placeholder="social.example.org, blocked.example.org" />
-                </div>
-                <div class="field">
-                  <label for="research-curated-title">Curated title</label>
-                  <input id="research-curated-title" name="curated_title" value="${escapeHtml(state.researchDraft.curated_title)}" placeholder="Optional text input title" />
-                </div>
-              <div class="field">
-                <label for="research-curated-url">Curated URL</label>
-                <input id="research-curated-url" name="curated_url" value="${escapeHtml(state.researchDraft.curated_url)}" placeholder="Optional URL input for no-search curated mode" />
               </div>
-            </div>
               <div class="field">
-                <label for="research-curated-text">Curated text</label>
-                <textarea id="research-curated-text" name="curated_text" placeholder="Optional pasted evidence for curated_inputs. Text stays local evidence; curated URLs may still fetch if policy allows it.">${escapeHtml(state.researchDraft.curated_text)}</textarea>
+                <label for="research-curated-text">Notes or pasted evidence</label>
+                <textarea id="research-curated-text" name="curated_text" placeholder="Paste a source excerpt, a note to yourself, or a known detail you want the run to build around.">${escapeHtml(state.researchDraft.curated_text)}</textarea>
               </div>
+              <details class="detail disclosure" ${advanced ? "open" : ""}>
+                <summary>Advanced research settings</summary>
+                <div class="detail-grid" style="margin-top:12px;">
+                  <div class="field">
+                    <label for="research-program">Research program</label>
+                    <select id="research-program" name="program_id">
+                      ${availablePrograms
+                        .map(
+                          (program) => `
+                            <option value="${escapeHtml(program.program_id)}" ${program.program_id === selectedProgramId ? "selected" : ""}>
+                              ${escapeHtml(program.name)}${program.built_in ? " (built-in)" : ""}
+                            </option>
+                          `
+                        )
+                        .join("")}
+                    </select>
+                  </div>
+                  <div class="field">
+                    <label for="research-adapter">Scout adapter</label>
+                    <select id="research-adapter" name="adapter_id">
+                      <option value="web_open" ${state.researchDraft.adapter_id === "web_open" ? "selected" : ""}>web_open</option>
+                      <option value="curated_inputs" ${state.researchDraft.adapter_id === "curated_inputs" ? "selected" : ""}>curated_inputs</option>
+                    </select>
+                  </div>
+                  <div class="field">
+                    <label for="research-preferred-source-types">Preferred source types</label>
+                    <input id="research-preferred-source-types" name="preferred_source_types" value="${escapeHtml(state.researchDraft.preferred_source_types)}" placeholder="archive, educational, record" />
+                  </div>
+                  <div class="field">
+                    <label for="research-excluded-source-types">Excluded source types</label>
+                    <input id="research-excluded-source-types" name="excluded_source_types" value="${escapeHtml(state.researchDraft.excluded_source_types)}" placeholder="social, forum" />
+                  </div>
+                  <div class="field">
+                    <label for="research-coverage-targets">Coverage targets</label>
+                    <input id="research-coverage-targets" name="coverage_targets" value="${escapeHtml(state.researchDraft.coverage_targets)}" placeholder="people:2, events:2, objects_technology:3" />
+                  </div>
+                  <div class="field">
+                    <label for="research-max-queries">Max queries</label>
+                    <input id="research-max-queries" name="max_queries" type="number" min="1" value="${escapeHtml(state.researchDraft.max_queries)}" />
+                  </div>
+                  <div class="field">
+                    <label for="research-max-results-per-query">Results / query</label>
+                    <input id="research-max-results-per-query" name="max_results_per_query" type="number" min="1" value="${escapeHtml(state.researchDraft.max_results_per_query)}" />
+                  </div>
+                  <div class="field">
+                    <label for="research-max-findings">Max findings</label>
+                    <input id="research-max-findings" name="max_findings" type="number" min="1" value="${escapeHtml(state.researchDraft.max_findings)}" />
+                  </div>
+                  <div class="field">
+                    <label for="research-max-per-facet">Max / facet</label>
+                    <input id="research-max-per-facet" name="max_per_facet" type="number" min="1" value="${escapeHtml(state.researchDraft.max_per_facet)}" />
+                  </div>
+                  <div class="field">
+                    <label for="research-total-fetch-time">Fetch budget (s)</label>
+                    <input id="research-total-fetch-time" name="total_fetch_time_seconds" type="number" min="1" value="${escapeHtml(state.researchDraft.total_fetch_time_seconds)}" />
+                  </div>
+                  <div class="field">
+                    <label for="research-per-host-fetch-cap">Per-host cap</label>
+                    <input id="research-per-host-fetch-cap" name="per_host_fetch_cap" type="number" min="1" value="${escapeHtml(state.researchDraft.per_host_fetch_cap)}" />
+                  </div>
+                  <div class="field">
+                    <label for="research-retry-attempts">Retry attempts</label>
+                    <input id="research-retry-attempts" name="retry_attempts" type="number" min="1" value="${escapeHtml(state.researchDraft.retry_attempts)}" />
+                  </div>
+                  <div class="field">
+                    <label for="research-retry-backoff-base-ms">Backoff base (ms)</label>
+                    <input id="research-retry-backoff-base-ms" name="retry_backoff_base_ms" type="number" min="1" value="${escapeHtml(state.researchDraft.retry_backoff_base_ms)}" />
+                  </div>
+                  <div class="field">
+                    <label for="research-retry-backoff-max-ms">Backoff max (ms)</label>
+                    <input id="research-retry-backoff-max-ms" name="retry_backoff_max_ms" type="number" min="1" value="${escapeHtml(state.researchDraft.retry_backoff_max_ms)}" />
+                  </div>
+                  <div class="field">
+                    <label for="research-allow-domains">Allow domains</label>
+                    <input id="research-allow-domains" name="allow_domains" value="${escapeHtml(state.researchDraft.allow_domains)}" placeholder="archive.example.org, bbc.co.uk" />
+                  </div>
+                  <div class="field">
+                    <label for="research-deny-domains">Deny domains</label>
+                    <input id="research-deny-domains" name="deny_domains" value="${escapeHtml(state.researchDraft.deny_domains)}" placeholder="blocked.example.org" />
+                  </div>
+                </div>
+              </details>
               <div class="toolbar">
                 <label class="chip">
                   <input type="checkbox" name="respect_robots" ${state.researchDraft.respect_robots ? "checked" : ""} />
@@ -1441,46 +1618,42 @@
                 </label>
               </div>
               <div class="toolbar">
-                <button class="primary-button" type="submit">Run research scout</button>
-                <span class="helper">Accepted findings stay provisional until you stage them, extract candidates, and review those candidates normally.</span>
+                <button class="primary-button" type="submit">Run research</button>
+                <span class="helper">Accepted leads still stay outside canon until they are staged, extracted, and reviewed normally.</span>
               </div>
             </form>
 
-            <div class="detail">
-              <div class="detail-head">
-                <div>
-                  <h3>Programs</h3>
-                  <div class="detail-note">The runner uses these instruction sets to choose facets, source policy, and quality thresholds.</div>
+            ${advanced
+              ? `
+                <div class="detail">
+                  <div class="detail-head">
+                    <div>
+                      <h3>Programs</h3>
+                      <div class="detail-note">These instruction sets shape facet targets, source policy, and quality thresholds.</div>
+                    </div>
+                    <span class="pill probable">${escapeHtml(availablePrograms.length)}</span>
+                  </div>
+                  <div class="detail-list">
+                    ${availablePrograms.length
+                      ? availablePrograms
+                          .map(
+                            (program) => `
+                              <div class="mini">
+                                <div class="toolbar">
+                                  <strong>${escapeHtml(program.name)}</strong>
+                                  <span class="pill ${program.built_in ? "verified" : "probable"}">${program.built_in ? "built-in" : "custom"}</span>
+                                </div>
+                                <div>${escapeHtml(program.description || "No description supplied.")}</div>
+                                <div class="detail-note">facets: ${escapeHtml((program.default_facets || []).join(", ") || "none")} · adapter: ${escapeHtml(program.default_adapter_id || "web_open")}</div>
+                              </div>
+                            `
+                          )
+                          .join("")
+                      : "<div class='helper'>No research programs are loaded yet.</div>"}
+                  </div>
                 </div>
-                <span class="pill probable">${escapeHtml(availablePrograms.length)}</span>
-              </div>
-              <div class="detail-list">
-                ${availablePrograms.length
-                  ? availablePrograms
-                      .map(
-                        (program) => `
-                          <div class="mini">
-                            <div class="toolbar">
-                              <strong>${escapeHtml(program.name)}</strong>
-                              <span class="pill ${program.built_in ? "verified" : "probable"}">${program.built_in ? "built-in" : "custom"}</span>
-                            </div>
-                            <div class="detail-note">${escapeHtml(program.program_id)}</div>
-                            <div>${escapeHtml(program.description || "No description supplied.")}</div>
-                            <div class="detail-note">
-                              facets: ${escapeHtml((program.default_facets || []).join(", ") || "none")}
-                              · adapter: ${escapeHtml(program.default_adapter_id || "web_open")}
-                            </div>
-                            <div class="detail-note">
-                              preferred: ${escapeHtml((program.preferred_source_classes || []).join(", ") || "none")}
-                              · robots: ${program.default_execution_policy?.respect_robots ? "on" : "off"}
-                            </div>
-                          </div>
-                        `
-                      )
-                      .join("")
-                  : "<div class='helper'>No research programs are loaded yet.</div>"}
-              </div>
-            </div>
+              `
+              : ""}
 
             <div class="surface list">
               ${state.researchRuns.length
@@ -1490,15 +1663,14 @@
                         <button class="list-row ${run.run_id === selectedRun?.run_id ? "is-selected" : ""}" type="button" data-select-research-run="${escapeHtml(run.run_id)}">
                           <div>
                             <div class="row-title">${escapeHtml(run.brief.topic)}</div>
-                            <div class="row-subtitle">${escapeHtml(run.run_id)}</div>
+                            <div class="row-subtitle">${escapeHtml(run.brief.locale || run.brief.audience || "Research run")}</div>
                           </div>
                           <div class="row-meta">
                             <span class="pill ${escapeHtml(run.status)}">${escapeHtml(run.status)}</span>
-                            ${renderJobPill(run.latest_job)}
-                            <span class="code">${escapeHtml(run.program_id)}</span>
+                            ${advanced ? `${renderJobPill(run.latest_job)}<span class="code">${escapeHtml(run.program_id)}</span>` : ""}
                           </div>
-                          <div class="row-meta">${escapeHtml(run.accepted_count)} accepted · ${escapeHtml(run.rejected_count)} rejected</div>
-                          <div class="row-meta">${escapeHtml(run.staged_count)} staged · ${escapeHtml(run.query_count)} queries</div>
+                          <div class="row-meta">${escapeHtml(run.accepted_count)} usable leads · ${escapeHtml(run.rejected_count)} rejected</div>
+                          <div class="row-meta">${escapeHtml(run.staged_count)} sent onward${advanced ? ` · ${escapeHtml(run.query_count)} queries` : ""}</div>
                         </button>
                       `
                     )
@@ -1521,33 +1693,33 @@
     const facetCoverage = detail?.facet_coverage || [];
     const filteredFindings = filterAndSortResearchFindings(findings, state.filters);
     const filterOptions = buildResearchFilterOptions(findings);
+    const advanced = state.workspaceMode === "advanced";
 
     return `
       <div class="detail-head">
         <div>
           <h3>${escapeHtml(run.brief.topic)}</h3>
-          <div class="detail-note">${escapeHtml(run.run_id)} · ${escapeHtml(program?.name || run.program_id)}</div>
+          <div class="detail-note">${escapeHtml(program?.name || run.program_id)}${advanced ? ` · ${escapeHtml(run.run_id)}` : ""}</div>
         </div>
         <div class="toolbar">
-          ${renderJobPill(run.latest_job)}
+          ${advanced ? renderJobPill(run.latest_job) : ""}
           <span class="pill ${escapeHtml(run.status)}">${escapeHtml(run.status)}</span>
         </div>
       </div>
       <div class="inline-metrics">
-        <span>${escapeHtml(run.accepted_count)} accepted</span>
+        <span>${escapeHtml(run.accepted_count)} usable leads</span>
         <span>${escapeHtml(run.rejected_count)} rejected</span>
-        <span>${escapeHtml(run.staged_count)} staged</span>
+        <span>${escapeHtml(run.staged_count)} sent onward</span>
         <span>${escapeHtml(run.finding_count)} findings</span>
-        <span>${escapeHtml(run.query_count)} queries</span>
+        ${advanced ? `<span>${escapeHtml(run.query_count)} queries</span>` : ""}
       </div>
       <div class="toolbar">
         <button class="secondary-button" type="button" data-action="refresh-research">Refresh detail</button>
-        <button class="secondary-button" type="button" data-action="stage-research">Stage accepted findings</button>
-        <button class="primary-button" type="button" data-action="extract-research">Stage + extract</button>
-        <button class="secondary-button" type="button" data-action="compose-from-research">Compose section</button>
-        ${renderJobControls(run.latest_job)}
+        ${advanced ? `<button class="secondary-button" type="button" data-action="stage-research">Stage accepted findings</button>` : ""}
+        <button class="primary-button" type="button" data-action="extract-research">Send accepted leads to review</button>
+        ${advanced ? renderJobControls(run.latest_job) : ""}
       </div>
-      ${renderJobDiagnostic(run.latest_job)}
+      ${advanced ? renderJobDiagnostic(run.latest_job) : ""}
       <div class="detail-grid">
         <div class="field">
           <label>Time window</label>
@@ -1562,12 +1734,12 @@
           <div>${escapeHtml(run.brief.audience || "n/a")}</div>
         </div>
         <div class="field">
-          <label>Extraction run</label>
-          <div class="code">${escapeHtml(run.extraction_run_id || "not yet extracted")}</div>
+          <label>Review handoff</label>
+          <div>${escapeHtml(run.extraction_run_id ? "Candidates created and waiting for review." : "Not yet sent onward to review.")}</div>
         </div>
       </div>
       <div class="field">
-        <label>Facet coverage</label>
+        <label>Coverage</label>
         <div class="detail-list">
           ${(facetCoverage.length ? facetCoverage : run.facets).length
             ? (facetCoverage.length ? facetCoverage : run.facets)
@@ -1589,10 +1761,10 @@
                         ${escapeHtml(facet.coverage_status ? `coverage ${facet.coverage_status}` : facet.query_hint)}
                         ${facet.coverage_gap_reason ? ` · gap ${escapeHtml(facet.coverage_gap_reason)}` : ""}
                       </div>
-                      ${facet.diagnostic_summary
+                      ${advanced && facet.diagnostic_summary
                         ? `<div class="detail-note">diagnostics ${escapeHtml(facet.diagnostic_summary)} · duplicates ${escapeHtml(facet.duplicate_rejections ?? 0)} · threshold ${escapeHtml(facet.threshold_rejections ?? 0)} · excluded ${escapeHtml(facet.excluded_source_rejections ?? 0)} · fetch ${escapeHtml(facet.fetch_failures ?? 0)}</div>`
                         : ""}
-                      ${facet.accepted_sources_by_type
+                      ${advanced && facet.accepted_sources_by_type
                         ? `<div class="detail-note">accepted sources ${escapeHtml(renderKeyValueMap(facet.accepted_sources_by_type))}</div>`
                         : ""}
                     </div>
@@ -1611,64 +1783,7 @@
         </div>
       </div>
       <div class="field">
-        <label>Telemetry</label>
-        <div class="detail-list">
-          <div class="mini">
-            <div class="detail-note">queries ${escapeHtml(run.telemetry?.queries_attempted ?? 0)} / ${escapeHtml(run.telemetry?.total_queries ?? 0)}</div>
-            <div>fetches ${escapeHtml(run.telemetry?.successful_fetches ?? 0)} successful / ${escapeHtml(run.telemetry?.fetch_attempts ?? 0)} attempts</div>
-            <div class="detail-note">retries ${escapeHtml(run.telemetry?.retries ?? 0)} · dedupe ${escapeHtml(run.telemetry?.dedupe_count ?? 0)}</div>
-          </div>
-          <div class="mini">
-            <div>robots blocks ${escapeHtml(run.telemetry?.blocked_by_robots_count ?? 0)} · policy blocks ${escapeHtml(run.telemetry?.blocked_by_policy_count ?? 0)}</div>
-            <div class="detail-note">run ${escapeHtml(run.telemetry?.elapsed_run_time_ms ?? 0)}ms · fetch ${escapeHtml(run.telemetry?.elapsed_fetch_time_ms ?? 0)}ms</div>
-          </div>
-          <div class="mini">
-            <div class="detail-note">per-host fetch counts</div>
-            <div>${escapeHtml(renderKeyValueMap(run.telemetry?.per_host_fetch_counts || {}))}</div>
-          </div>
-          <div class="mini">
-            <div class="detail-note">skipped hosts</div>
-            <div>${escapeHtml(renderKeyValueMap(run.telemetry?.skipped_host_counts || {}))}</div>
-          </div>
-          <div class="mini">
-            <div class="detail-note">failure categories</div>
-            <div>${escapeHtml(renderKeyValueMap(run.telemetry?.fetch_failures_by_category || {}))}</div>
-          </div>
-          <div class="mini">
-            <div class="detail-note">fallback flags</div>
-            <div>${escapeHtml((run.telemetry?.fallback_flags || []).join(", ") || "none")}</div>
-          </div>
-          <div class="mini">
-            <div class="detail-note">search providers</div>
-            <div>${escapeHtml((run.telemetry?.search?.providers_used || []).join(", ") || "none")}</div>
-            <div class="detail-note">
-              queries ${escapeHtml(renderKeyValueMap(run.telemetry?.search?.queries_by_provider || {}))}
-              · hits ${escapeHtml(renderKeyValueMap(run.telemetry?.search?.hits_by_provider || {}))}
-            </div>
-            <div class="detail-note">
-              accepted ${escapeHtml(renderKeyValueMap(run.telemetry?.search?.accepted_by_provider || {}))}
-              · zero-hit profiles ${escapeHtml(renderKeyValueMap(run.telemetry?.search?.zero_hit_queries_by_profile || {}))}
-            </div>
-            <div class="detail-note">
-              ${run.telemetry?.search?.fallback_used ? `provider fallback ${escapeHtml(run.telemetry?.search?.fallback_reason || "used")}` : "provider fallback none"}
-            </div>
-          </div>
-          <div class="mini">
-            <div class="detail-note">semantic backend</div>
-            <div>
-              ${escapeHtml(run.telemetry?.semantic?.backend || "n/a")}
-              ${run.telemetry?.semantic?.fallback_used ? ` · fallback ${escapeHtml(run.telemetry?.semantic?.fallback_reason || "used")}` : ""}
-            </div>
-            <div class="detail-note">
-              vectors ${escapeHtml(run.telemetry?.semantic?.vectors_upserted ?? 0)}
-              · comparisons ${escapeHtml(run.telemetry?.semantic?.comparisons_performed ?? 0)}
-              · duplicate hints ${escapeHtml(run.telemetry?.semantic?.duplicate_hints_emitted ?? 0)}
-            </div>
-          </div>
-        </div>
-      </div>
-      <div class="field">
-        <label>Findings</label>
+        <label>Usable leads</label>
         <div class="detail-grid">
           <div class="field">
             <label for="research-filter-decision">Decision</label>
@@ -1697,52 +1812,64 @@
               ], state.filters.researchSourceType)}
             </select>
           </div>
-          <div class="field">
-            <label for="research-filter-facet">Facet</label>
-            <select id="research-filter-facet" data-research-filter="researchFacet">
-              ${renderSelectOptions([
-                ["all", "all"],
-                ...filterOptions.facets.map((value) => [value, value]),
-              ], state.filters.researchFacet)}
-            </select>
-          </div>
-          <div class="field">
-            <label for="research-filter-provider">Provider</label>
-            <select id="research-filter-provider" data-research-filter="researchProvider">
-              ${renderSelectOptions([
-                ["all", "all"],
-                ...filterOptions.providers.map((value) => [value, value]),
-              ], state.filters.researchProvider)}
-            </select>
-          </div>
-          <div class="field">
-            <label for="research-filter-profile">Query profile</label>
-            <select id="research-filter-profile" data-research-filter="researchQueryProfile">
-              ${renderSelectOptions([
-                ["all", "all"],
-                ...filterOptions.queryProfiles.map((value) => [value, value]),
-              ], state.filters.researchQueryProfile)}
-            </select>
-          </div>
-          <div class="field">
-            <label for="research-filter-sort">Sort</label>
-            <select id="research-filter-sort" data-research-filter="researchSort">
-              ${renderSelectOptions([
-                ["accepted_first", "accepted first"],
-                ["weakest_first", "weakest first"],
-              ], state.filters.researchSort)}
-            </select>
-          </div>
-          <div class="field">
-            <label for="research-filter-semantic">Semantic</label>
-            <select id="research-filter-semantic" data-research-filter="researchSemantic">
-              ${renderSelectOptions([
-                ["all", "all"],
-                ["duplicate_hint", "duplicate hint"],
-                ["fallback_only", "fallback only"],
-              ], state.filters.researchSemantic)}
-            </select>
-          </div>
+          ${advanced ? `
+            <div class="field">
+              <label for="research-filter-facet">Facet</label>
+              <select id="research-filter-facet" data-research-filter="researchFacet">
+                ${renderSelectOptions([
+                  ["all", "all"],
+                  ...filterOptions.facets.map((value) => [value, value]),
+                ], state.filters.researchFacet)}
+              </select>
+            </div>
+            <div class="field">
+              <label for="research-filter-provider">Provider</label>
+              <select id="research-filter-provider" data-research-filter="researchProvider">
+                ${renderSelectOptions([
+                  ["all", "all"],
+                  ...filterOptions.providers.map((value) => [value, value]),
+                ], state.filters.researchProvider)}
+              </select>
+            </div>
+            <div class="field">
+              <label for="research-filter-profile">Query profile</label>
+              <select id="research-filter-profile" data-research-filter="researchQueryProfile">
+                ${renderSelectOptions([
+                  ["all", "all"],
+                  ...filterOptions.queryProfiles.map((value) => [value, value]),
+                ], state.filters.researchQueryProfile)}
+              </select>
+            </div>
+            <div class="field">
+              <label for="research-filter-sort">Sort</label>
+              <select id="research-filter-sort" data-research-filter="researchSort">
+                ${renderSelectOptions([
+                  ["accepted_first", "accepted first"],
+                  ["weakest_first", "weakest first"],
+                ], state.filters.researchSort)}
+              </select>
+            </div>
+            <div class="field">
+              <label for="research-filter-semantic">Semantic</label>
+              <select id="research-filter-semantic" data-research-filter="researchSemantic">
+                ${renderSelectOptions([
+                  ["all", "all"],
+                  ["duplicate_hint", "duplicate hint"],
+                  ["fallback_only", "fallback only"],
+                ], state.filters.researchSemantic)}
+              </select>
+            </div>
+          ` : `
+            <div class="field">
+              <label for="research-filter-sort">Sort</label>
+              <select id="research-filter-sort" data-research-filter="researchSort">
+                ${renderSelectOptions([
+                  ["accepted_first", "accepted first"],
+                  ["weakest_first", "weakest first"],
+                ], state.filters.researchSort)}
+              </select>
+            </div>
+          `}
         </div>
         <div class="detail-list">
           ${filteredFindings.length
@@ -1761,25 +1888,45 @@
                         ${finding.published_at ? ` · ${escapeHtml(formatDate(finding.published_at))}` : ""}
                         ${finding.rejection_reason ? ` · ${escapeHtml(finding.rejection_reason)}` : ""}
                       </div>
-                      <details class="detail-note" style="margin-top:8px;">
+                      <details class="detail-note" style="margin-top:8px;" ${advanced ? "open" : ""}>
                         <summary>Why this finding</summary>
                         <div style="margin-top:8px;">${renderResearchFindingProvenance(finding)}</div>
                       </details>
                     </div>
-                  `
+                `
                 )
                 .join("")
             : "<div class='helper'>No findings matched the current filters for this run.</div>"}
         </div>
       </div>
-      <div class="field">
-        <label>Run log</label>
-        <div class="detail-list">
-          ${run.logs.length
-            ? run.logs.map((line) => `<div class="mini"><div>${escapeHtml(line)}</div></div>`).join("")
-            : "<div class='helper'>No run log entries were recorded.</div>"}
-        </div>
-      </div>
+      ${advanced ? `
+        <details class="field disclosure">
+          <summary>Advanced diagnostics</summary>
+          <div class="detail-list" style="margin-top:12px;">
+            <div class="mini">
+              <div class="detail-note">queries ${escapeHtml(run.telemetry?.queries_attempted ?? 0)} / ${escapeHtml(run.telemetry?.total_queries ?? 0)}</div>
+              <div>fetches ${escapeHtml(run.telemetry?.successful_fetches ?? 0)} successful / ${escapeHtml(run.telemetry?.fetch_attempts ?? 0)} attempts</div>
+              <div class="detail-note">retries ${escapeHtml(run.telemetry?.retries ?? 0)} · dedupe ${escapeHtml(run.telemetry?.dedupe_count ?? 0)}</div>
+            </div>
+            <div class="mini">
+              <div>robots blocks ${escapeHtml(run.telemetry?.blocked_by_robots_count ?? 0)} · policy blocks ${escapeHtml(run.telemetry?.blocked_by_policy_count ?? 0)}</div>
+              <div class="detail-note">run ${escapeHtml(run.telemetry?.elapsed_run_time_ms ?? 0)}ms · fetch ${escapeHtml(run.telemetry?.elapsed_fetch_time_ms ?? 0)}ms</div>
+            </div>
+            <div class="mini">
+              <div class="detail-note">search providers</div>
+              <div>${escapeHtml((run.telemetry?.search?.providers_used || []).join(", ") || "none")}</div>
+            </div>
+            <div class="mini">
+              <div class="detail-note">semantic backend</div>
+              <div>${escapeHtml(run.telemetry?.semantic?.backend || "n/a")}</div>
+            </div>
+            <div class="mini">
+              <div class="detail-note">run log</div>
+              <div>${run.logs.length ? run.logs.map((line) => escapeHtml(line)).join(" | ") : "No run log entries were recorded."}</div>
+            </div>
+          </div>
+        </details>
+      ` : ""}
     `;
   }
 
@@ -1789,6 +1936,7 @@
     const coverage = buildBibleCoverage(profile, state.bible.sections, state.claims);
     const readyForBible = state.claims.filter((claim) => claim.status !== "rumor" && claim.status !== "legend").length;
     const nonReadyCount = coverage.filter((item) => item.summary !== "ready").length;
+    const advanced = state.workspaceMode === "advanced";
 
     return `
       <article class="screen fade-in">
@@ -1815,7 +1963,7 @@
           </div>
         </section>
 
-        ${state.bible.exportBundle
+        ${advanced && state.bible.exportBundle
           ? `
             <section class="detail">
               <div class="detail-head">
@@ -2051,10 +2199,11 @@
         <span>${section.ready_for_writer ? "generated baseline usable" : "generated baseline not yet dependable"}</span>
       </div>
       <div class="toolbar">
+        <button class="secondary-button" type="button" data-action="launch-gap-research">Fill a gap</button>
         <button class="secondary-button" type="button" data-action="regenerate-bible-section">Regenerate section</button>
-        ${renderJobControls(section.latest_job)}
+        ${advanced ? renderJobControls(section.latest_job) : ""}
       </div>
-      ${renderJobDiagnostic(section.latest_job)}
+      ${advanced ? renderJobDiagnostic(section.latest_job) : ""}
       <div class="field">
         <label>Generation posture</label>
         <div class="detail-list">
@@ -2150,27 +2299,29 @@
           ${(section.contradiction_flags || []).map((item) => `<div class="warning">${escapeHtml(item)}</div>`).join("")}
         </div>
       </div>
-      <div class="field">
-        <label>Coverage analysis</label>
-        <div class="detail-list">
-          <div class="mini">
-            <div class="detail-note">facet distribution</div>
-            <div>${escapeHtml(renderKeyValueMap(section.coverage_analysis?.facet_distribution || {}))}</div>
-          </div>
-          <div class="mini">
-            <div class="detail-note">certainty mix</div>
-            <div>${escapeHtml(renderKeyValueMap(section.coverage_analysis?.certainty_mix || {}))}</div>
-          </div>
-          <div class="mini">
-            <div class="detail-note">diagnostic</div>
-            <div>${escapeHtml(section.coverage_analysis?.diagnostic_summary || "No diagnostic summary.")}</div>
-          </div>
-          <div class="mini">
-            <div class="detail-note">retrieval</div>
-            <div>${escapeHtml(renderRetrievalSummary(section.retrieval_metadata || {}))}</div>
+      ${advanced ? `
+        <div class="field">
+          <label>Coverage analysis</label>
+          <div class="detail-list">
+            <div class="mini">
+              <div class="detail-note">facet distribution</div>
+              <div>${escapeHtml(renderKeyValueMap(section.coverage_analysis?.facet_distribution || {}))}</div>
+            </div>
+            <div class="mini">
+              <div class="detail-note">certainty mix</div>
+              <div>${escapeHtml(renderKeyValueMap(section.coverage_analysis?.certainty_mix || {}))}</div>
+            </div>
+            <div class="mini">
+              <div class="detail-note">diagnostic</div>
+              <div>${escapeHtml(section.coverage_analysis?.diagnostic_summary || "No diagnostic summary.")}</div>
+            </div>
+            <div class="mini">
+              <div class="detail-note">retrieval</div>
+              <div>${escapeHtml(renderRetrievalSummary(section.retrieval_metadata || {}))}</div>
+            </div>
           </div>
         </div>
-      </div>
+      ` : ""}
       <div class="field">
         <label>Recommended next research</label>
         <div class="detail-list">
@@ -2494,8 +2645,8 @@
       <article class="screen fade-in">
         <div class="screen-head">
           <div>
-            <h2 data-active-screen>Jobs & Runs</h2>
-            <p>Track supporting workflow history here. Extraction remains visible, but it should serve the writing loop rather than define the product.</p>
+            <h2 data-active-screen>Background Work</h2>
+            <p>Advanced utility for jobs, extraction runs, and troubleshooting. This work should support the writing loop rather than define it.</p>
           </div>
           <div class="screen-actions">
             <button class="primary-button" type="button" data-action="run-extraction">Run extraction</button>
@@ -2578,6 +2729,12 @@
     const filteredCandidates = state.candidates.filter((candidate) => {
       if (state.filters.candidates === "all") return true;
       return candidate.review_state === state.filters.candidates;
+    }).sort((left, right) => {
+      const leftPending = left.review_state === "pending" ? 1 : 0;
+      const rightPending = right.review_state === "pending" ? 1 : 0;
+      const leftPlace = left.place === state.bible.profile?.geography ? 1 : 0;
+      const rightPlace = right.place === state.bible.profile?.geography ? 1 : 0;
+      return rightPending - leftPending || rightPlace - leftPlace || left.subject.localeCompare(right.subject);
     });
     const selected = filteredCandidates.find((candidate) => candidate.candidate_id === state.selectedCandidateId) ?? filteredCandidates[0];
 
@@ -2585,8 +2742,8 @@
       <article class="screen fade-in">
         <div class="screen-head">
           <div>
-            <h2 data-active-screen>Canon Review</h2>
-            <p>Review is the trust gate. Pending candidates wait here until they are approved into the canonical claim store or rejected as noise.</p>
+            <h2 data-active-screen>Review New Facts</h2>
+            <p>Review is still the trust gate. Candidate facts wait here until you approve them into canon or reject them as noise.</p>
           </div>
           <div class="screen-actions">
             <div class="chip-bar" role="tablist" aria-label="Candidate filters">
@@ -2611,10 +2768,10 @@
                         </div>
                         <div class="row-meta">
                           <span class="pill ${escapeHtml(candidate.review_state)}">${escapeHtml(candidate.review_state)}</span>
-                          <span class="code">${escapeHtml(candidate.candidate_id)}</span>
+                          <span>${escapeHtml(candidate.place || candidate.claim_kind)}</span>
                         </div>
-                        <div class="row-meta">${escapeHtml(candidate.status_suggestion)}</div>
-                        <div class="row-meta">${escapeHtml(candidate.evidence_ids.length)} evidence</div>
+                        <div class="row-meta">${escapeHtml(candidate.status_suggestion)}${candidate.time_start ? ` · ${escapeHtml(candidate.time_start)}` : ""}</div>
+                        <div class="row-meta">${escapeHtml(candidate.evidence_ids.length)} supporting snippet${candidate.evidence_ids.length === 1 ? "" : "s"}</div>
                       </button>
                     `
                   )
@@ -2660,11 +2817,7 @@
       </div>
       <div class="detail-grid">
         <div class="field">
-          <label>Candidate ID</label>
-          <div class="code">${escapeHtml(candidate.candidate_id)}</div>
-        </div>
-        <div class="field">
-          <label>Suggested status</label>
+          <label>Suggested certainty</label>
           <div>${escapeHtml(candidate.status_suggestion)}</div>
         </div>
         <div class="field">
@@ -2672,27 +2825,44 @@
           <div>${escapeHtml(candidate.claim_kind)}</div>
         </div>
         <div class="field">
+          <label>Place</label>
+          <div>${escapeHtml(candidate.place || "n/a")}</div>
+        </div>
+        <div class="field">
           <label>Viewpoint scope</label>
           <div>${escapeHtml(candidate.viewpoint_scope || "n/a")}</div>
         </div>
       </div>
       <div class="field">
-        <label>Evidence</label>
+        <label>Supporting evidence</label>
         <div class="detail-list">
           ${matchingEvidence.length
             ? matchingEvidence
                 .map(
-                  (snippet) => `
+                  (snippet) => {
+                    const source = state.sources.find((item) => item.source_id === snippet.source_id);
+                    return `
                     <div class="mini">
-                      <div class="code">${escapeHtml(snippet.evidence_id)} · ${escapeHtml(snippet.locator)}</div>
-                      <div class="detail-note">
-                        ${escapeHtml(snippet.text_unit_id || "n/a")} ·
-                        [${escapeHtml(snippet.span_start ?? "n/a")}, ${escapeHtml(snippet.span_end ?? "n/a")}]
+                      <div class="toolbar">
+                        <strong>${escapeHtml(source?.title || snippet.source_id || "Source")}</strong>
+                        <span class="pill probable">${escapeHtml(source?.source_type || "source")}</span>
                       </div>
+                      <div class="detail-note">${escapeHtml(snippet.locator || "locator unavailable")}</div>
                       <div>${escapeHtml(snippet.text)}</div>
                       <div class="detail-note">${escapeHtml(snippet.notes || "No note")}</div>
+                      ${state.workspaceMode === "advanced" ? `
+                        <details class="detail-note">
+                          <summary>Raw extraction details</summary>
+                          <div style="margin-top:8px;">
+                            evidence ${escapeHtml(snippet.evidence_id)}
+                            · text unit ${escapeHtml(snippet.text_unit_id || "n/a")}
+                            · span [${escapeHtml(snippet.span_start ?? "n/a")}, ${escapeHtml(snippet.span_end ?? "n/a")}]
+                          </div>
+                        </details>
+                      ` : ""}
                     </div>
-                  `
+                  `;
+                  }
                 )
                 .join("")
             : "<div class='helper'>No evidence linked to this candidate.</div>"}
@@ -2743,8 +2913,8 @@
       <article class="screen fade-in">
         <div class="screen-head">
           <div>
-            <h2 data-active-screen>Claims</h2>
-            <p>Approved claims are the canonical output. This utility view keeps status, provenance, and source support inspectable when you need the raw record.</p>
+            <h2 data-active-screen>Canon Ledger</h2>
+            <p>Advanced utility for inspecting approved claims, status, provenance, and supporting evidence when you need the raw record.</p>
           </div>
           <div class="screen-actions">
             <div class="chip-bar" role="tablist" aria-label="Claim filters">
@@ -2859,13 +3029,18 @@
 
   function renderAskScreen() {
     const queryResult = state.queryResult;
+    const activeSection =
+      state.bible.sections.find((section) => section.section_id === state.bible.selectedSectionId)
+      ?? state.bible.sections[0]
+      ?? null;
+    const advanced = state.workspaceMode === "advanced";
 
     return `
       <article class="screen fade-in">
         <div class="screen-head">
           <div>
-            <h2 data-active-screen>Ask</h2>
-            <p>Ask only against approved claims. The query screen keeps mode selection visible so the writer always knows what kind of answer surface they are invoking.${state.bible.profile?.project_name ? ` Active project context: ${escapeHtml(state.bible.profile.project_name)}.` : ""}</p>
+            <h2 data-active-screen>Ask Canon</h2>
+            <p>Ask only against approved canon. The answer should help you pressure-test the next scene, not guess past the trust boundary.${state.bible.profile?.project_name ? ` Active project: ${escapeHtml(state.bible.profile.project_name)}.` : ""}${activeSection ? ` Current section: ${escapeHtml(activeSection.title)}.` : ""}</p>
           </div>
           <div class="screen-actions">
             ${seed.queryPresets
@@ -2883,40 +3058,55 @@
             <div class="query-row">
               <div class="field">
                 <label for="question">Question</label>
-                <textarea id="question" name="question" placeholder="Ask about the approved record set.">${escapeHtml(state.query.question)}</textarea>
+                <textarea id="question" name="question" placeholder="Ask about the approved record in a way that helps the next draft decision.">${escapeHtml(state.query.question)}</textarea>
               </div>
               <div class="detail-stack">
                 <div class="field">
-                  <label>Mode</label>
+                  <label>Answer posture</label>
                   <div class="chip-bar">
                     ${renderModeChip("strict_facts", "Strict facts")}
-                    ${renderModeChip("contested_views", "Contested views")}
-                    ${renderModeChip("rumor_and_legend", "Rumor + legend")}
-                    ${renderModeChip("character_knowledge", "Character knowledge")}
-                    ${renderModeChip("open_exploration", "Open exploration")}
+                    ${renderModeChip("contested_views", "Include contested")}
+                    ${renderModeChip("rumor_and_legend", "Include rumor")}
                   </div>
                 </div>
                 <div class="field">
-                  <label for="status">Status filter</label>
-                  <input id="status" name="status" value="${escapeHtml(state.query.status)}" placeholder="verified, probable, ..." />
-                </div>
-                <div class="field">
-                  <label for="claimKind">Claim kind filter</label>
-                  <input id="claimKind" name="claimKind" value="${escapeHtml(state.query.claimKind)}" placeholder="practice, belief, ..." />
-                </div>
-                <div class="field">
                   <label for="place">Place filter</label>
-                  <input id="place" name="place" value="${escapeHtml(state.query.place)}" placeholder="Rouen" />
+                  <input id="place" name="place" value="${escapeHtml(state.query.place || state.bible.profile?.geography || "")}" placeholder="Rouen" />
                 </div>
                 <div class="field">
                   <label for="viewpoint">Viewpoint filter</label>
-                  <input id="viewpoint" name="viewpoint" value="${escapeHtml(state.query.viewpoint)}" placeholder="townspeople" />
+                  <input id="viewpoint" name="viewpoint" value="${escapeHtml(state.query.viewpoint || state.bible.profile?.social_lens || "")}" placeholder="townspeople, bakers, clergy" />
                 </div>
+                ${advanced ? `
+                  <details class="field disclosure">
+                    <summary>Advanced query controls</summary>
+                    <div class="detail-stack" style="margin-top:12px;">
+                      <div class="field">
+                        <label>Full mode set</label>
+                        <div class="chip-bar">
+                          ${renderModeChip("strict_facts", "Strict facts")}
+                          ${renderModeChip("contested_views", "Contested views")}
+                          ${renderModeChip("rumor_and_legend", "Rumor + legend")}
+                          ${renderModeChip("character_knowledge", "Character knowledge")}
+                          ${renderModeChip("open_exploration", "Open exploration")}
+                        </div>
+                      </div>
+                      <div class="field">
+                        <label for="status">Status filter</label>
+                        <input id="status" name="status" value="${escapeHtml(state.query.status)}" placeholder="verified, probable, ..." />
+                      </div>
+                      <div class="field">
+                        <label for="claimKind">Claim kind filter</label>
+                        <input id="claimKind" name="claimKind" value="${escapeHtml(state.query.claimKind)}" placeholder="practice, belief, ..." />
+                      </div>
+                    </div>
+                  </details>
+                ` : ""}
               </div>
             </div>
             <div class="toolbar">
-              <button class="primary-button" type="submit" data-action="query-submit">Ask the record</button>
-              <span class="helper">This uses the current `/v1/query` contract and returns supporting claims, evidence, warnings, and retrieval metadata.${state.bible.projectId ? ` Project context is sent as ${escapeHtml(state.bible.projectId)} when available.` : ""}</span>
+              <button class="primary-button" type="submit" data-action="query-submit">Ask canon</button>
+              <span class="helper">Answers stay grounded in approved canon. When the record cannot answer directly, the UI should show the gap instead of improvising.${state.bible.projectId ? ` Project context is sent as ${escapeHtml(state.bible.projectId)} when available.` : ""}</span>
             </div>
           </form>
 
@@ -2938,6 +3128,7 @@
   }
 
   function renderQueryResult(result) {
+    const advanced = state.workspaceMode === "advanced";
     if (!result) {
       return `
         <div class="detail-head">
@@ -2959,24 +3150,26 @@
         <span class="pill ${escapeHtml(result.mode)}">${escapeHtml(result.mode)}</span>
       </div>
       <div class="field">
-        <label>Query posture</label>
+        <label>Answer posture</label>
         <div class="detail-list">
-          <div class="mini">
-            <div class="detail-note">retrieval</div>
-            <div>${escapeHtml(renderRetrievalSummary(result.metadata || {}))}</div>
-          </div>
           <div class="mini">
             <div class="detail-note">answer boundary</div>
             <div>${escapeHtml(renderAnswerBoundaryLabel(result.metadata?.answer_boundary || "research_gap"))}</div>
           </div>
           <div class="mini">
-            <div class="detail-note">certainty summary</div>
-            <div>${escapeHtml(renderKeyValueMap(result.certainty_summary || {}))}</div>
-          </div>
-          <div class="mini">
             <div class="detail-note">coverage gaps</div>
             <div>${escapeHtml((result.coverage_gaps || []).join(" | ") || "none")}</div>
           </div>
+          ${advanced ? `
+            <div class="mini">
+              <div class="detail-note">retrieval</div>
+              <div>${escapeHtml(renderRetrievalSummary(result.metadata || {}))}</div>
+            </div>
+            <div class="mini">
+              <div class="detail-note">certainty summary</div>
+              <div>${escapeHtml(renderKeyValueMap(result.certainty_summary || {}))}</div>
+            </div>
+          ` : ""}
         </div>
       </div>
       <div class="answer-block">
@@ -2991,14 +3184,41 @@
         <button class="secondary-button" type="button" data-action="compose-from-query">Compose into bible</button>
       </div>
       <div class="field">
-        <label>Trust summary</label>
+        <label>Next moves</label>
         <div class="detail-list">
           <div class="mini">
             <div class="detail-note">recommended next research</div>
             <div>${escapeHtml((result.recommended_next_research || []).join(" | ") || "none")}</div>
           </div>
+          <div class="mini">
+            <div class="detail-note">suggested follow-up questions</div>
+            <div>${escapeHtml((result.suggested_follow_ups || []).join(" | ") || "none")}</div>
+          </div>
         </div>
       </div>
+      ${(result.nearby_claims || []).length
+        ? `
+          <div class="field">
+            <label>Nearby approved canon</label>
+            <div class="detail-list">
+              ${result.nearby_claims
+                .map(
+                  (claim) => `
+                    <div class="mini">
+                      <div class="toolbar">
+                        <strong>${escapeHtml(claim.subject)}</strong>
+                        <span class="pill ${escapeHtml(claim.status)}">${escapeHtml(claim.status)}</span>
+                      </div>
+                      <div>${escapeHtml(claim.predicate)} · ${escapeHtml(claim.value)}</div>
+                      <div class="detail-note">${escapeHtml(claim.place || "no place")} ${claim.time_start ? `· ${escapeHtml(claim.time_start)}` : ""}</div>
+                    </div>
+                  `
+                )
+                .join("")}
+            </div>
+          </div>
+        `
+        : ""}
       <div class="field">
         <label>Supporting claims</label>
         <div class="detail-list">
@@ -3008,7 +3228,7 @@
                   (claim) => `
                     <div class="mini">
                       <div class="toolbar">
-                        <div class="code">${escapeHtml(claim.claim_id)}</div>
+                        ${advanced ? `<div class="code">${escapeHtml(claim.claim_id)}</div>` : `<strong>${escapeHtml(claim.subject)}</strong>`}
                         <span class="pill ${escapeHtml(renderClaimLaneTone(claim.claim_id, result))}">${escapeHtml(renderClaimLaneLabel(claim.claim_id, result))}</span>
                       </div>
                       <div>${escapeHtml(claim.subject)} — ${escapeHtml(claim.predicate)} — ${escapeHtml(claim.value)}</div>
@@ -3174,9 +3394,14 @@
 
   async function refreshAfterReview(candidateId) {
     try {
-      const [candidates, claims] = await Promise.all([fetchJson(API.candidates), fetchJson(API.claims)]);
+      const [candidates, claims, workspaceSummary] = await Promise.all([
+        fetchJson(API.candidates),
+        fetchJson(API.claims),
+        fetchJson(API.workspaceSummary),
+      ]);
       state.candidates = candidates;
       state.claims = claims;
+      state.workspaceSummary = workspaceSummary;
       await refreshRuntimeStatus();
       state.selectedCandidateId =
         state.candidates.find((candidate) => candidate.review_state === "pending")?.candidate_id ??
@@ -3193,9 +3418,10 @@
 
   async function submitQuery(form) {
     const formData = new FormData(form);
+    const mode = normalizeQueryMode(state.query.mode, state.workspaceMode);
     const request = {
       question: String(formData.get("question") || "").trim(),
-      mode: state.query.mode,
+      mode,
       project_id: state.bible.projectId || null,
       filters: {
         status: String(formData.get("status") || "").trim() || null,
@@ -3207,7 +3433,7 @@
 
     state.query = {
       question: request.question,
-      mode: request.mode,
+      mode,
       projectId: request.project_id || "",
       status: request.filters.status || "",
       claimKind: request.filters.claim_kind || "",
@@ -3363,7 +3589,7 @@
         },
       });
       if (settledJob?.pollTimedOut) {
-        setBanner("queued", "Research still running", `Job ${settledJob.job_id} is still running in the background. You can keep working and check Jobs & Runs anytime.`);
+        setBanner("queued", "Research still running", `Job ${settledJob.job_id} is still running in the background. You can keep working and check Background Work anytime.`);
       }
       render();
     } catch (error) {
@@ -3392,6 +3618,11 @@
       updateSelectionFallbacks();
       if (state.bible.selectedSectionId) {
         await loadBibleProvenance(state.bible.selectedSectionId);
+      }
+      try {
+        state.workspaceSummary = await fetchJson(`${API.workspaceSummary}?project_id=${encodeURIComponent(activeProjectId)}`);
+      } catch (error) {
+        console.warn("Could not refresh workspace summary from bible refresh", error);
       }
       if (!quiet) {
         setBanner("live", "Bible refreshed", `Loaded ${sections.length} saved bible sections for ${profile.project_name}.`);
@@ -3519,7 +3750,7 @@
         },
       });
       if (settledJob?.pollTimedOut) {
-        setBanner("queued", "Bible composition still running", `Job ${settledJob.job_id} is still running in the background. The section will stay visible in Workspace and Jobs & Runs.`);
+        setBanner("queued", "Bible composition still running", `Job ${settledJob.job_id} is still running in the background. The section will stay visible in Workspace and Background Work.`);
       }
       render();
     } catch (error) {
@@ -3773,7 +4004,7 @@
         },
       });
       if (settledJob?.pollTimedOut) {
-        setBanner("queued", "Research staging still running", `Job ${settledJob.job_id} is still staging in the background. Jobs & Runs will keep tracking it.`);
+        setBanner("queued", "Research staging still running", `Job ${settledJob.job_id} is still staging in the background. Background Work will keep tracking it.`);
       }
       render();
     } catch (error) {
