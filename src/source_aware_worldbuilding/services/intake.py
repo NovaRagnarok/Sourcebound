@@ -4,6 +4,7 @@ from source_aware_worldbuilding.domain.models import (
     IntakeResult,
     IntakeTextRequest,
     IntakeUrlRequest,
+    sync_source_with_documents,
 )
 from source_aware_worldbuilding.ports import (
     CorpusPort,
@@ -62,16 +63,42 @@ class IntakeService:
     ) -> IntakeResult:
         warnings = list(warnings or [])
         sources = self.corpus.pull_sources_by_item_keys([zotero_item_key])
-        source_documents = self.corpus.discover_source_documents(sources)
+        if hasattr(self.source_document_store, "list_source_documents"):
+            existing_documents = [
+                item
+                for item in self.source_document_store.list_source_documents()
+                if item.source_id in {source.source_id for source in sources}
+            ]
+        else:
+            existing_documents = []
+        try:
+            source_documents = self.corpus.discover_source_documents(
+                sources,
+                existing_documents=existing_documents,
+                force_refresh=True,
+            )
+        except TypeError:
+            source_documents = self.corpus.discover_source_documents(sources)
+        source_documents_by_source: dict[str, list] = {}
+        for document in source_documents:
+            source_documents_by_source.setdefault(document.source_id, []).append(document)
+        for source in sources:
+            sync_source_with_documents(source, source_documents_by_source.get(source.source_id, []))
         self.source_store.save_sources(sources)
         self.source_document_store.save_source_documents(source_documents)
         if not source_documents:
             warnings.append(
                 "No source documents were discovered; nothing has been queued for normalization."
             )
+        warnings.extend(
+            error
+            for document in source_documents
+            for error in document.stage_errors
+            if error
+        )
         return IntakeResult(
             created_item=created_item,
             pulled_sources=sources,
             source_documents=source_documents,
-            warnings=warnings,
+            warnings=list(dict.fromkeys(warnings)),
         )

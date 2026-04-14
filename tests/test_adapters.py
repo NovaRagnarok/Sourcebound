@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+from hashlib import sha1
 from pathlib import Path
 
 import httpx
+import pytest
 
 from source_aware_worldbuilding.adapters.graphrag_adapter import (
     GraphRAGArtifactBundle,
@@ -27,6 +29,7 @@ from source_aware_worldbuilding.adapters.wikibase_adapter import WikibaseTruthSt
 from source_aware_worldbuilding.adapters.zotero_adapter import ZoteroCorpusAdapter
 from source_aware_worldbuilding.api.dependencies import get_extractor
 from source_aware_worldbuilding.domain.enums import ClaimKind, ClaimStatus, ExtractionRunStatus
+from source_aware_worldbuilding.domain.errors import ZoteroFetchError
 from source_aware_worldbuilding.domain.models import (
     ApprovedClaim,
     EvidenceSnippet,
@@ -35,6 +38,7 @@ from source_aware_worldbuilding.domain.models import (
     ResearchFinding,
     ResearchFindingProvenance,
     ResearchFindingScoring,
+    SourceDocumentRecord,
     SourceRecord,
     TextUnit,
 )
@@ -164,6 +168,29 @@ def test_zotero_adapter_retries_transient_failures(monkeypatch) -> None:
     assert call_count["top"] == 2
 
 
+def test_zotero_adapter_translates_transport_failures(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "zotero_library_id", "12345")
+    monkeypatch.setattr(settings, "zotero_collection_key", None)
+    monkeypatch.setattr(settings, "zotero_library_type", "user")
+    monkeypatch.setattr(settings, "zotero_base_url", "https://example.test/api")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("connection refused", request=request)
+
+    adapter = ZoteroCorpusAdapter()
+    monkeypatch.setattr(
+        adapter,
+        "_client",
+        lambda: httpx.Client(
+            base_url="https://example.test/api/",
+            transport=httpx.MockTransport(handler),
+        ),
+    )
+
+    with pytest.raises(ZoteroFetchError, match="Zotero request failed"):
+        adapter.pull_sources()
+
+
 def test_zotero_adapter_can_create_text_source_and_pull_by_item_key(monkeypatch) -> None:
     monkeypatch.setattr(settings, "zotero_library_id", "12345")
     monkeypatch.setattr(settings, "zotero_collection_key", "COLL-1")
@@ -226,6 +253,232 @@ def test_zotero_adapter_can_create_text_source_and_pull_by_item_key(monkeypatch)
     assert len(pulled) == 1
     assert pulled[0].source_id == "zotero-ITEM-1"
     assert any(method == "POST" for method, _, _ in requests)
+
+
+def test_zotero_adapter_fetches_attachment_body_and_extracts_text(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(settings, "zotero_library_id", "12345")
+    monkeypatch.setattr(settings, "zotero_collection_key", None)
+    monkeypatch.setattr(settings, "zotero_library_type", "user")
+    monkeypatch.setattr(settings, "zotero_base_url", "https://example.test/api")
+    monkeypatch.setattr(settings, "app_data_dir", tmp_path)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/users/12345/items"):
+            return httpx.Response(
+                200,
+                json=[
+                    {
+                        "key": "ITEM-1",
+                        "data": {"title": "Source", "itemType": "document", "collections": []},
+                    }
+                ],
+            )
+        if request.url.path.endswith("/users/12345/items/ITEM-1/children"):
+            return httpx.Response(
+                200,
+                json=[
+                    {
+                        "key": "ATT-1",
+                        "data": {
+                            "itemType": "attachment",
+                            "title": "Transcript",
+                            "contentType": "text/plain",
+                            "filename": "transcript.txt",
+                        },
+                    }
+                ],
+            )
+        if request.url.path.endswith("/users/12345/items/ATT-1/file"):
+            return httpx.Response(200, content=b"winter ration loaves were counted by hearth")
+        return httpx.Response(200, json=[])
+
+    adapter = ZoteroCorpusAdapter()
+    monkeypatch.setattr(
+        adapter,
+        "_client",
+        lambda: httpx.Client(
+            base_url="https://example.test/api/",
+            transport=httpx.MockTransport(handler),
+        ),
+    )
+
+    sources = adapter.pull_sources_by_item_keys(["ITEM-1"])
+    documents = adapter.discover_source_documents(sources)
+
+    assert len(documents) == 1
+    document = documents[0]
+    assert document.attachment_fetch_status == "fetched"
+    assert document.text_extraction_status == "extracted"
+    assert document.normalization_status == "queued"
+    assert document.storage_path
+    assert Path(document.storage_path).exists()
+    assert "winter ration loaves" in (document.raw_text or "")
+
+
+def test_zotero_adapter_repull_preserves_unchanged_document_state(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(settings, "zotero_library_id", "12345")
+    monkeypatch.setattr(settings, "zotero_collection_key", None)
+    monkeypatch.setattr(settings, "zotero_library_type", "user")
+    monkeypatch.setattr(settings, "zotero_base_url", "https://example.test/api")
+    monkeypatch.setattr(settings, "app_data_dir", tmp_path)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/users/12345/items/ITEM-1/children"):
+            return httpx.Response(
+                200,
+                json=[
+                    {
+                        "key": "NOTE-1",
+                        "data": {
+                            "itemType": "note",
+                            "title": "Existing note",
+                            "note": "<p>Stable note text</p>",
+                        },
+                    }
+                ],
+            )
+        return httpx.Response(200, json=[])
+
+    adapter = ZoteroCorpusAdapter()
+    monkeypatch.setattr(
+        adapter,
+        "_client",
+        lambda: httpx.Client(
+            base_url="https://example.test/api/",
+            transport=httpx.MockTransport(handler),
+        ),
+    )
+
+    source = SourceRecord(source_id="zotero-ITEM-1", title="Source", zotero_item_key="ITEM-1")
+    existing = SourceDocumentRecord(
+        document_id="zdoc-NOTE-1",
+        source_id=source.source_id,
+        document_kind="note",
+        external_id="NOTE-1",
+        zotero_parent_item_key="ITEM-1",
+        zotero_child_item_key="NOTE-1",
+        raw_text="Stable note text",
+        raw_text_status="ready",
+        normalization_status="completed",
+        claim_extraction_status="completed",
+        content_checksum=sha1(b"Stable note text").hexdigest(),
+    )
+
+    documents = adapter.discover_source_documents([source], existing_documents=[existing])
+
+    assert documents[0].normalization_status == "completed"
+    assert documents[0].claim_extraction_status == "completed"
+
+
+def test_zotero_adapter_repull_keeps_last_good_attachment_on_fetch_failure(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    monkeypatch.setattr(settings, "zotero_library_id", "12345")
+    monkeypatch.setattr(settings, "zotero_collection_key", None)
+    monkeypatch.setattr(settings, "zotero_library_type", "user")
+    monkeypatch.setattr(settings, "zotero_base_url", "https://example.test/api")
+    monkeypatch.setattr(settings, "app_data_dir", tmp_path)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/users/12345/items/ITEM-1/children"):
+            return httpx.Response(
+                200,
+                json=[
+                    {
+                        "key": "ATT-1",
+                        "data": {
+                            "itemType": "attachment",
+                            "title": "Transcript",
+                            "contentType": "text/plain",
+                            "filename": "transcript.txt",
+                        },
+                    }
+                ],
+            )
+        if request.url.path.endswith("/users/12345/items/ATT-1/file"):
+            return httpx.Response(503, json={"error": "temporary outage"})
+        return httpx.Response(200, json=[])
+
+    stored_path = tmp_path / "existing-attachment.txt"
+    stored_path.write_text("winter ration loaves were counted by hearth", encoding="utf-8")
+
+    adapter = ZoteroCorpusAdapter()
+    monkeypatch.setattr(
+        adapter,
+        "_client",
+        lambda: httpx.Client(
+            base_url="https://example.test/api/",
+            transport=httpx.MockTransport(handler),
+        ),
+    )
+
+    source = SourceRecord(source_id="zotero-ITEM-1", title="Source", zotero_item_key="ITEM-1")
+    existing = SourceDocumentRecord(
+        document_id="zdoc-ATT-1",
+        source_id=source.source_id,
+        document_kind="attachment",
+        external_id="ATT-1",
+        filename="transcript.txt",
+        mime_type="text/plain",
+        storage_path=str(stored_path),
+        zotero_parent_item_key="ITEM-1",
+        zotero_child_item_key="ATT-1",
+        attachment_discovery_status="discovered",
+        attachment_fetch_status="fetched",
+        text_extraction_status="extracted",
+        normalization_status="completed",
+        claim_extraction_status="completed",
+        raw_text="winter ration loaves were counted by hearth",
+        content_checksum=sha1(b"winter ration loaves were counted by hearth").hexdigest(),
+    )
+
+    documents = adapter.discover_source_documents([source], existing_documents=[existing])
+
+    assert documents[0].storage_path == str(stored_path)
+    assert documents[0].raw_text == existing.raw_text
+    assert documents[0].content_checksum == existing.content_checksum
+    assert documents[0].normalization_status == "completed"
+    assert documents[0].claim_extraction_status == "completed"
+    assert any("Zotero API returned 503." in error for error in documents[0].stage_errors)
+
+
+def test_zotero_adapter_marks_missing_children_on_later_pull(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "zotero_library_id", "12345")
+    monkeypatch.setattr(settings, "zotero_collection_key", None)
+    monkeypatch.setattr(settings, "zotero_library_type", "user")
+    monkeypatch.setattr(settings, "zotero_base_url", "https://example.test/api")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/users/12345/items/ITEM-1/children"):
+            return httpx.Response(200, json=[])
+        return httpx.Response(200, json=[])
+
+    adapter = ZoteroCorpusAdapter()
+    monkeypatch.setattr(
+        adapter,
+        "_client",
+        lambda: httpx.Client(
+            base_url="https://example.test/api/",
+            transport=httpx.MockTransport(handler),
+        ),
+    )
+
+    source = SourceRecord(source_id="zotero-ITEM-1", title="Source", zotero_item_key="ITEM-1")
+    existing = SourceDocumentRecord(
+        document_id="zdoc-ATT-1",
+        source_id=source.source_id,
+        document_kind="attachment",
+        external_id="ATT-1",
+        zotero_parent_item_key="ITEM-1",
+        zotero_child_item_key="ATT-1",
+        attachment_discovery_status="discovered",
+    )
+
+    documents = adapter.discover_source_documents([source], existing_documents=[existing])
+
+    assert documents[0].present_in_latest_pull is False
+    assert documents[0].attachment_discovery_status == "missing"
 
 
 def test_web_search_filters_duckduckgo_ad_redirects(monkeypatch) -> None:

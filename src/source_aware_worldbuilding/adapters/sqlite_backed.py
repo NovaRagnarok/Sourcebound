@@ -83,6 +83,14 @@ class SqliteSourceDocumentStore(_SqliteAdapterBase):
             ]
         return documents
 
+    def get_source_document(self, document_id: str) -> SourceDocumentRecord | None:
+        return self.store.get_model(
+            "source_documents_state",
+            "document_id",
+            document_id,
+            SourceDocumentRecord,
+        )
+
     def save_source_documents(self, source_documents: list[SourceDocumentRecord]) -> None:
         self.store.upsert_models(
             "source_documents_state",

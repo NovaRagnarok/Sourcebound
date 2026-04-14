@@ -15,6 +15,7 @@
     queueBibleExport: (projectId) => `/v1/bible/exports/${projectId}`,
     exportBibleProject: (projectId) => `/v1/bible/exports/${projectId}`,
     sources: "/v1/sources",
+    source: (sourceId) => `/v1/sources/${sourceId}`,
     runs: "/v1/extraction-runs",
     researchRuns: "/v1/research/runs",
     researchRun: (runId) => `/v1/research/runs/${runId}`,
@@ -22,6 +23,7 @@
     extractResearchRun: (runId) => `/v1/research/runs/${runId}/extract`,
     researchPrograms: "/v1/research/programs",
     pullSources: "/v1/ingest/zotero/pull",
+    normalizeDocuments: "/v1/ingest/normalize-documents",
     extractCandidates: "/v1/ingest/extract-candidates",
     candidates: "/v1/candidates",
     reviewCandidate: (candidateId) => `/v1/candidates/${candidateId}/review`,
@@ -82,6 +84,7 @@
       },
     },
     selectedSourceId: seed.sources[0]?.source_id ?? null,
+    selectedSourceDetail: null,
     selectedRunId: seed.extractionRuns[0]?.run_id ?? null,
     selectedResearchRunId: seed.researchRuns?.[0]?.run_id ?? null,
     researchRunDetail: null,
@@ -271,6 +274,7 @@
       if (sourceButton) {
         state.selectedSourceId = sourceButton.dataset.selectSource;
         render();
+        refreshSourceDetail(state.selectedSourceId, { quiet: true });
         return;
       }
 
@@ -347,6 +351,16 @@
 
       if (action === "pull-sources") {
         await pullSources();
+        return;
+      }
+
+      if (action === "repull-source") {
+        await pullSources({ sourceIds: [state.selectedSourceId], forceRefresh: true });
+        return;
+      }
+
+      if (action === "retry-source-normalization") {
+        await retrySourceNormalization(state.selectedSourceId);
         return;
       }
 
@@ -755,6 +769,9 @@
       );
       updateMetrics();
       updateSelectionFallbacks();
+      if (state.selectedSourceId) {
+        await refreshSourceDetail(state.selectedSourceId, { quiet: true });
+      }
       state.lastSync = new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
       nodes.lastSync.textContent = state.lastSync;
       if (!quiet) {
@@ -779,6 +796,12 @@
   function updateSelectionFallbacks() {
     if (!state.selectedSourceId && state.sources.length) {
       state.selectedSourceId = state.sources[0].source_id;
+    }
+    if (
+      state.selectedSourceDetail?.source?.source_id &&
+      !state.sources.some((source) => source.source_id === state.selectedSourceDetail.source.source_id)
+    ) {
+      state.selectedSourceDetail = null;
     }
 
     if (
@@ -1337,6 +1360,7 @@
 
   function renderSourcesScreen() {
     const selected = state.sources.find((source) => source.source_id === state.selectedSourceId) ?? state.sources[0];
+    const selectedDetail = state.selectedSourceDetail?.source?.source_id === selected?.source_id ? state.selectedSourceDetail : null;
     const linkedEvidence = state.evidence.filter((snippet) => snippet.source_id === selected?.source_id);
     const linkedCandidates = state.candidates.filter((candidate) =>
       candidate.evidence_ids.some((evidenceId) => linkedEvidence.some((snippet) => snippet.evidence_id === evidenceId))
@@ -1351,6 +1375,8 @@
           </div>
           <div class="screen-actions">
             <button class="secondary-button" type="button" data-action="pull-sources">Pull Zotero sources</button>
+            <button class="secondary-button" type="button" data-action="repull-source" ${selected ? "" : "disabled"}>Re-pull selected source</button>
+            <button class="secondary-button" type="button" data-action="retry-source-normalization" ${selected ? "" : "disabled"}>Retry normalization</button>
           </div>
         </div>
 
@@ -1365,10 +1391,12 @@
                       <div class="row-subtitle">${escapeHtml(source.author || "Unknown author")} · ${escapeHtml(source.year || "n.d.")}</div>
                     </div>
                     <div class="row-meta">
+                      <span class="pill ${escapeHtml(source.workflow_stage || source.sync_status)}">${escapeHtml(source.workflow_stage || source.sync_status)}</span>
                       <span class="pill ${escapeHtml(source.source_type)}">${escapeHtml(source.source_type)}</span>
                       <span class="code">${escapeHtml(source.source_id)}</span>
                     </div>
                     <div class="row-meta">${escapeHtml(source.locator_hint || "No locator hint")}</div>
+                    <div class="row-meta">${escapeHtml(renderSourceStageSummary(source.stage_summary || {}))}</div>
                     <div class="row-meta">${escapeHtml((state.evidence.filter((e) => e.source_id === source.source_id).length || 0) + " evidence")}</div>
                   </button>
                 `
@@ -1377,14 +1405,16 @@
           </div>
 
           <aside class="detail">
-            ${selected ? renderSourceDetail(selected, linkedEvidence, linkedCandidates) : "<div class='helper'>No sources are available.</div>"}
+            ${selected ? renderSourceDetail(selectedDetail || { source: selected, source_documents: [], text_units: [], stage_summary: selected.stage_summary || {}, stage_errors: selected.stage_errors || [] }, linkedEvidence, linkedCandidates) : "<div class='helper'>No sources are available.</div>"}
           </aside>
         </div>
       </article>
     `;
   }
 
-  function renderSourceDetail(source, linkedEvidence, linkedCandidates) {
+  function renderSourceDetail(detail, linkedEvidence, linkedCandidates) {
+    const source = detail.source;
+    const documents = detail.source_documents || [];
     return `
       <div class="detail-head">
         <div>
@@ -1410,8 +1440,46 @@
           <label>Evidence count</label>
           <div>${linkedEvidence.length}</div>
         </div>
+        <div class="field">
+          <label>Workflow stage</label>
+          <div>${escapeHtml(source.workflow_stage || source.sync_status || "n/a")}</div>
+        </div>
+        <div class="field">
+          <label>Last sync</label>
+          <div>${escapeHtml(source.last_synced_at || "n/a")}</div>
+        </div>
       </div>
       <div class="detail-stack">
+        <div class="field">
+          <label>Stage summary</label>
+          <div>${escapeHtml(renderSourceStageSummary(detail.stage_summary || source.stage_summary || {}))}</div>
+          <div class="detail-note">${escapeHtml((detail.stage_errors || source.stage_errors || []).join(" | ") || "No source-level errors.")}</div>
+        </div>
+        <div class="field">
+          <label>Source documents</label>
+          <div class="detail-list">
+            ${documents.length
+              ? documents
+                  .map(
+                    (document) => `
+                      <div class="mini">
+                        <div class="code">${escapeHtml(document.document_id)} · ${escapeHtml(document.filename || document.locator || document.document_kind)}</div>
+                        <div class="row-meta">
+                          <span class="pill ${escapeHtml(document.document_kind)}">${escapeHtml(document.document_kind)}</span>
+                          <span class="pill ${escapeHtml(document.attachment_fetch_status || document.ingest_status)}">${escapeHtml(document.attachment_fetch_status || document.ingest_status)}</span>
+                          <span class="pill ${escapeHtml(document.text_extraction_status || document.raw_text_status)}">${escapeHtml(document.text_extraction_status || document.raw_text_status)}</span>
+                          <span class="pill ${escapeHtml(document.normalization_status || document.claim_extraction_status)}">${escapeHtml(document.normalization_status || document.claim_extraction_status)}</span>
+                        </div>
+                        <div>${escapeHtml(renderDocumentStageLine(document))}</div>
+                        <div class="detail-note">${escapeHtml(document.storage_path || "No stored attachment path.")}</div>
+                        <div class="detail-note">${escapeHtml((document.stage_errors || []).join(" | ") || "No document errors.")}</div>
+                      </div>
+                    `
+                  )
+                  .join("")
+              : "<div class='helper'>No document-level intake details have been loaded yet.</div>"}
+          </div>
+        </div>
         <div class="field">
           <label>Linked evidence</label>
           <div class="detail-list">
@@ -3261,10 +3329,54 @@
     `;
   }
 
-  async function pullSources() {
+  function renderSourceStageSummary(summary) {
+    const total = summary.total ?? 0;
+    const extracted = summary.extracted ?? 0;
+    const normalized = summary.normalized ?? 0;
+    const missing = summary.missing ?? 0;
+    const failed = summary.failed ?? 0;
+    return `${total} docs · ${extracted} extracted · ${normalized} normalized · ${missing} missing · ${failed} failed`;
+  }
+
+  function renderDocumentStageLine(document) {
+    return [
+      `present ${document.present_in_latest_pull ? "yes" : "no"}`,
+      `fetch ${document.attachment_fetch_status || "n/a"}`,
+      `text ${document.text_extraction_status || "n/a"}`,
+      `normalize ${document.normalization_status || "n/a"}`,
+      `synced ${document.last_synced_at || "n/a"}`,
+    ].join(" · ");
+  }
+
+  async function refreshSourceDetail(sourceId, { quiet = false } = {}) {
+    if (!sourceId) {
+      state.selectedSourceDetail = null;
+      return;
+    }
+    try {
+      state.selectedSourceDetail = await fetchJson(API.source(sourceId));
+      if (!quiet) {
+        render();
+      }
+    } catch (error) {
+      if (!quiet) {
+        setBanner("failed", "Could not load source detail", error.message || "The source detail endpoint is unavailable.");
+        render();
+      }
+    }
+  }
+
+  async function pullSources({ sourceIds = [], itemKeys = [], forceRefresh = false } = {}) {
     applyLoading(true);
     try {
-      const payload = await fetchJson(API.pullSources, { method: "POST" });
+      const payload = await fetchJson(API.pullSources, {
+        method: "POST",
+        body: {
+          source_ids: sourceIds,
+          item_keys: itemKeys,
+          force_refresh: forceRefresh,
+        },
+      });
       if (Array.isArray(payload.sources)) {
         state.sources = payload.sources;
       }
@@ -3273,15 +3385,49 @@
       } catch (error) {
         console.warn("Could not refresh sources after pull", error);
       }
+      await refreshSourceDetail(state.selectedSourceId, { quiet: true });
       state.lastSync = new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
       nodes.lastSync.textContent = state.lastSync;
       await refreshRuntimeStatus();
       setApiStatus(true, `Pulled ${payload.count ?? state.sources.length} sources from Zotero.`);
-      setBanner("live", "Sources pulled", `Received ${payload.count ?? state.sources.length} source records from the live endpoint.`);
+      setBanner(
+        payload.failed_document_count ? "queued" : "live",
+        "Sources pulled",
+        `Sources ${payload.inserted_source_count ?? 0} new, ${payload.updated_source_count ?? 0} refreshed, ${payload.unchanged_source_count ?? 0} unchanged. Documents ${payload.failed_document_count ?? 0} failed.`
+      );
       render();
     } catch (error) {
       setApiStatus(false, "Source pull failed. Seed records remain in place.");
       setBanner("failed", "Could not pull sources", error.message || "The source pull endpoint is unavailable.");
+    } finally {
+      applyLoading(false);
+      persistState();
+    }
+  }
+
+  async function retrySourceNormalization(sourceId) {
+    if (!sourceId) {
+      return;
+    }
+    applyLoading(true);
+    try {
+      const payload = await fetchJson(API.normalizeDocuments, {
+        method: "POST",
+        body: {
+          source_ids: [sourceId],
+          retry_failed: true,
+        },
+      });
+      await refreshSourceDetail(sourceId, { quiet: true });
+      state.sources = await fetchJson(API.sources);
+      setBanner(
+        payload.warnings?.length ? "queued" : "live",
+        "Normalization retried",
+        `Touched ${payload.document_count ?? 0} documents and created ${payload.text_unit_count ?? 0} text units.`
+      );
+      render();
+    } catch (error) {
+      setBanner("failed", "Could not retry normalization", error.message || "The normalization endpoint is unavailable.");
     } finally {
       applyLoading(false);
       persistState();

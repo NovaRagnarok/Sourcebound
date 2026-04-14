@@ -3,7 +3,14 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 
 from source_aware_worldbuilding.api.dependencies import get_intake_service
-from source_aware_worldbuilding.domain.errors import ZoteroWriteError
+from source_aware_worldbuilding.domain.errors import (
+    ZoteroAuthError,
+    ZoteroConfigError,
+    ZoteroError,
+    ZoteroNotFoundError,
+    ZoteroRateLimitError,
+    ZoteroWriteError,
+)
 from source_aware_worldbuilding.domain.models import IntakeTextRequest, IntakeUrlRequest
 from source_aware_worldbuilding.services.intake import IntakeService
 
@@ -17,8 +24,8 @@ def intake_text(
 ) -> dict:
     try:
         result = service.intake_text(payload)
-    except ZoteroWriteError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except ZoteroError as exc:
+        raise _zotero_http_error(exc) from exc
     return result.model_dump(mode="json")
 
 
@@ -29,8 +36,8 @@ def intake_url(
 ) -> dict:
     try:
         result = service.intake_url(payload)
-    except ZoteroWriteError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except ZoteroError as exc:
+        raise _zotero_http_error(exc) from exc
     return result.model_dump(mode="json")
 
 
@@ -53,6 +60,20 @@ async def intake_file(
             notes=notes,
             collection_key=collection_key,
         )
-    except ZoteroWriteError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except ZoteroError as exc:
+        raise _zotero_http_error(exc) from exc
     return result.model_dump(mode="json")
+
+
+def _zotero_http_error(exc: ZoteroError) -> HTTPException:
+    if isinstance(exc, ZoteroConfigError):
+        return HTTPException(status_code=400, detail=str(exc))
+    if isinstance(exc, ZoteroAuthError):
+        return HTTPException(status_code=401, detail=str(exc))
+    if isinstance(exc, ZoteroNotFoundError):
+        return HTTPException(status_code=404, detail=str(exc))
+    if isinstance(exc, ZoteroRateLimitError):
+        return HTTPException(status_code=429, detail=str(exc))
+    if isinstance(exc, ZoteroWriteError):
+        return HTTPException(status_code=502, detail=str(exc))
+    return HTTPException(status_code=502, detail=str(exc))

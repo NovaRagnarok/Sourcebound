@@ -83,6 +83,16 @@ class FileSourceDocumentStore:
             ]
         return documents
 
+    def get_source_document(self, document_id: str) -> SourceDocumentRecord | None:
+        return next(
+            (
+                item
+                for item in self.store.read_models(SourceDocumentRecord)
+                if item.document_id == document_id
+            ),
+            None,
+        )
+
     def save_source_documents(self, source_documents: list[SourceDocumentRecord]) -> None:
         existing = {item.document_id: item for item in self.store.read_models(SourceDocumentRecord)}
         for item in source_documents:

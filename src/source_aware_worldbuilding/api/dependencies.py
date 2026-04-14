@@ -317,6 +317,7 @@ def get_normalization_service() -> NormalizationService:
     return NormalizationService(
         source_document_store=get_source_document_store(),
         text_unit_store=get_text_unit_store(),
+        source_store=get_source_store(),
     )
 
 

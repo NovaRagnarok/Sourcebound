@@ -5,8 +5,10 @@ import time
 from fastapi.testclient import TestClient
 
 from source_aware_worldbuilding.api.dependencies import (
+    get_ingestion_service,
     get_intake_service,
     get_lore_packet_service,
+    get_normalization_service,
     get_review_service,
 )
 from source_aware_worldbuilding.api.main import app
@@ -15,6 +17,7 @@ from source_aware_worldbuilding.domain.enums import ClaimKind, ClaimStatus
 from source_aware_worldbuilding.domain.errors import (
     CanonUnavailableError,
     WikibaseSyncError,
+    ZoteroFetchError,
     ZoteroWriteError,
 )
 from source_aware_worldbuilding.domain.models import (
@@ -26,6 +29,7 @@ from source_aware_worldbuilding.domain.models import (
     SourceDocumentRecord,
     SourceRecord,
     ZoteroCreatedItem,
+    ZoteroPullResult,
 )
 from source_aware_worldbuilding.settings import settings
 from source_aware_worldbuilding.storage.json_store import JsonListStore
@@ -231,8 +235,8 @@ def test_operator_flow_routes_share_file_backed_state(temp_data_dir) -> None:
         assert initial_claim_count == 9
 
         pull_response = client.post("/v1/ingest/zotero/pull")
-        assert pull_response.status_code == 200
-        assert pull_response.json()["count"] >= 1
+        assert pull_response.status_code == 400
+        assert "ZOTERO_LIBRARY_ID" in pull_response.json()["detail"]
 
         run_response = client.post("/v1/ingest/extract-candidates")
         assert run_response.status_code == 200
@@ -743,6 +747,93 @@ def test_intake_routes_return_shared_result_shapes(temp_data_dir) -> None:
         assert file_response.json()["warnings"] == ["metadata only"]
 
 
+def test_source_detail_route_returns_documents_and_stage_summary(temp_data_dir) -> None:
+    seed_dev_data()
+
+    with TestClient(app) as client:
+        response = client.get("/v1/sources/src-price-ledger")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["source"]["source_id"] == "src-price-ledger"
+    assert body["source_documents"]
+    assert "stage_summary" in body
+    assert "stage_errors" in body
+
+
+def test_ingest_pull_route_accepts_targeted_refresh_request(temp_data_dir) -> None:
+    class FakeIngestionService:
+        def pull_sources(self, payload):
+            assert payload.source_ids == ["zotero-ITEM-1"]
+            assert payload.force_refresh is True
+            return ZoteroPullResult(
+                count=1,
+                sources=[SourceRecord(source_id="zotero-ITEM-1", title="Targeted source")],
+                updated_source_count=1,
+            )
+
+    app.dependency_overrides[get_ingestion_service] = lambda: FakeIngestionService()
+    try:
+        with TestClient(app) as client:
+            response = client.post(
+                "/v1/ingest/zotero/pull",
+                json={"source_ids": ["zotero-ITEM-1"], "force_refresh": True},
+            )
+    finally:
+        app.dependency_overrides.pop(get_ingestion_service, None)
+
+    assert response.status_code == 200
+    assert response.json()["updated_source_count"] == 1
+
+
+def test_extract_candidates_route_surfaces_zotero_fetch_failures(temp_data_dir) -> None:
+    class FailingIngestionService:
+        def extract_candidates(self):
+            raise ZoteroFetchError("Zotero request failed for /users/12345/items/top")
+
+    app.dependency_overrides[get_ingestion_service] = lambda: FailingIngestionService()
+    try:
+        with TestClient(app) as client:
+            response = client.post("/v1/ingest/extract-candidates")
+    finally:
+        app.dependency_overrides.pop(get_ingestion_service, None)
+
+    assert response.status_code == 502
+    assert "Zotero request failed" in response.json()["detail"]
+
+
+def test_extract_candidates_route_bootstraps_stub_corpus_without_zotero(temp_data_dir) -> None:
+    with TestClient(app) as client:
+        response = client.post("/v1/ingest/extract-candidates")
+        sources_response = client.get("/v1/sources")
+
+    assert response.status_code == 200
+    assert response.json()["run"]["status"] == "completed"
+    assert sources_response.status_code == 200
+    assert {item["source_id"] for item in sources_response.json()} >= {"src-1", "src-2"}
+
+
+def test_normalize_documents_route_accepts_retry_payload(temp_data_dir) -> None:
+    class FakeNormalizationService:
+        def normalize_documents(self, *, document_ids=None, source_ids=None, retry_failed=False):
+            assert source_ids == ["zotero-ITEM-1"]
+            assert retry_failed is True
+            return {"document_count": 1, "text_unit_count": 1, "warnings": []}
+
+    app.dependency_overrides[get_normalization_service] = lambda: FakeNormalizationService()
+    try:
+        with TestClient(app) as client:
+            response = client.post(
+                "/v1/ingest/normalize-documents",
+                json={"source_ids": ["zotero-ITEM-1"], "retry_failed": True},
+            )
+    finally:
+        app.dependency_overrides.pop(get_normalization_service, None)
+
+    assert response.status_code == 200
+    assert response.json()["document_count"] == 1
+
+
 def test_intake_route_surfaces_zotero_write_failures(temp_data_dir) -> None:
     class FailingIntakeService:
         def intake_text(self, payload):
@@ -759,3 +850,23 @@ def test_intake_route_surfaces_zotero_write_failures(temp_data_dir) -> None:
 
     assert response.status_code == 502
     assert "Zotero" in response.json()["detail"]
+
+
+def test_intake_route_surfaces_zotero_fetch_failures(temp_data_dir) -> None:
+    class FailingIntakeService:
+        def intake_text(self, payload):
+            _ = payload
+            raise ZoteroFetchError("Zotero request failed for /users/12345/items/ITEM-1/children")
+
+    app.dependency_overrides[get_intake_service] = lambda: FailingIntakeService()
+    try:
+        with TestClient(app) as client:
+            response = client.post(
+                "/v1/intake/text",
+                json={"title": "Bad source", "text": "body"},
+            )
+    finally:
+        app.dependency_overrides.pop(get_intake_service, None)
+
+    assert response.status_code == 502
+    assert "Zotero request failed" in response.json()["detail"]

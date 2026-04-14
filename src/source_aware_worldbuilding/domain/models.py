@@ -28,6 +28,84 @@ def utc_now() -> str:
     return datetime.now(UTC).isoformat()
 
 
+SourceWorkflowStage = Literal[
+    "metadata_imported",
+    "attachment_discovered",
+    "attachment_fetched",
+    "text_extracted",
+    "normalization_queued",
+    "normalization_completed",
+    "attention_required",
+]
+MetadataImportStatus = Literal["imported", "failed"]
+AttachmentDiscoveryStatus = Literal["not_applicable", "discovered", "missing"]
+AttachmentFetchStatus = Literal["not_applicable", "pending", "fetched", "failed"]
+TextExtractionStatus = Literal["not_applicable", "pending", "extracted", "failed"]
+NormalizationStatus = Literal["not_applicable", "queued", "completed", "failed"]
+
+
+def _legacy_source_workflow_stage(sync_status: str) -> SourceWorkflowStage:
+    mapping: dict[str, SourceWorkflowStage] = {
+        "imported": "metadata_imported",
+        "attachments_missing": "attention_required",
+        "awaiting_text_extraction": "text_extracted",
+        "ready_for_extraction": "normalization_completed",
+        "extraction_failed": "attention_required",
+    }
+    return mapping.get(sync_status, "metadata_imported")
+
+
+def _legacy_document_stage_defaults(
+    *,
+    document_kind: str,
+    ingest_status: str,
+    raw_text_status: str,
+    claim_extraction_status: str,
+    storage_path: str | None,
+    raw_text: str | None,
+) -> tuple[
+    AttachmentDiscoveryStatus,
+    AttachmentFetchStatus,
+    TextExtractionStatus,
+    NormalizationStatus,
+]:
+    if document_kind in {"note", "manual_text"}:
+        discovery_status: AttachmentDiscoveryStatus = "not_applicable"
+        fetch_status: AttachmentFetchStatus = "not_applicable"
+    else:
+        discovery_status = "discovered"
+        fetch_status = "pending"
+
+    if ingest_status == "attachments_missing":
+        discovery_status = "missing"
+    elif storage_path:
+        fetch_status = "fetched"
+
+    if raw_text_status == "ready":
+        extraction_status: TextExtractionStatus = "extracted"
+    elif raw_text_status == "failed" or ingest_status == "extraction_failed":
+        extraction_status = "failed"
+    elif raw_text_status == "queued":
+        extraction_status = "pending"
+    else:
+        extraction_status = "pending" if document_kind not in {"note", "manual_text"} else "pending"
+
+    if raw_text and raw_text.strip():
+        extraction_status = "extracted"
+
+    if claim_extraction_status in {"ready", "completed"} or ingest_status == "ready_for_extraction":
+        normalization_status: NormalizationStatus = "completed"
+    elif claim_extraction_status == "failed":
+        normalization_status = "failed"
+    else:
+        normalization_status = "queued"
+
+    if document_kind in {"note", "manual_text"} and not raw_text and extraction_status != "failed":
+        extraction_status = "pending"
+
+    return discovery_status, fetch_status, extraction_status, normalization_status
+
+
 class SourceRecord(BaseModel):
     source_id: str
     external_source: str = "zotero"
@@ -48,7 +126,36 @@ class SourceRecord(BaseModel):
         "ready_for_extraction",
         "extraction_failed",
     ] = "imported"
+    workflow_stage: SourceWorkflowStage = "metadata_imported"
+    last_synced_at: str | None = None
+    last_zotero_version: str | None = None
+    last_source_checksum: str | None = None
+    stage_errors: list[str] = Field(default_factory=list)
+    stage_summary: dict[str, int] = Field(default_factory=dict)
     raw_metadata_json: dict | None = None
+
+    @model_validator(mode="after")
+    def derive_compatibility_fields(self) -> SourceRecord:
+        if self.last_synced_at is None:
+            self.last_synced_at = utc_now()
+        if not self.workflow_stage or (
+            self.workflow_stage == "metadata_imported" and self.sync_status != "imported"
+        ):
+            self.workflow_stage = _legacy_source_workflow_stage(self.sync_status)
+        if self.workflow_stage == "attention_required":
+            if self.sync_status not in {"attachments_missing", "extraction_failed"}:
+                self.sync_status = (
+                    "extraction_failed"
+                    if any("extract" in error.lower() for error in self.stage_errors)
+                    else "attachments_missing"
+                )
+        elif self.workflow_stage in {"normalization_queued", "normalization_completed"}:
+            self.sync_status = "ready_for_extraction"
+        elif self.workflow_stage in {"text_extracted", "attachment_fetched"}:
+            self.sync_status = "awaiting_text_extraction"
+        else:
+            self.sync_status = "imported"
+        return self
 
 
 class SourceDocumentRecord(BaseModel):
@@ -68,9 +175,174 @@ class SourceDocumentRecord(BaseModel):
     ] = "imported"
     raw_text_status: Literal["missing", "queued", "ready", "failed"] = "missing"
     claim_extraction_status: Literal["queued", "ready", "running", "completed", "failed"] = "queued"
+    metadata_import_status: MetadataImportStatus = "imported"
+    attachment_discovery_status: AttachmentDiscoveryStatus = "not_applicable"
+    attachment_fetch_status: AttachmentFetchStatus = "not_applicable"
+    text_extraction_status: TextExtractionStatus = "pending"
+    normalization_status: NormalizationStatus = "queued"
+    content_checksum: str | None = None
+    last_synced_at: str | None = None
+    present_in_latest_pull: bool = True
+    stage_errors: list[str] = Field(default_factory=list)
+    zotero_parent_item_key: str | None = None
+    zotero_child_item_key: str | None = None
     locator: str | None = None
     raw_text: str | None = None
     raw_metadata_json: dict | None = None
+
+    @model_validator(mode="after")
+    def derive_stage_and_compatibility_fields(self) -> SourceDocumentRecord:
+        if self.last_synced_at is None:
+            self.last_synced_at = utc_now()
+        (
+            discovery_status,
+            fetch_status,
+            extraction_status,
+            normalization_status,
+        ) = _legacy_document_stage_defaults(
+            document_kind=self.document_kind,
+            ingest_status=self.ingest_status,
+            raw_text_status=self.raw_text_status,
+            claim_extraction_status=self.claim_extraction_status,
+            storage_path=self.storage_path,
+            raw_text=self.raw_text,
+        )
+
+        if self.document_kind in {"note", "manual_text"}:
+            discovery_status = "not_applicable"
+            fetch_status = "not_applicable"
+        elif self.attachment_discovery_status == "missing":
+            discovery_status = "missing"
+        elif self.attachment_discovery_status == "discovered":
+            discovery_status = "discovered"
+
+        if self.attachment_fetch_status in {"pending", "fetched", "failed"}:
+            fetch_status = self.attachment_fetch_status
+        if self.text_extraction_status in {"extracted", "failed", "not_applicable"}:
+            extraction_status = self.text_extraction_status
+        if self.normalization_status in {"completed", "failed", "not_applicable"}:
+            normalization_status = self.normalization_status
+        elif self.claim_extraction_status in {"ready", "completed"}:
+            normalization_status = "completed"
+        elif self.claim_extraction_status == "failed":
+            normalization_status = "failed"
+
+        if self.metadata_import_status == "failed":
+            self.ingest_status = "extraction_failed"
+        elif discovery_status == "missing" or not self.present_in_latest_pull:
+            self.ingest_status = "attachments_missing"
+        elif fetch_status == "failed" or extraction_status == "failed":
+            self.ingest_status = "extraction_failed"
+        elif normalization_status == "completed":
+            self.ingest_status = "ready_for_extraction"
+        elif extraction_status == "extracted" or fetch_status == "fetched":
+            self.ingest_status = "awaiting_text_extraction"
+        else:
+            self.ingest_status = "imported"
+
+        self.attachment_discovery_status = discovery_status
+        self.attachment_fetch_status = fetch_status
+        self.text_extraction_status = extraction_status
+        self.normalization_status = normalization_status
+        self.raw_text_status = (
+            "ready"
+            if extraction_status == "extracted"
+            else "failed"
+            if extraction_status == "failed"
+            else "queued"
+            if extraction_status == "pending" and self.attachment_discovery_status != "missing"
+            else "missing"
+        )
+        if self.claim_extraction_status not in {"running", "completed"}:
+            self.claim_extraction_status = (
+                "failed"
+                if normalization_status == "failed"
+                else "ready"
+                if normalization_status == "completed"
+                else "queued"
+            )
+        return self
+
+
+def summarize_source_documents(source_documents: list[SourceDocumentRecord]) -> dict[str, int]:
+    summary = {
+        "total": len(source_documents),
+        "present": 0,
+        "missing": 0,
+        "fetched": 0,
+        "extracted": 0,
+        "normalized": 0,
+        "failed": 0,
+    }
+    for document in source_documents:
+        if document.present_in_latest_pull:
+            summary["present"] += 1
+        if (
+            not document.present_in_latest_pull
+            or document.attachment_discovery_status == "missing"
+        ):
+            summary["missing"] += 1
+        if document.attachment_fetch_status == "fetched":
+            summary["fetched"] += 1
+        if document.text_extraction_status == "extracted":
+            summary["extracted"] += 1
+        if document.normalization_status == "completed":
+            summary["normalized"] += 1
+        if (
+            document.metadata_import_status == "failed"
+            or document.attachment_fetch_status == "failed"
+            or document.text_extraction_status == "failed"
+            or document.normalization_status == "failed"
+        ):
+            summary["failed"] += 1
+    return summary
+
+
+def derive_source_workflow_stage(
+    source_documents: list[SourceDocumentRecord],
+) -> SourceWorkflowStage:
+    if not source_documents:
+        return "metadata_imported"
+    if any(
+        not document.present_in_latest_pull
+        or document.attachment_discovery_status == "missing"
+        or document.attachment_fetch_status == "failed"
+        or document.text_extraction_status == "failed"
+        or document.normalization_status == "failed"
+        or document.metadata_import_status == "failed"
+        for document in source_documents
+    ):
+        return "attention_required"
+    if all(document.normalization_status == "completed" for document in source_documents):
+        return "normalization_completed"
+    if any(document.normalization_status == "queued" for document in source_documents):
+        return "normalization_queued"
+    if all(
+        document.text_extraction_status == "extracted"
+        for document in source_documents
+        if document.text_extraction_status != "not_applicable"
+    ):
+        return "text_extracted"
+    if any(document.attachment_fetch_status == "fetched" for document in source_documents):
+        return "attachment_fetched"
+    if any(document.attachment_discovery_status == "discovered" for document in source_documents):
+        return "attachment_discovered"
+    return "metadata_imported"
+
+
+def sync_source_with_documents(
+    source: SourceRecord,
+    source_documents: list[SourceDocumentRecord],
+) -> SourceRecord:
+    summary = summarize_source_documents(source_documents)
+    errors: list[str] = []
+    for document in source_documents:
+        errors.extend(document.stage_errors)
+    source.stage_summary = summary
+    source.stage_errors = list(dict.fromkeys(errors))
+    source.workflow_stage = derive_source_workflow_stage(source_documents)
+    source.last_synced_at = utc_now()
+    return source
 
 
 class ZoteroCreatedItem(BaseModel):
@@ -181,6 +453,40 @@ class IntakeUrlRequest(BaseModel):
     title: str | None = None
     notes: str | None = None
     collection_key: str | None = None
+
+
+class ZoteroPullRequest(BaseModel):
+    item_keys: list[str] = Field(default_factory=list)
+    source_ids: list[str] = Field(default_factory=list)
+    force_refresh: bool = False
+
+
+class ZoteroPullResult(BaseModel):
+    count: int = 0
+    sources: list[SourceRecord] = Field(default_factory=list)
+    source_documents: list[SourceDocumentRecord] = Field(default_factory=list)
+    inserted_source_count: int = 0
+    updated_source_count: int = 0
+    unchanged_source_count: int = 0
+    inserted_document_count: int = 0
+    updated_document_count: int = 0
+    unchanged_document_count: int = 0
+    failed_document_count: int = 0
+    warnings: list[str] = Field(default_factory=list)
+
+
+class NormalizeDocumentsRequest(BaseModel):
+    source_ids: list[str] = Field(default_factory=list)
+    document_ids: list[str] = Field(default_factory=list)
+    retry_failed: bool = False
+
+
+class SourceDetailResponse(BaseModel):
+    source: SourceRecord
+    source_documents: list[SourceDocumentRecord] = Field(default_factory=list)
+    text_units: list[TextUnit] = Field(default_factory=list)
+    stage_summary: dict[str, int] = Field(default_factory=dict)
+    stage_errors: list[str] = Field(default_factory=list)
 
 
 class IntakeResult(BaseModel):

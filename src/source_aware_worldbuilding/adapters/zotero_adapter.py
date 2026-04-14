@@ -1,14 +1,24 @@
 from __future__ import annotations
 
+import json
 import mimetypes
 import re
 from hashlib import sha1
 from html import unescape
+from pathlib import Path
 
 import httpx
 from tenacity import Retrying, retry_if_exception, stop_after_attempt, wait_exponential
 
-from source_aware_worldbuilding.domain.errors import ZoteroWriteError
+from source_aware_worldbuilding.domain.errors import (
+    ZoteroAuthError,
+    ZoteroConfigError,
+    ZoteroExtractionError,
+    ZoteroFetchError,
+    ZoteroNotFoundError,
+    ZoteroRateLimitError,
+    ZoteroWriteError,
+)
 from source_aware_worldbuilding.domain.models import (
     IntakeTextRequest,
     IntakeUrlRequest,
@@ -16,6 +26,7 @@ from source_aware_worldbuilding.domain.models import (
     SourceRecord,
     TextUnit,
     ZoteroCreatedItem,
+    utc_now,
 )
 from source_aware_worldbuilding.settings import settings
 
@@ -27,48 +38,19 @@ class ZoteroCorpusAdapter:
     """Pull a narrow Zotero corpus, including note-derived text units."""
 
     def pull_sources(self) -> list[SourceRecord]:
-        if not settings.zotero_library_id:
-            return self._stub_sources()
+        self._ensure_configured()
 
         sources: list[SourceRecord] = []
         with self._client() as client:
             for item in self._request_paginated(client, self._top_items_path()):
-                data = item.get("data", {})
-                item_key = item.get("key")
-                if not item_key:
-                    continue
-
-                creators = data.get("creators") or []
-                author = (
-                    ", ".join(
-                        filter(None, [self._creator_name(creator) for creator in creators[:2]])
-                    )
-                    or None
-                )
-                date_value = data.get("date") or ""
-                year = date_value[:4] if isinstance(date_value, str) and date_value else None
-                sources.append(
-                    SourceRecord(
-                        source_id=f"zotero-{item_key}",
-                        external_source="zotero",
-                        external_id=item_key,
-                        title=data.get("title") or f"Untitled Zotero item {item_key}",
-                        author=author,
-                        year=year,
-                        source_type=data.get("itemType", "document"),
-                        locator_hint=data.get("archiveLocation") or data.get("callNumber"),
-                        zotero_item_key=item_key,
-                        collection_key=self._collection_key_from_item(data),
-                        abstract=self._clean_text(data.get("abstractNote")),
-                        url=data.get("url") or None,
-                        sync_status="imported",
-                        raw_metadata_json=data,
-                    )
-                )
+                source = self._build_source_record(item)
+                if source is not None:
+                    sources.append(source)
         return sources
 
     def pull_sources_by_item_keys(self, item_keys: list[str]) -> list[SourceRecord]:
-        if not settings.zotero_library_id or not item_keys:
+        self._ensure_configured()
+        if not item_keys:
             return []
 
         sources: list[SourceRecord] = []
@@ -80,80 +62,49 @@ class ZoteroCorpusAdapter:
                 params={"itemKey": ",".join(sorted(set(item_keys)))},
             )
             for item in response.json():
-                data = item.get("data", {})
-                if data.get("parentItem"):
-                    continue
-                item_key = item.get("key")
-                if not item_key:
-                    continue
-                creators = data.get("creators") or []
-                author = (
-                    ", ".join(
-                        filter(None, [self._creator_name(creator) for creator in creators[:2]])
-                    )
-                    or None
-                )
-                date_value = data.get("date") or ""
-                year = date_value[:4] if isinstance(date_value, str) and date_value else None
-                sources.append(
-                    SourceRecord(
-                        source_id=f"zotero-{item_key}",
-                        external_source="zotero",
-                        external_id=item_key,
-                        title=data.get("title") or f"Untitled Zotero item {item_key}",
-                        author=author,
-                        year=year,
-                        source_type=data.get("itemType", "document"),
-                        locator_hint=data.get("archiveLocation") or data.get("callNumber"),
-                        zotero_item_key=item_key,
-                        collection_key=self._collection_key_from_item(data),
-                        abstract=self._clean_text(data.get("abstractNote")),
-                        url=data.get("url") or None,
-                        sync_status="imported",
-                        raw_metadata_json=data,
-                    )
-                )
+                source = self._build_source_record(item)
+                if source is not None:
+                    sources.append(source)
         return sources
 
-    def discover_source_documents(self, sources: list[SourceRecord]) -> list[SourceDocumentRecord]:
-        if not settings.zotero_library_id:
-            return self._stub_source_documents(sources)
+    def discover_source_documents(
+        self,
+        sources: list[SourceRecord],
+        *,
+        existing_documents: list[SourceDocumentRecord] | None = None,
+        force_refresh: bool = False,
+    ) -> list[SourceDocumentRecord]:
+        self._ensure_configured()
 
         source_documents: list[SourceDocumentRecord] = []
+        existing_by_child_key = {
+            (item.zotero_child_item_key or item.external_id): item
+            for item in existing_documents or []
+            if item.zotero_child_item_key or item.external_id
+        }
         with self._client() as client:
             for source in sources:
                 if not source.zotero_item_key:
                     continue
                 child_path = f"{self._library_path()}/items/{source.zotero_item_key}/children"
                 children = self._request_paginated(client, child_path)
-                if not children:
-                    source.sync_status = "attachments_missing"
-                    continue
-
-                source.sync_status = "awaiting_text_extraction"
+                seen_child_keys: set[str] = set()
                 for child in children:
                     child_key = child.get("key")
                     data = child.get("data", {})
                     if not child_key:
                         continue
+                    seen_child_keys.add(str(child_key))
 
                     item_type = data.get("itemType", "")
                     if item_type == "note":
-                        raw_text = self._clean_text(data.get("note"))
                         source_documents.append(
-                            SourceDocumentRecord(
-                                document_id=f"zdoc-{child_key}",
-                                source_id=source.source_id,
-                                document_kind="note",
-                                external_id=child_key,
-                                filename=data.get("title"),
-                                mime_type="text/html",
-                                ingest_status="imported",
-                                raw_text_status="ready" if raw_text else "missing",
-                                claim_extraction_status="queued",
-                                locator=data.get("title") or data.get("parentItem") or "note",
-                                raw_text=raw_text,
-                                raw_metadata_json=data,
+                            self._build_note_document_record(
+                                source=source,
+                                child_key=str(child_key),
+                                data=data,
+                                existing=existing_by_child_key.get(str(child_key)),
+                                force_refresh=force_refresh,
                             )
                         )
                         continue
@@ -161,36 +112,35 @@ class ZoteroCorpusAdapter:
                     if item_type != "attachment":
                         continue
 
-                    content_type = data.get("contentType")
-                    raw_text = self._clean_text(data.get("note"))
-                    document_kind = (
-                        "snapshot"
-                        if isinstance(content_type, str) and content_type.startswith("text/html")
-                        else "attachment"
-                    )
-                    raw_text_status = "ready" if raw_text else "missing"
-                    ingest_status = (
-                        "awaiting_text_extraction"
-                        if raw_text_status == "ready"
-                        else "attachments_missing"
-                    )
                     source_documents.append(
-                        SourceDocumentRecord(
-                            document_id=f"zdoc-{child_key}",
-                            source_id=source.source_id,
-                            document_kind=document_kind,
-                            external_id=child_key,
-                            filename=data.get("filename") or data.get("title"),
-                            mime_type=content_type,
-                            storage_path=data.get("path"),
-                            ingest_status=ingest_status,
-                            raw_text_status=raw_text_status,
-                            claim_extraction_status="queued",
-                            locator=data.get("title") or content_type or "attachment",
-                            raw_text=raw_text,
-                            raw_metadata_json=data,
+                        self._build_attachment_document_record(
+                            client=client,
+                            source=source,
+                            child_key=str(child_key),
+                            data=data,
+                            existing=existing_by_child_key.get(str(child_key)),
+                            force_refresh=force_refresh,
                         )
                     )
+                for existing in existing_by_child_key.values():
+                    if (
+                        existing.source_id != source.source_id
+                        or not existing.zotero_child_item_key
+                        or existing.zotero_child_item_key in seen_child_keys
+                    ):
+                        continue
+                    missing = existing.model_copy(deep=True)
+                    missing.present_in_latest_pull = False
+                    missing.attachment_discovery_status = "missing"
+                    missing.stage_errors = list(
+                        dict.fromkeys(
+                            [
+                                *missing.stage_errors,
+                                "Attachment or note was not present in the latest Zotero pull.",
+                            ]
+                        )
+                    )
+                    source_documents.append(missing)
         return source_documents
 
     def create_text_source(self, request: IntakeTextRequest) -> ZoteroCreatedItem:
@@ -284,8 +234,7 @@ class ZoteroCorpusAdapter:
         )
 
     def pull_text_units(self, sources: list[SourceRecord]) -> list[TextUnit]:
-        if not settings.zotero_library_id:
-            return self._stub_text_units(sources)
+        self._ensure_configured()
 
         text_units: list[TextUnit] = []
         with self._client() as client:
@@ -333,6 +282,276 @@ class ZoteroCorpusAdapter:
                             ordinal += 1
         return text_units
 
+    def _ensure_configured(self) -> None:
+        if not settings.zotero_library_id:
+            raise ZoteroConfigError("Zotero source pulls require ZOTERO_LIBRARY_ID.")
+
+    def _build_source_record(self, item: dict) -> SourceRecord | None:
+        data = item.get("data", {})
+        if data.get("parentItem"):
+            return None
+        item_key = item.get("key")
+        if not item_key:
+            return None
+        creators = data.get("creators") or []
+        author = ", ".join(
+            filter(None, [self._creator_name(creator) for creator in creators[:2]])
+        ) or None
+        date_value = data.get("date") or ""
+        year = date_value[:4] if isinstance(date_value, str) and date_value else None
+        checksum = sha1(json.dumps(data, sort_keys=True).encode("utf-8")).hexdigest()
+        version = data.get("version") or data.get("dateModified")
+        return SourceRecord(
+            source_id=f"zotero-{item_key}",
+            external_source="zotero",
+            external_id=item_key,
+            title=data.get("title") or f"Untitled Zotero item {item_key}",
+            author=author,
+            year=year,
+            source_type=data.get("itemType", "document"),
+            locator_hint=data.get("archiveLocation") or data.get("callNumber"),
+            zotero_item_key=item_key,
+            collection_key=self._collection_key_from_item(data),
+            abstract=self._clean_text(data.get("abstractNote")),
+            url=data.get("url") or None,
+            sync_status="imported",
+            workflow_stage="metadata_imported",
+            last_synced_at=utc_now(),
+            last_zotero_version=str(version) if version is not None else None,
+            last_source_checksum=checksum,
+            raw_metadata_json=data,
+        )
+
+    def _build_note_document_record(
+        self,
+        *,
+        source: SourceRecord,
+        child_key: str,
+        data: dict,
+        existing: SourceDocumentRecord | None,
+        force_refresh: bool,
+    ) -> SourceDocumentRecord:
+        raw_text = self._clean_text(data.get("note"))
+        checksum = sha1((raw_text or "").encode("utf-8")).hexdigest()
+        document = SourceDocumentRecord(
+            document_id=f"zdoc-{child_key}",
+            source_id=source.source_id,
+            document_kind="note",
+            external_id=child_key,
+            filename=data.get("title"),
+            mime_type="text/html",
+            metadata_import_status="imported",
+            attachment_discovery_status="not_applicable",
+            attachment_fetch_status="not_applicable",
+            text_extraction_status="extracted" if raw_text else "failed",
+            normalization_status="queued",
+            content_checksum=checksum,
+            last_synced_at=utc_now(),
+            present_in_latest_pull=True,
+            locator=data.get("title") or data.get("parentItem") or "note",
+            raw_text=raw_text,
+            raw_metadata_json=data,
+            zotero_parent_item_key=source.zotero_item_key,
+            zotero_child_item_key=child_key,
+        )
+        if not raw_text:
+            document.stage_errors.append("Zotero note did not contain extractable text.")
+        return self._merge_existing_document(
+            document,
+            existing=existing,
+            force_refresh=force_refresh,
+        )
+
+    def _build_attachment_document_record(
+        self,
+        *,
+        client: httpx.Client,
+        source: SourceRecord,
+        child_key: str,
+        data: dict,
+        existing: SourceDocumentRecord | None,
+        force_refresh: bool,
+    ) -> SourceDocumentRecord:
+        content_type = data.get("contentType")
+        filename = data.get("filename") or data.get("title") or f"{child_key}.bin"
+        document_kind = (
+            "snapshot"
+            if isinstance(content_type, str) and content_type.startswith("text/html")
+            else "attachment"
+        )
+        downloaded_bytes: bytes | None = None
+        storage_path: str | None = None
+        stage_errors: list[str] = []
+        fetch_status = "pending"
+        try:
+            downloaded_bytes, storage_path = self._fetch_attachment_bytes(
+                client=client,
+                source=source,
+                child_key=child_key,
+                filename=filename,
+            )
+            fetch_status = "fetched"
+        except ZoteroFetchError as exc:
+            stage_errors.append(str(exc))
+            fetch_status = "failed"
+
+        raw_text = None
+        extraction_status = "pending"
+        if downloaded_bytes is not None:
+            try:
+                raw_text = self._extract_attachment_text(
+                    filename=filename,
+                    content_type=content_type,
+                    content=downloaded_bytes,
+                )
+                extraction_status = "extracted"
+            except ZoteroExtractionError as exc:
+                stage_errors.append(str(exc))
+                extraction_status = "failed"
+        else:
+            extraction_status = "failed" if fetch_status == "failed" else "pending"
+
+        checksum_seed = downloaded_bytes if downloaded_bytes is not None else json.dumps(
+            data, sort_keys=True
+        ).encode("utf-8")
+        document = SourceDocumentRecord(
+            document_id=f"zdoc-{child_key}",
+            source_id=source.source_id,
+            document_kind=document_kind,
+            external_id=child_key,
+            filename=filename,
+            mime_type=content_type,
+            storage_path=storage_path,
+            metadata_import_status="imported",
+            attachment_discovery_status="discovered",
+            attachment_fetch_status=fetch_status,
+            text_extraction_status=extraction_status,
+            normalization_status="queued" if extraction_status == "extracted" else "failed",
+            content_checksum=sha1(checksum_seed).hexdigest(),
+            last_synced_at=utc_now(),
+            present_in_latest_pull=True,
+            stage_errors=stage_errors,
+            locator=data.get("title") or content_type or "attachment",
+            raw_text=raw_text,
+            raw_metadata_json=data,
+            zotero_parent_item_key=source.zotero_item_key,
+            zotero_child_item_key=child_key,
+        )
+        return self._merge_existing_document(
+            document,
+            existing=existing,
+            force_refresh=force_refresh,
+        )
+
+    def _merge_existing_document(
+        self,
+        document: SourceDocumentRecord,
+        *,
+        existing: SourceDocumentRecord | None,
+        force_refresh: bool,
+    ) -> SourceDocumentRecord:
+        if existing is None:
+            return document
+        if self._should_preserve_existing_content(existing, document):
+            preserved = existing.model_copy(deep=True)
+            preserved.document_kind = document.document_kind
+            preserved.filename = document.filename or preserved.filename
+            preserved.mime_type = document.mime_type or preserved.mime_type
+            preserved.locator = document.locator or preserved.locator
+            preserved.raw_metadata_json = document.raw_metadata_json
+            preserved.zotero_parent_item_key = (
+                document.zotero_parent_item_key or preserved.zotero_parent_item_key
+            )
+            preserved.zotero_child_item_key = (
+                document.zotero_child_item_key or preserved.zotero_child_item_key
+            )
+            preserved.last_synced_at = document.last_synced_at
+            preserved.present_in_latest_pull = document.present_in_latest_pull
+            preserved.attachment_discovery_status = document.attachment_discovery_status
+            preserved.stage_errors = self._merge_stage_errors(existing, document)
+            return preserved
+        changed = existing.content_checksum != document.content_checksum
+        if not changed and not force_refresh:
+            document.normalization_status = existing.normalization_status
+            document.claim_extraction_status = existing.claim_extraction_status
+            document.raw_text = existing.raw_text
+            document.storage_path = existing.storage_path or document.storage_path
+            document.stage_errors = self._merge_stage_errors(existing, document)
+            document.content_checksum = existing.content_checksum or document.content_checksum
+        elif document.text_extraction_status == "extracted":
+            document.normalization_status = "queued"
+            document.claim_extraction_status = "queued"
+        return document
+
+    def _should_preserve_existing_content(
+        self,
+        existing: SourceDocumentRecord,
+        document: SourceDocumentRecord,
+    ) -> bool:
+        if document.document_kind not in {"attachment", "snapshot"}:
+            return False
+        if (
+            document.attachment_fetch_status != "failed"
+            and document.text_extraction_status != "failed"
+        ):
+            return False
+        return bool(existing.content_checksum and (existing.storage_path or existing.raw_text))
+
+    def _merge_stage_errors(
+        self,
+        existing: SourceDocumentRecord,
+        document: SourceDocumentRecord,
+    ) -> list[str]:
+        existing_errors = list(existing.stage_errors)
+        if document.present_in_latest_pull:
+            existing_errors = [
+                error
+                for error in existing_errors
+                if "not present in the latest zotero pull" not in error.lower()
+            ]
+        return list(dict.fromkeys([*existing_errors, *document.stage_errors]))
+
+    def _fetch_attachment_bytes(
+        self,
+        *,
+        client: httpx.Client,
+        source: SourceRecord,
+        child_key: str,
+        filename: str,
+    ) -> tuple[bytes, str]:
+        response = self._request_with_retry(
+            client,
+            f"{self._library_path()}/items/{child_key}/file",
+            params={},
+        )
+        payload = response.content
+        if not payload:
+            raise ZoteroFetchError(f"Attachment {child_key} did not return any file content.")
+        safe_name = re.sub(r"[^A-Za-z0-9._-]+", "-", filename).strip("-") or f"{child_key}.bin"
+        target_dir = Path(settings.app_data_dir) / "source_attachments" / "zotero" / (
+            source.zotero_item_key or source.source_id
+        )
+        target_dir.mkdir(parents=True, exist_ok=True)
+        target_path = target_dir / f"{child_key}-{safe_name}"
+        target_path.write_bytes(payload)
+        return payload, str(target_path)
+
+    def _extract_attachment_text(
+        self,
+        *,
+        filename: str,
+        content_type: str | None,
+        content: bytes,
+    ) -> str:
+        extracted = self._extract_file_text(filename, content_type, content)
+        if extracted is None:
+            raise ZoteroExtractionError(
+                "Fetched attachment "
+                f"{filename} but could not extract text from content type "
+                f"{content_type or 'unknown'}."
+            )
+        return extracted
+
     def _client(self) -> httpx.Client:
         headers = {"Zotero-API-Version": "3"}
         if settings.zotero_api_key:
@@ -368,7 +587,7 @@ class ZoteroCorpusAdapter:
         client: httpx.Client,
         path: str,
         *,
-        params: dict[str, int | str],
+        params: dict[str, int | str] | None,
     ) -> httpx.Response:
         for attempt in Retrying(
             stop=stop_after_attempt(3),
@@ -377,9 +596,18 @@ class ZoteroCorpusAdapter:
             reraise=True,
         ):
             with attempt:
-                response = client.get(path, params=params)
-                response.raise_for_status()
-                return response
+                try:
+                    response = client.get(path, params=params)
+                    response.raise_for_status()
+                    return response
+                except httpx.HTTPStatusError as exc:
+                    raise self._map_http_error(exc) from exc
+                except httpx.TimeoutException as exc:
+                    raise ZoteroFetchError(f"Zotero request timed out for {path}.") from exc
+                except httpx.RequestError as exc:
+                    raise ZoteroFetchError(
+                        f"Zotero request failed for {path}: {exc.__class__.__name__}: {exc}"
+                    ) from exc
         raise RuntimeError("Zotero retry loop exhausted unexpectedly.")
 
     def _library_path(self) -> str:
@@ -470,14 +698,31 @@ class ZoteroCorpusAdapter:
     def _is_retryable_error(self, exc: BaseException) -> bool:
         if isinstance(exc, httpx.TimeoutException):
             return True
+        if isinstance(exc, ZoteroRateLimitError):
+            return True
         if isinstance(exc, httpx.HTTPStatusError):
             status_code = exc.response.status_code
             return status_code in {408, 429} or status_code >= 500
+        if isinstance(exc, ZoteroFetchError):
+            return True
         return False
 
+    def _map_http_error(self, exc: httpx.HTTPStatusError):
+        status_code = exc.response.status_code
+        if status_code in {401, 403}:
+            return ZoteroAuthError("Zotero credentials were rejected by the API.")
+        if status_code == 404:
+            return ZoteroNotFoundError("Configured Zotero library or item was not found.")
+        if status_code == 429:
+            return ZoteroRateLimitError("Zotero API rate limit reached. Try again shortly.")
+        if status_code < 500:
+            return ZoteroConfigError(f"Zotero API rejected the request with status {status_code}.")
+        return ZoteroFetchError(f"Zotero API returned {status_code}.")
+
     def _create_parent_item(self, payload: dict) -> str:
-        if not settings.zotero_library_id:
-            raise ZoteroWriteError("Zotero writes require ZOTERO_LIBRARY_ID.")
+        self._ensure_configured()
+        if not settings.zotero_api_key:
+            raise ZoteroConfigError("Zotero writes require ZOTERO_API_KEY.")
         with self._client() as client:
             response = client.post(
                 f"{self._library_path()}/items",
@@ -485,6 +730,10 @@ class ZoteroCorpusAdapter:
             )
             try:
                 response.raise_for_status()
+            except httpx.HTTPStatusError as exc:
+                raise ZoteroWriteError(
+                    f"Zotero parent item creation failed: {self._map_http_error(exc)}"
+                ) from exc
             except httpx.HTTPError as exc:
                 raise ZoteroWriteError(f"Zotero parent item creation failed: {exc}") from exc
         data = response.json()
@@ -494,6 +743,8 @@ class ZoteroCorpusAdapter:
         return str(key)
 
     def _create_child_note(self, parent_item_key: str, note_body: str) -> str:
+        if not settings.zotero_api_key:
+            raise ZoteroConfigError("Zotero writes require ZOTERO_API_KEY.")
         with self._client() as client:
             response = client.post(
                 f"{self._library_path()}/items",
@@ -507,6 +758,10 @@ class ZoteroCorpusAdapter:
             )
             try:
                 response.raise_for_status()
+            except httpx.HTTPStatusError as exc:
+                raise ZoteroWriteError(
+                    f"Zotero child note creation failed: {self._map_http_error(exc)}"
+                ) from exc
             except httpx.HTTPError as exc:
                 raise ZoteroWriteError(f"Zotero child note creation failed: {exc}") from exc
         data = response.json()
@@ -678,3 +933,11 @@ class ZoteroCorpusAdapter:
                 )
             )
         return source_documents
+
+    def bootstrap_stub_corpus(
+        self,
+    ) -> tuple[list[SourceRecord], list[SourceDocumentRecord], list[TextUnit]]:
+        sources = self._stub_sources()
+        source_documents = self._stub_source_documents(sources)
+        text_units = self._stub_text_units(sources)
+        return sources, source_documents, text_units

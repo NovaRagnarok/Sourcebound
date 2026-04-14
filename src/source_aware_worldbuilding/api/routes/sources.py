@@ -13,12 +13,7 @@ def list_sources(service: IngestionService = Depends(get_ingestion_service)) -> 
 
 @router.get("/{source_id}")
 def get_source(source_id: str, service: IngestionService = Depends(get_ingestion_service)) -> dict:
-    source = next((item for item in service.list_sources() if item.source_id == source_id), None)
-    if source is None:
+    detail = service.get_source_detail(source_id)
+    if detail is None:
         raise HTTPException(status_code=404, detail="Source not found")
-    return {
-        "source": source.model_dump(mode="json"),
-        "text_units": [
-            item.model_dump(mode="json") for item in service.get_source_text_units(source_id)
-        ],
-    }
+    return detail.model_dump(mode="json")

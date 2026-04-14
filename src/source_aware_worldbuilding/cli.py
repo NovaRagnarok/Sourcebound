@@ -72,6 +72,7 @@ from source_aware_worldbuilding.adapters.web_research_scout import (
 from source_aware_worldbuilding.adapters.zotero_adapter import ZoteroCorpusAdapter
 from source_aware_worldbuilding.api.dependencies import (
     get_evidence_store,
+    get_ingestion_service,
     get_intake_service,
     get_normalization_service,
     get_projection,
@@ -92,6 +93,7 @@ from source_aware_worldbuilding.domain.enums import (
     ReviewDecision,
     ReviewState,
 )
+from source_aware_worldbuilding.domain.errors import ZoteroError
 from source_aware_worldbuilding.domain.models import (
     ApprovedClaim,
     BibleCompositionDefaults,
@@ -106,6 +108,7 @@ from source_aware_worldbuilding.domain.models import (
     IntakeUrlRequest,
     JobRecord,
     JobResultRef,
+    NormalizeDocumentsRequest,
     ResearchBrief,
     ResearchExecutionPolicy,
     ResearchFacet,
@@ -121,6 +124,7 @@ from source_aware_worldbuilding.domain.models import (
     SourceDocumentRecord,
     SourceRecord,
     TextUnit,
+    ZoteroPullRequest,
 )
 from source_aware_worldbuilding.services.bible import BibleWorkspaceService
 from source_aware_worldbuilding.services.ingestion import IngestionService
@@ -144,8 +148,16 @@ class _BenchmarkCorpus:
     def pull_sources(self) -> list[SourceRecord]:
         return []
 
-    def discover_source_documents(self, sources: list[SourceRecord]):
+    def discover_source_documents(
+        self,
+        sources: list[SourceRecord],
+        *,
+        existing_documents: list[SourceDocumentRecord] | None = None,
+        force_refresh: bool = False,
+    ):
         _ = sources
+        _ = existing_documents
+        _ = force_refresh
         return []
 
     def pull_text_units(self, sources: list[SourceRecord]) -> list[TextUnit]:
@@ -2165,6 +2177,9 @@ def _build_zotero_report(*, source_limit: int, include_text_units: bool) -> dict
         report["success"] = True
         report["detail"] = "Zotero pull succeeded."
         return report
+    except ZoteroError as exc:
+        report["detail"] = str(exc)
+        return report
     except Exception as exc:
         report["detail"] = f"Zotero pull failed: {exc}"
         return report
@@ -2209,6 +2224,11 @@ def _print_zotero_report(report: dict) -> None:
         print(preview_table)
 
 
+def _handle_zotero_cli_error(exc: ZoteroError) -> None:
+    print(f"[red]{exc}[/red]")
+    raise typer.Exit(code=1)
+
+
 @app.command("intake-text")
 def intake_text(
     title: str,
@@ -2220,17 +2240,20 @@ def intake_text(
     collection_key: str | None = None,
     json_output: bool = False,
 ) -> None:
-    result = get_intake_service().intake_text(
-        IntakeTextRequest(
-            title=title,
-            text=text,
-            author=author,
-            year=year,
-            source_type=source_type,
-            notes=notes,
-            collection_key=collection_key,
+    try:
+        result = get_intake_service().intake_text(
+            IntakeTextRequest(
+                title=title,
+                text=text,
+                author=author,
+                year=year,
+                source_type=source_type,
+                notes=notes,
+                collection_key=collection_key,
+            )
         )
-    )
+    except ZoteroError as exc:
+        _handle_zotero_cli_error(exc)
     if json_output:
         typer.echo(json.dumps(result.model_dump(mode="json"), indent=2))
         return
@@ -2251,14 +2274,17 @@ def intake_url(
     collection_key: str | None = None,
     json_output: bool = False,
 ) -> None:
-    result = get_intake_service().intake_url(
-        IntakeUrlRequest(
-            url=url,
-            title=title,
-            notes=notes,
-            collection_key=collection_key,
+    try:
+        result = get_intake_service().intake_url(
+            IntakeUrlRequest(
+                url=url,
+                title=title,
+                notes=notes,
+                collection_key=collection_key,
+            )
         )
-    )
+    except ZoteroError as exc:
+        _handle_zotero_cli_error(exc)
     if json_output:
         typer.echo(json.dumps(result.model_dump(mode="json"), indent=2))
         return
@@ -2280,15 +2306,18 @@ def intake_file(
     collection_key: str | None = None,
     json_output: bool = False,
 ) -> None:
-    result = get_intake_service().intake_file(
-        filename=path.name,
-        content_type=None,
-        content=path.read_bytes(),
-        title=title,
-        source_type=source_type,
-        notes=notes,
-        collection_key=collection_key,
-    )
+    try:
+        result = get_intake_service().intake_file(
+            filename=path.name,
+            content_type=None,
+            content=path.read_bytes(),
+            title=title,
+            source_type=source_type,
+            notes=notes,
+            collection_key=collection_key,
+        )
+    except ZoteroError as exc:
+        _handle_zotero_cli_error(exc)
     if json_output:
         typer.echo(json.dumps(result.model_dump(mode="json"), indent=2))
         return
@@ -2301,9 +2330,60 @@ def intake_file(
         print(f"[yellow]{warning}[/yellow]")
 
 
+@app.command("zotero-pull")
+def zotero_pull(
+    source_id: list[str] | None = None,
+    item_key: list[str] | None = None,
+    force_refresh: bool = False,
+    json_output: bool = False,
+) -> None:
+    try:
+        result = get_ingestion_service().pull_sources(
+            ZoteroPullRequest(
+                source_ids=source_id or [],
+                item_keys=item_key or [],
+                force_refresh=force_refresh,
+            )
+        )
+    except ZoteroError as exc:
+        _handle_zotero_cli_error(exc)
+    if json_output:
+        typer.echo(json.dumps(result.model_dump(mode="json"), indent=2))
+        return
+    print(
+        f"[green]Pulled Zotero sources[/green] | "
+        f"Sources: {result.count} | "
+        f"New: {result.inserted_source_count} | "
+        f"Updated: {result.updated_source_count} | "
+        f"Unchanged: {result.unchanged_source_count}"
+    )
+    print(
+        f"Documents new: {result.inserted_document_count} | "
+        f"updated: {result.updated_document_count} | "
+        f"unchanged: {result.unchanged_document_count} | "
+        f"failed: {result.failed_document_count}"
+    )
+    for warning in result.warnings:
+        print(f"[yellow]{warning}[/yellow]")
+
+
 @app.command("normalize-documents")
-def normalize_documents(json_output: bool = False) -> None:
-    result = get_normalization_service().normalize_documents()
+def normalize_documents(
+    source_id: list[str] | None = None,
+    document_id: list[str] | None = None,
+    retry_failed: bool = False,
+    json_output: bool = False,
+) -> None:
+    payload = NormalizeDocumentsRequest(
+        source_ids=source_id or [],
+        document_ids=document_id or [],
+        retry_failed=retry_failed,
+    )
+    result = get_normalization_service().normalize_documents(
+        source_ids=payload.source_ids,
+        document_ids=payload.document_ids,
+        retry_failed=payload.retry_failed,
+    )
     if json_output:
         typer.echo(json.dumps(result, indent=2))
         return
