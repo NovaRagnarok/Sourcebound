@@ -25,7 +25,6 @@ class LorePacketService:
         ClaimStatus.CONTESTED,
         ClaimStatus.RUMOR,
         ClaimStatus.LEGEND,
-        ClaimStatus.AUTHOR_CHOICE,
     ]
     _STATUS_HEADINGS = {
         ClaimStatus.VERIFIED: "Verified",

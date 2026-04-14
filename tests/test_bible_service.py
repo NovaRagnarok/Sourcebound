@@ -9,7 +9,12 @@ from source_aware_worldbuilding.adapters.file_backed import (
     FileSourceStore,
     FileTruthStore,
 )
-from source_aware_worldbuilding.domain.enums import BibleSectionType, ClaimKind, ClaimStatus
+from source_aware_worldbuilding.domain.enums import (
+    BibleSectionGenerationStatus,
+    BibleSectionType,
+    ClaimKind,
+    ClaimStatus,
+)
 from source_aware_worldbuilding.domain.models import (
     ApprovedClaim,
     BibleProjectProfileUpdateRequest,
@@ -191,7 +196,7 @@ def populate_bible_service_fixtures(data_dir: Path) -> None:
                 status=ClaimStatus.AUTHOR_CHOICE,
                 author_choice=True,
                 place="Greyport",
-                evidence_ids=["evi-3"],
+                notes="Unify harbor scenes even when the strict canon stays sparse.",
             ),
         ]
     )
@@ -291,7 +296,10 @@ def test_bible_composition_uses_writer_facing_section_strategies(temp_data_dir: 
     assert "Stage scenes in Greyport" in daily.paragraphs[0].text
     assert daily.paragraphs[1].paragraph_kind == "material_cluster"
     assert author.paragraphs[0].paragraph_kind == "author_guidance"
-    assert author.paragraphs[0].text.startswith("Author choice: depict Greyport docks")
+    assert author.paragraphs[0].text.startswith("Drafting default: depict Greyport docks")
+    assert "strict-fact outputs" in author.paragraphs[0].text
+    assert author.generation_status == BibleSectionGenerationStatus.READY
+    assert author.ready_for_writer is True
     assert setting.retrieval_metadata["ranking_strategy"] == "intent_blended"
 
 
@@ -488,3 +496,102 @@ def test_bible_retrieval_metadata_surfaces_qdrant_fallback(temp_data_dir: Path) 
     assert draft.retrieval_metadata["fallback_reason"] == "Qdrant collection is not initialized."
     assert "Retrieval fallback" not in (draft.coverage_analysis.diagnostic_summary or "")
     assert "Retrieval fallback: Qdrant collection is not initialized." in draft.generated_markdown
+
+
+def test_author_decisions_ignore_profile_time_and_source_defaults(temp_data_dir: Path) -> None:
+    populate_bible_service_fixtures(temp_data_dir)
+    service = build_service(temp_data_dir)
+
+    author = service._compose_section(
+        "project-greyport",
+        BibleSectionType.AUTHOR_DECISIONS,
+        BibleSectionFilters(
+            place="Greyport",
+            time_start="1201",
+            time_end="1202",
+            source_types=["record"],
+        ),
+    )
+
+    assert author.references.claim_ids == ["claim-author"]
+    assert author.paragraphs[0].paragraph_kind == "author_guidance"
+    assert author.generation_status == BibleSectionGenerationStatus.READY
+    assert author.ready_for_writer is True
+
+
+def test_rumor_sections_treat_relationship_filters_as_context_not_hard_gate(
+    temp_data_dir: Path,
+) -> None:
+    populate_bible_service_fixtures(temp_data_dir)
+    service = build_service(temp_data_dir)
+
+    claims = JsonListStore(temp_data_dir / "claims.json").read_models(ApprovedClaim)
+    claims.extend(
+        [
+            ApprovedClaim(
+                claim_id="claim-bell-prime-inst",
+                subject="Greyport grain bell",
+                predicate="rang_after",
+                value="prime",
+                claim_kind=ClaimKind.INSTITUTION,
+                status=ClaimStatus.CONTESTED,
+                place="Greyport",
+                evidence_ids=["evi-5"],
+            ),
+            ApprovedClaim(
+                claim_id="claim-bell-terce-inst",
+                subject="Greyport grain bell",
+                predicate="rang_after",
+                value="terce",
+                claim_kind=ClaimKind.INSTITUTION,
+                status=ClaimStatus.PROBABLE,
+                place="Greyport",
+                evidence_ids=["evi-6"],
+            ),
+        ]
+    )
+    JsonListStore(temp_data_dir / "claims.json").write_models(claims)
+    relationships = JsonListStore(temp_data_dir / "claim_relationships.json").read_models(
+        ClaimRelationship
+    )
+    relationships.extend(
+        [
+            ClaimRelationship(
+                relationship_id="rel-inst-prime-terce",
+                claim_id="claim-bell-prime-inst",
+                related_claim_id="claim-bell-terce-inst",
+                relationship_type="contradicts",
+                notes="The institutional bell record splits across two ordinances.",
+            ),
+            ClaimRelationship(
+                relationship_id="rel-inst-terce-prime",
+                claim_id="claim-bell-terce-inst",
+                related_claim_id="claim-bell-prime-inst",
+                relationship_type="supersedes",
+                notes="The later institutional hour supersedes the earlier one.",
+            ),
+        ]
+    )
+    JsonListStore(temp_data_dir / "claim_relationships.json").write_models(relationships)
+
+    rumor = service._compose_section(
+        "project-greyport",
+        BibleSectionType.RUMORS_AND_CONTESTED,
+        BibleSectionFilters(
+            place="Greyport",
+            statuses=[
+                ClaimStatus.CONTESTED,
+                ClaimStatus.RUMOR,
+                ClaimStatus.LEGEND,
+                ClaimStatus.PROBABLE,
+            ],
+            source_types=["oral_history", "record"],
+            relationship_types=["contradicts", "supersedes"],
+            focus="grain bell disputes and moon well rumors",
+        ),
+    )
+
+    assert "claim-bell-prime-inst" in rumor.references.claim_ids
+    assert "claim-bell-terce-inst" in rumor.references.claim_ids
+    assert "claim-legend" in rumor.references.claim_ids
+    assert rumor.generation_status == BibleSectionGenerationStatus.READY

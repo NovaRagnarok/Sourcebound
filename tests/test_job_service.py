@@ -24,7 +24,11 @@ from source_aware_worldbuilding.adapters.web_research_scout import (
     CuratedInputsResearchScout,
     ResearchScoutRegistry,
 )
-from source_aware_worldbuilding.domain.enums import BibleSectionType, JobStatus
+from source_aware_worldbuilding.domain.enums import (
+    BibleSectionGenerationStatus,
+    BibleSectionType,
+    JobStatus,
+)
 from source_aware_worldbuilding.domain.models import (
     ApprovedClaim,
     BibleProjectProfileUpdateRequest,
@@ -223,6 +227,8 @@ def test_job_service_processes_bible_compose_jobs(temp_data_dir: Path) -> None:
     assert section is not None
     assert section.generated_markdown
     assert section.paragraphs
+    assert section.generation_status == BibleSectionGenerationStatus.THIN
+    assert section.ready_for_writer is False
 
 
 def test_job_service_processes_curated_research_jobs(temp_data_dir: Path) -> None:
@@ -285,6 +291,50 @@ def test_job_service_can_cancel_queued_jobs_and_export_in_background(temp_data_d
     assert completed.status.value == "completed"
     assert completed.result_payload is not None
     assert completed.result_payload["profile"]["project_name"] == "Greyport Bible"
+
+
+def test_job_service_marks_bible_section_failed_when_background_compose_fails(
+    temp_data_dir: Path,
+) -> None:
+    class BrokenBibleService(BibleWorkspaceService):
+        def compose_prepared_section(self, section_id: str):
+            raise RuntimeError("compose blew up")
+
+    populate_bible_fixtures(temp_data_dir)
+    broken_service = BrokenBibleService(
+        profile_store=FileBibleProjectProfileStore(temp_data_dir),
+        section_store=FileBibleSectionStore(temp_data_dir),
+        truth_store=FileTruthStore(temp_data_dir),
+        evidence_store=FileEvidenceStore(temp_data_dir),
+        source_store=FileSourceStore(temp_data_dir),
+    )
+    broken_service.save_profile(
+        "project-greyport",
+        BibleProjectProfileUpdateRequest(project_name="Greyport Bible", geography="Greyport"),
+    )
+    job_service = JobService(
+        job_store=FileJobStore(temp_data_dir),
+        research_service=build_research_service(temp_data_dir),
+        bible_service=broken_service,
+    )
+
+    job = job_service.enqueue_bible_compose(
+        BibleSectionCreateRequest(
+            project_id="project-greyport",
+            section_type=BibleSectionType.SETTING_OVERVIEW,
+        )
+    )
+    processed = job_service.process_pending_jobs()
+    completed = job_service.get_job(job.job_id)
+    failed_section = broken_service.get_section(job.result_ref.section_id or "")
+
+    assert processed is True
+    assert completed is not None
+    assert completed.status == JobStatus.FAILED
+    assert failed_section is not None
+    assert failed_section.generation_status == BibleSectionGenerationStatus.FAILED
+    assert failed_section.ready_for_writer is False
+    assert failed_section.generation_error == "compose blew up"
 
 
 def test_job_service_retries_failed_jobs_by_creating_a_new_attempt(temp_data_dir: Path) -> None:

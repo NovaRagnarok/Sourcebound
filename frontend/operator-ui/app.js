@@ -880,7 +880,7 @@
       state.bible.sections[0] ??
       null;
     const pendingCandidates = state.candidates.filter((candidate) => candidate.review_state === "pending");
-    const thinCoverage = coverage.filter((item) => item.tone === "contested");
+    const thinCoverage = coverage.filter((item) => item.summary !== "ready");
     const researchRunsNeedingAttention = state.researchRuns.filter((run) =>
       ["queued", "running", "partial"].includes(run.status)
     );
@@ -996,13 +996,20 @@
                   <div class="inline-metrics">
                     <span>${escapeHtml(selectedSection.references.claim_ids.length)} claims</span>
                     <span>${escapeHtml(selectedSection.references.source_ids.length)} sources</span>
-                    <span>${selectedSection.has_manual_edits ? "manual edit preserved" : "generated only"}</span>
+                    <span>${escapeHtml(renderBibleGenerationLabel(selectedSection))}</span>
                   </div>
                   <div class="workspace-section-preview">
                     <h4>${escapeHtml(selectedSection.title)}</h4>
-                    <p>${escapeHtml((selectedSection.paragraphs?.[0]?.text || selectedSection.generated_markdown || "No generated material yet.").slice(0, 320))}${(selectedSection.paragraphs?.[0]?.text || selectedSection.generated_markdown || "").length > 320 ? "..." : ""}</p>
+                    <p>${escapeHtml(renderBibleGenerationSummary(selectedSection))}</p>
                   </div>
                   <div class="detail-list">
+                    <div class="mini">
+                      <div class="toolbar">
+                        <strong>Generated baseline</strong>
+                        <span class="pill ${escapeHtml(renderBibleGenerationTone(selectedSection.generation_status))}">${escapeHtml(renderBibleGenerationLabel(selectedSection))}</span>
+                      </div>
+                      <div class="detail-note">${escapeHtml(renderBibleManualState(selectedSection))}</div>
+                    </div>
                     ${
                       (selectedSection.coverage_gaps || []).length
                         ? selectedSection.coverage_gaps
@@ -1781,6 +1788,7 @@
     const selected = state.bible.sections.find((section) => section.section_id === state.bible.selectedSectionId) ?? state.bible.sections[0];
     const coverage = buildBibleCoverage(profile, state.bible.sections, state.claims);
     const readyForBible = state.claims.filter((claim) => claim.status !== "rumor" && claim.status !== "legend").length;
+    const nonReadyCount = coverage.filter((item) => item.summary !== "ready").length;
 
     return `
       <article class="screen fade-in">
@@ -1803,7 +1811,7 @@
           <div class="funnel">
             <div><strong>${state.candidates.filter((candidate) => candidate.review_state === "pending").length}</strong><span>Needs review</span></div>
             <div><strong>${readyForBible}</strong><span>Eligible canon</span></div>
-            <div><strong>${coverage.filter((item) => item.tone === "contested").length}</strong><span>Missing coverage</span></div>
+            <div><strong>${nonReadyCount}</strong><span>Sections not ready</span></div>
           </div>
         </section>
 
@@ -1909,7 +1917,7 @@
                   <h3>Coverage map</h3>
                   <div class="detail-note">Thin, strong, and rumor-heavy areas stay visible so the writer can decide whether to research more or draft anyway.</div>
                 </div>
-                <span class="pill ${coverage.some((item) => item.tone === "contested") ? "contested" : "verified"}">${escapeHtml(coverage.length)}</span>
+                <span class="pill ${coverage.some((item) => item.summary !== "ready") ? "contested" : "verified"}">${escapeHtml(coverage.length)}</span>
               </div>
               <div class="detail-list">
                 ${coverage.map((item) => `
@@ -1992,11 +2000,12 @@
                       <div class="row-subtitle">${escapeHtml(section.section_type.replaceAll("_", " "))}</div>
                     </div>
                     <div class="row-meta">
-                      <span class="pill ${section.has_manual_edits ? "author_choice" : "verified"}">${section.has_manual_edits ? "edited" : "generated"}</span>
+                      <span class="pill ${escapeHtml(renderBibleGenerationTone(section.generation_status))}">${escapeHtml(renderBibleGenerationLabel(section))}</span>
+                      ${section.has_manual_edits ? `<span class="pill author_choice">${escapeHtml(renderBibleManualState(section))}</span>` : ""}
                       ${renderJobPill(section.latest_job)}
                       <span class="code">${escapeHtml(section.section_id)}</span>
                     </div>
-                    <div class="row-meta">${escapeHtml(section.references.claim_ids.length)} claims · ${escapeHtml(section.references.source_ids.length)} sources</div>
+                    <div class="row-meta">${escapeHtml(section.references.claim_ids.length)} claims · ${escapeHtml(section.references.source_ids.length)} sources · ${escapeHtml(renderBibleGenerationSummary(section))}</div>
                   </button>
                 `).join("")
                 : "<div class='helper' style='padding:14px;'>No bible sections yet. Compose the first one from approved claims.</div>"}
@@ -2015,12 +2024,14 @@
     const provenance = state.bible.selectedProvenance;
     const selectedParagraph =
       provenance?.paragraphs?.find((item) => item.paragraph?.paragraph_id === state.bible.selectedParagraphId) ||
-      provenance?.paragraphs?.[0] ||
+      provenance?.paragraphs?.find((item) => (item.paragraph?.claim_ids || []).length) ||
       null;
     const manualMode = section.has_manual_edits ? "manual override active" : "generated working copy";
     const manualCallout = section.has_manual_edits
       ? "The editable text below is the author's working override. Regeneration refreshes the generated draft above and preserves this manual text."
       : "The editable text below currently mirrors the generated draft. Once you change it, the editor becomes a manual override that can diverge from regenerated canon synthesis.";
+    const generationTone = renderBibleGenerationTone(section.generation_status);
+    const generationLabel = renderBibleGenerationLabel(section);
     return `
       <div class="detail-head">
         <div>
@@ -2029,13 +2040,15 @@
         </div>
         <div class="toolbar">
           ${renderJobPill(section.latest_job)}
-          <span class="pill ${section.has_manual_edits ? "author_choice" : "verified"}">${section.has_manual_edits ? "manual edits" : "generated"}</span>
+          <span class="pill ${escapeHtml(generationTone)}">${escapeHtml(generationLabel)}</span>
+          ${section.has_manual_edits ? `<span class="pill author_choice">${escapeHtml(renderBibleManualState(section))}</span>` : ""}
         </div>
       </div>
       <div class="inline-metrics">
         <span>${escapeHtml(section.references.claim_ids.length)} claims</span>
         <span>${escapeHtml(section.references.source_ids.length)} sources</span>
         <span>${escapeHtml(section.references.evidence_ids.length)} evidence</span>
+        <span>${section.ready_for_writer ? "generated baseline usable" : "generated baseline not yet dependable"}</span>
       </div>
       <div class="toolbar">
         <button class="secondary-button" type="button" data-action="regenerate-bible-section">Regenerate section</button>
@@ -2069,9 +2082,9 @@
             <h4>Generated Canon Synthesis</h4>
             <div class="detail-note">These cards and the draft snapshot are generated from approved canon. Paragraph provenance only explains this generated synthesis.</div>
           </div>
-          <span class="pill verified">generated draft</span>
+          <span class="pill ${escapeHtml(generationTone)}">${escapeHtml(generationLabel)}</span>
         </div>
-        <div class="trust-callout trust-callout-generated">Regeneration refreshes this evidence-backed draft. It never silently rewrites manual author text.</div>
+        <div class="trust-callout trust-callout-generated">${escapeHtml(renderBibleGenerationSummary(section))} Regeneration refreshes this evidence-backed draft and never silently rewrites manual author text.</div>
         <div class="field">
           <label>Generated draft snapshot</label>
           <div class="draft-preview">${escapeHtml(section.generated_markdown || "No generated draft yet.")}</div>
@@ -2091,7 +2104,7 @@
             <h4>${section.has_manual_edits ? "Manual Override Text" : "Editable Working Text"}</h4>
             <div class="detail-note">This is the author's writable surface. It may stay aligned with the generated draft or intentionally diverge from it.</div>
           </div>
-          <span class="pill ${section.has_manual_edits ? "author_choice" : "probable"}">${escapeHtml(manualMode)}</span>
+          <span class="pill ${section.has_manual_edits ? "author_choice" : "probable"}">${escapeHtml(renderBibleManualState(section))}</span>
         </div>
         <div class="trust-callout ${section.has_manual_edits ? "trust-callout-manual" : "trust-callout-neutral"}">${escapeHtml(manualCallout)}</div>
         <form data-form="bible-section-edit">
@@ -2106,7 +2119,7 @@
           </div>
           <div class="toolbar">
             <button class="primary-button" type="submit">Save edits</button>
-            <span class="helper">${section.has_manual_edits ? "Manual edits are preserved even when the generated draft refreshes." : "Saving here creates an explicit manual override."}</span>
+            <span class="helper">${section.has_manual_edits ? `Manual edits are preserved even when the generated draft refreshes. Current state: ${renderBibleManualState(section)}.` : "Saving here creates an explicit manual override."}</span>
           </div>
         </form>
       </section>
@@ -2124,6 +2137,13 @@
       <div class="field">
         <label>Coverage and trust</label>
         <div class="warning-list">
+          <div class="mini">
+            <div class="toolbar">
+              <strong>Section readiness</strong>
+              <span class="pill ${escapeHtml(generationTone)}">${escapeHtml(generationLabel)}</span>
+            </div>
+            <div class="detail-note">${escapeHtml(renderBibleGenerationSummary(section))}</div>
+          </div>
           ${section.composition_metrics?.thin_section ? `<div class="warning">Thin section warning: ${escapeHtml(renderBibleCompositionSummary(section.composition_metrics || {}))}</div>` : ""}
           ${(section.composition_metrics?.skipped_beat_ids || []).map((beatId, index) => `<div class="warning">${escapeHtml(renderBibleBeatLabel(beatId))}: ${escapeHtml(section.composition_metrics?.skipped_reasons?.[index] || "skipped")}</div>`).join("")}
           ${(section.coverage_gaps || []).map((item) => `<div class="warning">${escapeHtml(item)}</div>`).join("") || "<div class='helper'>No coverage gaps recorded.</div>"}
@@ -2186,10 +2206,51 @@
     return `${produced}/${target} beats produced · claim density ${claimDensity.toFixed(1)} · evidence density ${evidenceDensity.toFixed(1)} · ${contradiction}`;
   }
 
+  function renderBibleGenerationTone(status) {
+    if (status === "ready") return "verified";
+    if (status === "thin") return "contested";
+    if (status === "failed") return "failed";
+    return "queued";
+  }
+
+  function renderBibleGenerationLabel(section) {
+    const status = section?.generation_status || "queued";
+    if (status === "ready") return "writer-ready";
+    if (status === "thin") return "thin baseline";
+    if (status === "failed") return "generation failed";
+    return "generation queued";
+  }
+
+  function renderBibleGenerationSummary(section) {
+    const status = section?.generation_status || "queued";
+    if (status === "ready") {
+      return `${section.references?.claim_ids?.length || 0} linked claims with a usable generated baseline.`;
+    }
+    if (status === "thin") {
+      return section.generation_error || section.coverage_analysis?.diagnostic_summary || "Generated baseline is still too thin for dependable drafting.";
+    }
+    if (status === "failed") {
+      return section.generation_error || section.latest_job?.error_detail || "The latest generation attempt failed.";
+    }
+    return "Generation is queued or waiting on the latest background job.";
+  }
+
+  function renderBibleManualState(section) {
+    if (!section?.has_manual_edits) {
+      return "manual layer not started";
+    }
+    const generated = (section.generated_markdown || "").trim();
+    const manual = (section.manual_markdown || section.content || "").trim();
+    if (!generated) {
+      return "manual text only";
+    }
+    return generated === manual ? "manual matches generated" : "manual diverges from generated";
+  }
+
   function renderBibleGeneratedParagraphCards(section) {
-    const paragraphs = section.paragraphs || [];
+    const paragraphs = (section.paragraphs || []).filter((paragraph) => (paragraph.claim_ids || []).length);
     if (!paragraphs.length) {
-      return "<div class='helper'>No generated paragraphs yet.</div>";
+      return "<div class='helper'>No claim-backed generated paragraphs are available for provenance yet.</div>";
     }
     return `
       <div class="paragraph-grid">
@@ -2212,9 +2273,9 @@
   }
 
   function renderBibleGeneratedReadingView(section) {
-    const paragraphs = section.paragraphs || [];
+    const paragraphs = (section.paragraphs || []).filter((paragraph) => (paragraph.claim_ids || []).length);
     if (!paragraphs.length) {
-      return "<div class='helper'>No generated reading view yet.</div>";
+      return "<div class='helper'>No claim-backed generated reading view is available yet.</div>";
     }
     return `
       <div class="linked-draft">
@@ -2236,6 +2297,9 @@
 
   function renderBibleParagraphProvenance(selectedParagraph, provenance) {
     const paragraph = selectedParagraph.paragraph || {};
+    if (!(paragraph.claim_ids || []).length) {
+      return "<div class='helper'>This generated placeholder has no linked claims yet, so provenance cannot justify it as a drafting baseline.</div>";
+    }
     const scopeTone =
       selectedParagraph.provenance_scope === "author_guidance"
         ? "author_choice"
@@ -2397,13 +2461,14 @@
         }
         return true;
       });
-      const weak = !section || section.composition_metrics?.thin_section || (section.coverage_gaps || []).length;
+      const status = section?.generation_status || (!section ? "queued" : "thin");
+      const weak = !section || status !== "ready";
       return {
         label,
-        tone: weak ? "contested" : "verified",
-        summary: weak ? "thin" : "strong",
+        tone: section ? renderBibleGenerationTone(status) : "queued",
+        summary: section ? status.replaceAll("_", " ") : "missing",
         detail: section
-          ? `${section.references.claim_ids.length} claims tracked${section.coverage_analysis?.diagnostic_summary ? ` · ${section.coverage_analysis.diagnostic_summary}` : section.coverage_gaps?.length ? ` · ${section.coverage_gaps[0]}` : ""}${section.latest_job ? ` · ${renderJobSummary(section.latest_job)}` : ""}`
+          ? `${section.references.claim_ids.length} claims tracked · ${renderBibleGenerationSummary(section)}${section.latest_job ? ` · ${renderJobSummary(section.latest_job)}` : ""}`
           : `No saved section yet. ${matchingClaims.length} claims could support this area for ${profile?.project_name || "the current project"}.`,
       };
     });

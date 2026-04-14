@@ -49,6 +49,13 @@ class BibleSectionType(StrEnum):
     AUTHOR_DECISIONS = "author_decisions"
 
 
+class BibleSectionGenerationStatus(StrEnum):
+    QUEUED = "queued"
+    FAILED = "failed"
+    THIN = "thin"
+    READY = "ready"
+
+
 class BibleTone(StrEnum):
     DOCUMENTARY = "documentary"
     GROUNDED_LITERARY = "grounded_literary"

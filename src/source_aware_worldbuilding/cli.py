@@ -1330,7 +1330,6 @@ def _seed_sections(data_dir: Path, profile: BibleProjectProfile) -> list[BibleSe
         place="Rouen",
         time_start=profile.time_start,
         time_end=profile.time_end,
-        relationship_types=["supports"],
     )
     economics_draft = service._compose_section(
         profile.project_id,
@@ -1360,8 +1359,6 @@ def _seed_sections(data_dir: Path, profile: BibleProjectProfile) -> list[BibleSe
     author_filters = BibleSectionFilters(
         focus="narrative defaults for queues, cold weather, and shrine atmosphere",
         place="Rouen",
-        time_start=profile.time_start,
-        time_end=profile.time_end,
     )
     author_draft = service._compose_section(
         profile.project_id,
@@ -1396,6 +1393,11 @@ def _seed_sections(data_dir: Path, profile: BibleProjectProfile) -> list[BibleSe
             contradiction_flags=economics_draft.contradiction_flags,
             recommended_next_research=economics_draft.recommended_next_research,
             coverage_analysis=economics_draft.coverage_analysis,
+            retrieval_metadata=economics_draft.retrieval_metadata,
+            composition_metrics=economics_draft.composition_metrics,
+            generation_status=economics_draft.generation_status,
+            generation_error=economics_draft.generation_error,
+            ready_for_writer=economics_draft.ready_for_writer,
             has_manual_edits=False,
             created_at="2026-04-12T12:20:00+00:00",
             updated_at="2026-04-12T12:20:00+00:00",
@@ -1417,6 +1419,11 @@ def _seed_sections(data_dir: Path, profile: BibleProjectProfile) -> list[BibleSe
             contradiction_flags=rumor_draft.contradiction_flags,
             recommended_next_research=rumor_draft.recommended_next_research,
             coverage_analysis=rumor_draft.coverage_analysis,
+            retrieval_metadata=rumor_draft.retrieval_metadata,
+            composition_metrics=rumor_draft.composition_metrics,
+            generation_status=rumor_draft.generation_status,
+            generation_error=rumor_draft.generation_error,
+            ready_for_writer=False,
             has_manual_edits=True,
             created_at="2026-04-12T12:45:00+00:00",
             updated_at="2026-04-12T13:15:00+00:00",
@@ -1439,6 +1446,10 @@ def _seed_sections(data_dir: Path, profile: BibleProjectProfile) -> list[BibleSe
             recommended_next_research=author_draft.recommended_next_research,
             coverage_analysis=author_draft.coverage_analysis,
             retrieval_metadata=author_draft.retrieval_metadata,
+            composition_metrics=author_draft.composition_metrics,
+            generation_status=author_draft.generation_status,
+            generation_error=author_draft.generation_error,
+            ready_for_writer=author_draft.ready_for_writer,
             has_manual_edits=False,
             created_at="2026-04-12T13:05:00+00:00",
             updated_at="2026-04-12T13:05:00+00:00",

@@ -68,6 +68,12 @@ class JobService:
             if job.status not in {JobStatus.COMPLETED, JobStatus.PARTIAL}:
                 continue
             if isinstance(job.result_payload, dict):
+                sections = job.result_payload.get("sections")
+                if isinstance(sections, list) and any(
+                    isinstance(section, dict) and "generation_status" not in section
+                    for section in sections
+                ):
+                    continue
                 return job.result_payload
         return None
 
@@ -160,6 +166,7 @@ class JobService:
     ) -> JobRecord:
         if self.bible_service.get_section(section_id) is None:
             raise ValueError("Bible section not found.")
+        self.bible_service.mark_section_queued(section_id)
         payload = {"section_id": section_id}
         if request is not None:
             payload["request"] = request.model_dump(mode="json")
@@ -296,8 +303,10 @@ class JobService:
                 )
             self._mark_completed(job)
         except _JobCancellationRequested as exc:
+            self._mark_bible_section_failed(job, str(exc))
             self._mark_cancelled(job, str(exc))
         except Exception as exc:
+            self._mark_bible_section_failed(job, str(exc))
             self._mark_failed(job, exc)
         self.job_store.update_job(job)
 
@@ -397,6 +406,15 @@ class JobService:
             self.job_store.update_job(job)
 
         return _inner
+
+    def _mark_bible_section_failed(self, job: JobRecord, error: str) -> None:
+        section_id = job.result_ref.section_id or job.payload.get("section_id")
+        if not isinstance(section_id, str) or not section_id:
+            return
+        try:
+            self.bible_service.mark_section_failed(section_id, error)
+        except ValueError:
+            return
 
 
 class _JobCancellationRequested(RuntimeError):

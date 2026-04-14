@@ -6,7 +6,12 @@ from dataclasses import dataclass, field
 from hashlib import sha1
 from uuid import uuid4
 
-from source_aware_worldbuilding.domain.enums import BibleSectionType, ClaimKind, ClaimStatus
+from source_aware_worldbuilding.domain.enums import (
+    BibleSectionGenerationStatus,
+    BibleSectionType,
+    ClaimKind,
+    ClaimStatus,
+)
 from source_aware_worldbuilding.domain.models import (
     ApprovedClaim,
     BibleCoverageAnalysis,
@@ -121,7 +126,12 @@ class BibleWorkspaceService:
         BibleSectionType.DAILY_LIFE: {ClaimKind.PRACTICE, ClaimKind.OBJECT, ClaimKind.BELIEF},
         BibleSectionType.INSTITUTIONS_AND_POLITICS: {ClaimKind.INSTITUTION, ClaimKind.RELATIONSHIP},
         BibleSectionType.ECONOMICS_AND_MATERIAL_CULTURE: {ClaimKind.PRACTICE, ClaimKind.OBJECT},
-        BibleSectionType.RUMORS_AND_CONTESTED: {ClaimKind.BELIEF, ClaimKind.EVENT, ClaimKind.PLACE},
+        BibleSectionType.RUMORS_AND_CONTESTED: {
+            ClaimKind.BELIEF,
+            ClaimKind.EVENT,
+            ClaimKind.PLACE,
+            ClaimKind.INSTITUTION,
+        },
         BibleSectionType.AUTHOR_DECISIONS: {
             ClaimKind.PLACE,
             ClaimKind.PERSON,
@@ -283,10 +293,14 @@ class BibleWorkspaceService:
         return profile
 
     def list_sections(self, project_id: str) -> list[BibleSection]:
-        return self.section_store.list_sections(project_id=project_id)
+        sections = self.section_store.list_sections(project_id=project_id)
+        return [self._normalized_section(item) for item in sections]
 
     def get_section(self, section_id: str) -> BibleSection | None:
-        return self.section_store.get_section(section_id)
+        section = self.section_store.get_section(section_id)
+        if section is None:
+            return None
+        return self._normalized_section(section)
 
     def get_section_provenance(self, section_id: str) -> BibleSectionProvenanceDetail | None:
         section = self.get_section(section_id)
@@ -375,10 +389,60 @@ class BibleWorkspaceService:
             content="Composition queued.",
             generated_markdown="",
             generation_filters=request.filters,
+            generation_status=BibleSectionGenerationStatus.QUEUED,
+            generation_error=None,
+            ready_for_writer=False,
             created_at=now,
             updated_at=now,
         )
         self.section_store.save_section(section)
+        return section
+
+    def mark_section_queued(self, section_id: str) -> BibleSection:
+        section = self.section_store.get_section(section_id)
+        if section is None:
+            raise ValueError("Bible section not found.")
+        section.generation_status = BibleSectionGenerationStatus.QUEUED
+        section.generation_error = None
+        section.ready_for_writer = False
+        section.updated_at = utc_now()
+        self.section_store.save_section(section)
+        return section
+
+    def mark_section_failed(self, section_id: str, error: str) -> BibleSection:
+        section = self.section_store.get_section(section_id)
+        if section is None:
+            raise ValueError("Bible section not found.")
+        section.generation_status = BibleSectionGenerationStatus.FAILED
+        section.generation_error = error
+        section.ready_for_writer = False
+        section.updated_at = utc_now()
+        self.section_store.save_section(section)
+        return section
+
+    def mark_section_ready_state(self, section: BibleSection) -> BibleSection:
+        section.generation_status = self._generation_status_for(
+            section.references.claim_ids,
+            section.paragraphs,
+            section.composition_metrics,
+        )
+        section.generation_error = None
+        section.ready_for_writer = section.generation_status == BibleSectionGenerationStatus.READY
+        return section
+
+    def _normalized_section(self, section: BibleSection) -> BibleSection:
+        if (
+            section.generation_status == BibleSectionGenerationStatus.FAILED
+            and section.generation_error
+        ):
+            section.ready_for_writer = False
+            return section
+        if section.generated_markdown or section.paragraphs or section.last_generated_at:
+            return self.mark_section_ready_state(section)
+        if section.generation_status != BibleSectionGenerationStatus.QUEUED:
+            section.ready_for_writer = (
+                section.generation_status == BibleSectionGenerationStatus.READY
+            )
         return section
 
     def compose_prepared_section(self, section_id: str) -> BibleSection:
@@ -400,6 +464,9 @@ class BibleWorkspaceService:
         section.coverage_analysis = draft.coverage_analysis
         section.retrieval_metadata = draft.retrieval_metadata
         section.composition_metrics = draft.composition_metrics
+        section.generation_status = draft.generation_status
+        section.generation_error = draft.generation_error
+        section.ready_for_writer = draft.ready_for_writer
         if not section.has_manual_edits:
             section.content = draft.generated_markdown
         section.updated_at = now
@@ -448,6 +515,9 @@ class BibleWorkspaceService:
         section.coverage_analysis = draft.coverage_analysis
         section.retrieval_metadata = draft.retrieval_metadata
         section.composition_metrics = draft.composition_metrics
+        section.generation_status = draft.generation_status
+        section.generation_error = draft.generation_error
+        section.ready_for_writer = draft.ready_for_writer
         section.updated_at = now
         section.last_generated_at = now
         self.section_store.save_section(section)
@@ -460,7 +530,10 @@ class BibleWorkspaceService:
         return BibleProjectExportResponse(
             profile=profile,
             sections=sorted(
-                self.section_store.list_sections(project_id=project_id),
+                [
+                    self.mark_section_ready_state(item)
+                    for item in self.section_store.list_sections(project_id=project_id)
+                ],
                 key=lambda item: (item.section_type.value, item.title.lower()),
             ),
         )
@@ -524,6 +597,11 @@ class BibleWorkspaceService:
             recommended_next_research,
             retrieval_metadata,
         )
+        generation_status = self._generation_status_for(
+            references.claim_ids,
+            paragraphs,
+            composition_metrics,
+        )
         return BibleSectionDraft(
             section_type=section_type,
             title=title,
@@ -537,6 +615,9 @@ class BibleWorkspaceService:
             coverage_analysis=coverage_analysis,
             retrieval_metadata=retrieval_metadata,
             composition_metrics=composition_metrics,
+            generation_status=generation_status,
+            generation_error=None,
+            ready_for_writer=generation_status == BibleSectionGenerationStatus.READY,
         )
 
     def _select_claims(
@@ -546,6 +627,8 @@ class BibleWorkspaceService:
         profile: BibleProjectProfile | None,
     ) -> tuple[list[ApprovedClaim], dict[str, object]]:
         claims = list(self.truth_store.list_claims())
+        skip_profile_time_defaults = section_type == BibleSectionType.AUTHOR_DECISIONS
+        skip_source_filter = section_type == BibleSectionType.AUTHOR_DECISIONS
         allowed_kinds = self._SECTION_KINDS[section_type]
         if section_type != BibleSectionType.AUTHOR_DECISIONS:
             claims = [claim for claim in claims if claim.claim_kind in allowed_kinds]
@@ -576,38 +659,40 @@ class BibleWorkspaceService:
             claims = [claim for claim in claims if claim.place in {None, "", profile.geography}]
         if filters.viewpoint_scope:
             claims = [claim for claim in claims if claim.viewpoint_scope == filters.viewpoint_scope]
-        if filters.time_start:
+        if filters.time_start and not skip_profile_time_defaults:
             claims = [
                 claim
                 for claim in claims
                 if not claim.time_end or claim.time_end >= filters.time_start
             ]
-        elif profile and profile.time_start:
+        elif profile and profile.time_start and not skip_profile_time_defaults:
             claims = [
                 claim
                 for claim in claims
                 if not claim.time_end or claim.time_end >= profile.time_start
             ]
-        if filters.time_end:
+        if filters.time_end and not skip_profile_time_defaults:
             claims = [
                 claim
                 for claim in claims
                 if not claim.time_start or claim.time_start <= filters.time_end
             ]
-        elif profile and profile.time_end:
+        elif profile and profile.time_end and not skip_profile_time_defaults:
             claims = [
                 claim
                 for claim in claims
                 if not claim.time_start or claim.time_start <= profile.time_end
             ]
-        if filters.relationship_types:
+        if filters.relationship_types and section_type != BibleSectionType.RUMORS_AND_CONTESTED:
             allowed_relationship_claim_ids = {
                 item.claim_id
                 for item in self.truth_store.list_relationships()
                 if item.relationship_type in filters.relationship_types
             }
             claims = [claim for claim in claims if claim.claim_id in allowed_relationship_claim_ids]
-        if filters.source_types or (profile and profile.composition_defaults.source_types):
+        if not skip_source_filter and (
+            filters.source_types or (profile and profile.composition_defaults.source_types)
+        ):
             source_types = set(filters.source_types or profile.composition_defaults.source_types)
             evidence_by_id = self._evidence_index(claims)
             source_by_id = self._source_index(evidence_by_id.values())
@@ -850,20 +935,42 @@ class BibleWorkspaceService:
             )
         ]
         skipped_beat_ids = [beat for beat in beats if beat not in produced_beats]
-        paragraph_count = len(paragraphs) or 1
+        useful_paragraphs = [
+            paragraph for paragraph in paragraphs if paragraph.paragraph_kind != "empty_state"
+        ]
+        paragraph_count = len(useful_paragraphs) or len(paragraphs) or 1
+        distinct_claim_ids = {
+            claim_id for paragraph in useful_paragraphs for claim_id in paragraph.claim_ids
+        }
         metrics = BibleSectionCompositionMetrics(
-            thin_section=len(paragraphs) <= 1,
+            thin_section=(
+                not useful_paragraphs
+                or len(produced_beats) <= 0
+                or (
+                    section_type != BibleSectionType.AUTHOR_DECISIONS
+                    and (
+                        len(useful_paragraphs) <= 1
+                        or len(distinct_claim_ids) < min(2, len(useful_paragraphs))
+                    )
+                )
+            ),
             target_beats=len(beats),
             produced_beats=len(produced_beats),
             skipped_beat_ids=skipped_beat_ids,
             skipped_reasons=[
                 f"No paragraph produced for beat '{beat}'." for beat in skipped_beat_ids
             ],
-            claim_density=sum(len(paragraph.claim_ids) for paragraph in paragraphs)
+            claim_density=sum(
+                len(paragraph.claim_ids) for paragraph in useful_paragraphs or paragraphs
+            )
             / paragraph_count,
-            evidence_density=sum(len(paragraph.evidence_ids) for paragraph in paragraphs)
+            evidence_density=sum(
+                len(paragraph.evidence_ids) for paragraph in useful_paragraphs or paragraphs
+            )
             / paragraph_count,
-            contradiction_presence=any(paragraph.contradiction_flags for paragraph in paragraphs),
+            contradiction_presence=any(
+                paragraph.contradiction_flags for paragraph in useful_paragraphs or paragraphs
+            ),
         )
         return paragraphs, metrics
 
@@ -2138,7 +2245,8 @@ class BibleWorkspaceService:
                     ),
                 )
             )
-        if trade_claims or material_claims:
+        combined = self._dedupe_claims(trade_claims + material_claims)
+        if len(combined) >= 2 and (trade_claims and material_claims):
             combined = trade_claims + material_claims
             paragraphs.append(
                 self._paragraph_from_claim_group(
@@ -2247,22 +2355,59 @@ class BibleWorkspaceService:
         return paragraphs
 
     def _author_decision_paragraphs(self, claims, evidence_by_id, source_by_id, relationships):
-        return [
-            self._paragraph_from_claim_group(
-                heading=claim.subject,
-                kind="author_guidance",
-                claims=[claim],
-                evidence_by_id=evidence_by_id,
-                source_by_id=source_by_id,
-                relationships=relationships,
-                text=(
-                    f"Author choice: depict {claim.subject} as {claim.value}. "
-                    "Keep it available for drafting decisions, but do not present "
-                    "it as settled canon in strict-fact outputs."
-                ),
+        paragraphs: list[BibleSectionParagraph] = []
+        for claim in claims:
+            paragraphs.append(
+                self._paragraph_from_claim_group(
+                    heading=claim.subject,
+                    kind="author_guidance",
+                    claims=[claim],
+                    evidence_by_id=evidence_by_id,
+                    source_by_id=source_by_id,
+                    relationships=relationships,
+                    text=self._compose_notebook_paragraph(
+                        lead=f"Drafting default: depict {claim.subject} as {claim.value}.",
+                        development=(
+                            f"Rationale: {claim.notes}." if claim.notes else ""
+                        ),
+                        anchor=self._author_decision_context_sentence(claim),
+                        uncertainty=(
+                            "Keep this in the author-decisions lane rather than presenting it "
+                            "as settled canon in strict-fact outputs."
+                        ),
+                    ),
+                )
             )
-            for claim in claims
+        return paragraphs
+
+    def _author_decision_context_sentence(self, decision: ApprovedClaim) -> str:
+        related = [
+            claim
+            for claim in self.truth_store.list_claims()
+            if claim.claim_id != decision.claim_id
+            and claim.status in {ClaimStatus.VERIFIED, ClaimStatus.PROBABLE}
+            and (
+                claim.place == decision.place
+                or claim.subject == decision.subject
+                or self._normalize_text(decision.value)
+                and any(
+                    token in self._normalize_text(
+                        " ".join(
+                            fragment or ""
+                            for fragment in [claim.subject, claim.value, claim.notes]
+                        )
+                    )
+                    for token in self._focus_tokens(decision.value)
+                )
+            )
         ]
+        if not related:
+            return ""
+        return (
+            "Nearby canon context to keep in view: "
+            + self._join_claim_notes(related[:2], limit=2)
+            + "."
+        )
 
     def _grouped_summary_paragraphs(
         self, claims, evidence_by_id, source_by_id, relationships, section_type
@@ -2865,6 +3010,25 @@ class BibleWorkspaceService:
             lines.extend([f"- {item}" for item in recommended_next_research])
         return "\n".join(lines).strip()
 
+    def _generation_status_for(
+        self,
+        referenced_claim_ids: list[str],
+        paragraphs: list[BibleSectionParagraph],
+        metrics: BibleSectionCompositionMetrics,
+    ) -> BibleSectionGenerationStatus:
+        useful_paragraphs = [
+            paragraph for paragraph in paragraphs if paragraph.paragraph_kind != "empty_state"
+        ]
+        if not useful_paragraphs or not referenced_claim_ids:
+            return BibleSectionGenerationStatus.THIN
+        if (
+            metrics.thin_section
+            or metrics.produced_beats <= 0
+            or any(not paragraph.claim_ids for paragraph in useful_paragraphs)
+        ):
+            return BibleSectionGenerationStatus.THIN
+        return BibleSectionGenerationStatus.READY
+
     def _coverage_analysis(
         self,
         section_type: BibleSectionType,
@@ -2905,6 +3069,18 @@ class BibleWorkspaceService:
             claim.time_start for claim in claims
         )
         certainty_mix = dict(Counter(claim.status.value for claim in claims))
+        if not claims:
+            diagnostic_summary = (
+                f"No approved canon supports {self._SECTION_TITLES[section_type].lower()} yet."
+            )
+        else:
+            diagnostic_summary = self._coverage_summary_sentence(
+                covered_facets=covered_facets,
+                missing_facets=missing_facets,
+                missing_named_actors=missing_named_actors,
+                missing_material_detail=missing_material_detail,
+                missing_dated_anchors=missing_dated_anchors,
+            )
         return BibleCoverageAnalysis(
             desired_facets=desired_facets,
             facet_distribution={
@@ -2918,13 +3094,7 @@ class BibleWorkspaceService:
             missing_named_actors=missing_named_actors,
             missing_material_detail=missing_material_detail,
             missing_dated_anchors=missing_dated_anchors,
-            diagnostic_summary=self._coverage_summary_sentence(
-                covered_facets=covered_facets,
-                missing_facets=missing_facets,
-                missing_named_actors=missing_named_actors,
-                missing_material_detail=missing_material_detail,
-                missing_dated_anchors=missing_dated_anchors,
-            ),
+            diagnostic_summary=diagnostic_summary,
         )
 
     def _coverage_gaps(
@@ -2936,8 +3106,12 @@ class BibleWorkspaceService:
         if not claims:
             return [f"No approved canon supports {self._SECTION_TITLES[section_type].lower()} yet."]
         gaps: list[str] = []
-        if not any(
-            claim.status in {ClaimStatus.VERIFIED, ClaimStatus.PROBABLE} for claim in claims
+        if (
+            section_type != BibleSectionType.AUTHOR_DECISIONS
+            and not any(
+                claim.status in {ClaimStatus.VERIFIED, ClaimStatus.PROBABLE}
+                for claim in claims
+            )
         ):
             gaps.append("Section lacks high-certainty claims.")
         if coverage_analysis.missing_facets:
@@ -3015,6 +3189,8 @@ class BibleWorkspaceService:
         section_type: BibleSectionType,
         claims: list[ApprovedClaim],
     ) -> str:
+        if not claims:
+            return "canon_support"
         if section_type == BibleSectionType.AUTHOR_DECISIONS or any(
             claim.status == ClaimStatus.AUTHOR_CHOICE or claim.author_choice for claim in claims
         ):
@@ -3038,6 +3214,11 @@ class BibleWorkspaceService:
             else BibleSectionType.SETTING_OVERVIEW,
             claims,
         )
+        if not claims:
+            return (
+                "This paragraph is an empty generated placeholder because "
+                "no approved canon matched the current section filters."
+            )
         if scope == "author_guidance":
             return (
                 f"This paragraph preserves a deliberate drafting choice tied to "

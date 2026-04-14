@@ -6,6 +6,7 @@ from typing import Literal
 from pydantic import BaseModel, Field, model_validator
 
 from source_aware_worldbuilding.domain.enums import (
+    BibleSectionGenerationStatus,
     BibleSectionType,
     BibleTone,
     ClaimKind,
@@ -493,6 +494,9 @@ class BibleSectionDraft(BaseModel):
     composition_metrics: BibleSectionCompositionMetrics = Field(
         default_factory=BibleSectionCompositionMetrics
     )
+    generation_status: BibleSectionGenerationStatus = BibleSectionGenerationStatus.THIN
+    generation_error: str | None = None
+    ready_for_writer: bool = False
 
 
 class BibleSection(BaseModel):
@@ -515,6 +519,9 @@ class BibleSection(BaseModel):
     composition_metrics: BibleSectionCompositionMetrics = Field(
         default_factory=BibleSectionCompositionMetrics
     )
+    generation_status: BibleSectionGenerationStatus = BibleSectionGenerationStatus.QUEUED
+    generation_error: str | None = None
+    ready_for_writer: bool = False
     has_manual_edits: bool = False
     latest_job: JobSummary | None = None
     created_at: str = Field(default_factory=utc_now)

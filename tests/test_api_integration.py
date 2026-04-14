@@ -340,7 +340,7 @@ def test_lore_packet_export_route_returns_markdown_packet(temp_data_dir) -> None
     body = response.json()
     assert body["project_name"] == "greyport"
     assert [item["filename"] for item in body["files"]] == ["basic-lore.md", "timeline.md"]
-    assert body["metadata"]["claim_count"] == 5
+    assert body["metadata"]["claim_count"] == 4
     assert "Basic Lore" in body["files"][0]["content"]
     assert "Timeline" in body["files"][1]["content"]
 

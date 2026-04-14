@@ -10,6 +10,7 @@ from source_aware_worldbuilding.adapters.file_backed import (
     FileTruthStore,
 )
 from source_aware_worldbuilding.domain.enums import (
+    BibleSectionGenerationStatus,
     BibleSectionType,
     BibleTone,
     ClaimKind,
@@ -164,6 +165,8 @@ def test_bible_workspace_creates_sections_with_provenance_and_guidance(temp_data
     assert section.composition_metrics.target_beats >= 1
     assert section.coverage_analysis.diagnostic_summary
     assert isinstance(section.recommended_next_research, list)
+    assert section.generation_status == BibleSectionGenerationStatus.THIN
+    assert section.ready_for_writer is False
 
 
 def test_bible_workspace_preserves_manual_edits_when_regenerated(temp_data_dir: Path) -> None:
@@ -198,6 +201,8 @@ def test_bible_workspace_preserves_manual_edits_when_regenerated(temp_data_dir: 
     assert regenerated.content.endswith("Author note: keep this eerie but unconfirmed.")
     assert regenerated.generated_markdown != ""
     assert regenerated.manual_markdown is not None
+    assert regenerated.ready_for_writer is False
+    assert regenerated.generation_status == BibleSectionGenerationStatus.THIN
 
 
 def test_bible_workspace_can_export_saved_project(temp_data_dir: Path) -> None:
@@ -219,3 +224,5 @@ def test_bible_workspace_can_export_saved_project(temp_data_dir: Path) -> None:
     assert exported.profile.project_name == "Greyport Bible"
     assert len(exported.sections) == 1
     assert exported.sections[0].section_type == BibleSectionType.AUTHOR_DECISIONS
+    assert exported.sections[0].generation_status == BibleSectionGenerationStatus.READY
+    assert exported.sections[0].ready_for_writer is True

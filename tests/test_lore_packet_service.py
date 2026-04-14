@@ -129,7 +129,7 @@ def test_lore_packet_exports_markdown_files_with_expected_grouping(temp_data_dir
     files = {item.filename: item for item in packet.files}
 
     assert set(files) == {"basic-lore.md", "characters.md", "timeline.md", "notes.md"}
-    assert packet.metadata.claim_count == 5
+    assert packet.metadata.claim_count == 4
     assert packet.metadata.source_count == 4
     assert packet.metadata.evidence_count == 4
 
@@ -150,7 +150,7 @@ def test_lore_packet_exports_markdown_files_with_expected_grouping(temp_data_dir
 
     assert "# Notes" in files["notes.md"].content
     assert "### Rumor" in files["notes.md"].content
-    assert "### Author Choices" in files["notes.md"].content
+    assert "### Author Choices" not in files["notes.md"].content
     assert "## Export Warnings" in files["notes.md"].content
     assert "contradictory" in files["notes.md"].content.lower()
 
