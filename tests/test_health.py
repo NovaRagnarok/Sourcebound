@@ -49,6 +49,7 @@ def test_runtime_health_reports_local_mvp_mode(monkeypatch) -> None:
         for service in body["services"]
     )
     assert any("ZOTERO_LIBRARY_ID" in step for step in body["next_steps"])
+    assert any("QDRANT_ENABLED=true" in step for step in body["next_steps"])
     assert not any("WIKIBASE_API_URL" in step for step in body["next_steps"])
 
 
@@ -144,10 +145,9 @@ def test_runtime_health_marks_qdrant_uninitialized_when_collection_is_missing(mo
     projection = next(service for service in body["services"] if service["name"] == "projection")
     assert projection["mode"] == "qdrant:uninitialized"
     assert projection["ready"] is False
-    assert "fall back to memory ranking" in projection["detail"]
     assert body["overall_status"] == "degraded"
     assert any(
-        "initialize the configured qdrant collection" in step.lower()
+        "saw seed-dev-data" in step.lower()
         for step in body["next_steps"]
     )
 
@@ -169,7 +169,7 @@ def test_runtime_health_reports_needs_setup_when_worker_is_disabled(monkeypatch)
     worker = next(service for service in body["services"] if service["name"] == "job_worker")
     assert worker["ready"] is False
     assert any(
-        "required before reliable authoring" in step.lower()
+        "required for the default newcomer path" in step.lower()
         for step in body["next_steps"]
     )
 
@@ -189,7 +189,7 @@ def test_strict_startup_checks_fail_fast_when_qdrant_is_uninitialized(monkeypatc
         ),
     )
 
-    with pytest.raises(RuntimeError, match="qdrant-rebuild"):
+    with pytest.raises(RuntimeError, match="seed-dev-data"):
         with TestClient(app):
             pass
 
@@ -212,7 +212,7 @@ def test_cli_serve_strict_runtime_checks_fail_fast_when_projection_is_degraded(m
     result = runner.invoke(cli_app, ["serve", "--strict-runtime-checks"])
 
     assert result.exit_code == 1
-    assert "qdrant-rebuild" in result.output
+    assert "seed-dev-data" in result.output
 
 
 def test_cli_zotero_check_reports_missing_configuration(monkeypatch) -> None:
@@ -226,3 +226,23 @@ def test_cli_zotero_check_reports_missing_configuration(monkeypatch) -> None:
     assert '"configured": false' in result.stdout
     assert '"success": false' in result.stdout
     assert '"ZOTERO_LIBRARY_ID"' in result.stdout
+
+
+def test_runtime_health_reports_missing_postgres_dsn_with_fix(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "app_state_backend", "postgres")
+    monkeypatch.setattr(settings, "app_truth_backend", "postgres")
+    monkeypatch.setattr(settings, "app_postgres_dsn", "")
+    monkeypatch.setattr(settings, "graph_rag_enabled", False)
+    monkeypatch.setattr(settings, "qdrant_enabled", False)
+    monkeypatch.setattr(settings, "zotero_library_id", None)
+
+    client = TestClient(app)
+    response = client.get("/health/runtime")
+
+    assert response.status_code == 200
+    body = response.json()
+    app_state = next(service for service in body["services"] if service["name"] == "app_state")
+    truth_store = next(service for service in body["services"] if service["name"] == "truth_store")
+    assert "cp .env.example .env" in app_state["detail"]
+    assert "APP_POSTGRES_DSN" in truth_store["detail"]
+    assert any("docker compose up -d postgres" in step for step in body["next_steps"])

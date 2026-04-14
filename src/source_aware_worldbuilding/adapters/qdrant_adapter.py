@@ -191,8 +191,9 @@ class QdrantProjectionAdapter:
                 None,
                 True,
                 (
-                    "Qdrant projection is optional and disabled; query and composition "
-                    "fall back to memory ranking."
+                    "Qdrant projection is disabled. For the default newcomer path, set "
+                    "QDRANT_ENABLED=true and run `docker compose up -d qdrant`; otherwise "
+                    "query and composition fall back to memory ranking."
                 ),
             )
         try:
@@ -203,8 +204,9 @@ class QdrantProjectionAdapter:
                 None,
                 False,
                 (
-                    "Qdrant client is unavailable, so query and composition fall back "
-                    "to memory ranking."
+                    "Qdrant client is unavailable. Install the qdrant client dependency "
+                    "and start Qdrant with `docker compose up -d qdrant` so query and "
+                    "composition stop falling back to memory ranking."
                 ),
             )
         try:
@@ -214,7 +216,8 @@ class QdrantProjectionAdapter:
                 "qdrant:degraded",
                 False,
                 False,
-                f"Qdrant is configured but not queryable: {exc}",
+                f"Qdrant is configured but not queryable: {exc}. Start it with "
+                "`docker compose up -d qdrant` and verify QDRANT_URL.",
             )
         if not collection_ready:
             return (
@@ -223,7 +226,8 @@ class QdrantProjectionAdapter:
                 False,
                 (
                     f"Qdrant is reachable, but collection '{self.collection}' is not "
-                    "initialized; query and composition fall back to memory ranking."
+                    "initialized. Run `saw seed-dev-data` for the default newcomer path "
+                    "or `saw qdrant-rebuild` to repair the projection manually."
                 ),
             )
         return (

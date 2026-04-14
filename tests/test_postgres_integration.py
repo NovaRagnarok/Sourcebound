@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 from psycopg import connect
 from psycopg.sql import SQL, Identifier
@@ -11,6 +12,8 @@ from source_aware_worldbuilding.api.main import app
 from source_aware_worldbuilding.cli import seed_dev_data
 from source_aware_worldbuilding.domain.enums import ClaimKind, ClaimStatus, ReviewDecision
 from source_aware_worldbuilding.domain.models import ApprovedClaim, EvidenceSnippet, ReviewEvent
+from source_aware_worldbuilding.services.status import build_runtime_status
+from source_aware_worldbuilding.settings import settings
 
 
 def _table_count(dsn: str, schema: str, table_name: str) -> int:
@@ -343,3 +346,40 @@ def test_postgres_truth_store_supports_manual_relationship_curation(
         and item.source_kind == "manual"
         for item in store.list_relationships("claim-a")
     )
+
+
+@pytest.mark.live_qdrant
+def test_postgres_newcomer_path_reaches_ready_operator_ui(
+    postgres_app_state: dict[str, str | Path],
+    live_qdrant_runtime: dict[str, str],
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(settings, "qdrant_enabled", True)
+    monkeypatch.setattr(settings, "research_semantic_enabled", True)
+    monkeypatch.setattr(
+        settings,
+        "qdrant_collection",
+        live_qdrant_runtime["projection_collection"],
+    )
+    monkeypatch.setattr(
+        settings,
+        "research_qdrant_collection",
+        live_qdrant_runtime["research_collection"],
+    )
+
+    seed_dev_data()
+
+    runtime = build_runtime_status()
+    projection = next(service for service in runtime.services if service.name == "projection")
+
+    assert runtime.overall_status == "ready"
+    assert projection.ready is True
+
+    with TestClient(app) as client:
+        operator = client.get("/operator/")
+        assert operator.status_code == 200
+        assert "<!doctype html>" in operator.text.lower()
+
+        workspace_summary = client.get("/v1/workspace/summary")
+        assert workspace_summary.status_code == 200
+        assert workspace_summary.json()["project"]["project_id"] == "project-rouen-winter"

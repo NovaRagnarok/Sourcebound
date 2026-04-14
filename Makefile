@@ -1,4 +1,4 @@
-.PHONY: bootstrap install lint test dev seed status
+.PHONY: bootstrap install lint test dev seed status newcomer-smoke
 
 bootstrap:
 	python3 -m venv .venv
@@ -24,3 +24,6 @@ status:
 
 dev:
 	.venv/bin/saw serve --reload
+
+newcomer-smoke: bootstrap
+	./scripts/newcomer_smoke.sh

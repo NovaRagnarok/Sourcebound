@@ -1735,6 +1735,41 @@ def _rebuild_qdrant_projection() -> dict[str, object]:
     }
 
 
+def _ensure_seed_prerequisites() -> dict[str, object] | None:
+    if settings.app_state_backend == "postgres" or settings.app_truth_backend == "postgres":
+        if not settings.app_postgres_dsn:
+            raise RuntimeError(
+                "APP_POSTGRES_DSN is required for the default Postgres newcomer path. "
+                "Run `cp .env.example .env` or set "
+                "`APP_POSTGRES_DSN=postgresql://saw:saw@localhost:5432/saw`."
+            )
+        try:
+            with connect(
+                settings.app_postgres_dsn,
+                connect_timeout=2,
+                autocommit=True,
+            ) as connection:
+                connection.execute("SELECT 1")
+        except Exception as exc:
+            raise RuntimeError(
+                "Postgres connection failed before seeding: "
+                f"{exc}. Start it with `docker compose up -d postgres` and verify "
+                f"`APP_POSTGRES_DSN={settings.app_postgres_dsn}`."
+            ) from exc
+
+    if not settings.qdrant_enabled and not settings.research_semantic_enabled:
+        return None
+
+    try:
+        return _initialize_qdrant_runtime()
+    except RuntimeError as exc:
+        raise RuntimeError(
+            f"{exc} Start Qdrant with `docker compose up -d qdrant`. "
+            "If you intentionally want a non-default degraded mode, set "
+            "`QDRANT_ENABLED=false` and `RESEARCH_SEMANTIC_ENABLED=false` before seeding."
+        ) from exc
+
+
 @app.command()
 def serve(
     reload: bool = False,
@@ -1804,6 +1839,30 @@ def qdrant_rebuild(json_output: bool = False) -> None:
 
 @app.command()
 def seed_dev_data() -> None:
+    try:
+        qdrant_report, data_dir = _seed_dev_data_impl()
+    except RuntimeError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+
+    print(f"[green]Seeded development data in {data_dir}[/green]")
+    if qdrant_report and qdrant_report.get("qdrant_enabled"):
+        print(
+            f"[green]Qdrant projection ready:[/green] "
+            f"{qdrant_report['projection_collection']} "
+            f"with {qdrant_report['claim_count']} claims and {qdrant_report['evidence_count']} "
+            "evidence snippets."
+        )
+    if qdrant_report and qdrant_report.get("research_semantic_enabled"):
+        print(
+            f"[green]Research semantic collection ready:[/green] "
+            f"{qdrant_report['research_collection']} "
+            f"(created={'yes' if qdrant_report['research_created'] else 'no'})"
+        )
+
+
+def _seed_dev_data_impl() -> tuple[dict[str, object] | None, Path]:
+    qdrant_init_report = _ensure_seed_prerequisites()
     data_dir = settings.app_data_dir
     sources = _seed_sources()
     source_documents = _seed_source_documents()
@@ -1989,7 +2048,13 @@ def seed_dev_data() -> None:
                 source_kind=relationship.source_kind,
             )
 
-    print(f"[green]Seeded development data in {data_dir}[/green]")
+    qdrant_report: dict[str, object] | None = None
+    if qdrant_init_report:
+        qdrant_report = dict(qdrant_init_report)
+        if settings.qdrant_enabled:
+            qdrant_report.update(_rebuild_qdrant_projection())
+
+    return qdrant_report, data_dir
 
 
 def _reset_postgres_schema() -> None:

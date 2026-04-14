@@ -25,17 +25,26 @@ If you want the fastest newcomer path against the default local stack:
 
 ```bash
 make bootstrap
-cp .env.example .env
 docker compose up -d postgres qdrant
+.venv/bin/saw status
 .venv/bin/saw seed-dev-data
 .venv/bin/saw serve --reload
 ```
 
+Expected result: Postgres is ready, Qdrant is ready, and the seeded sample
+project is visible in the operator UI.
+
 Then open:
 
-- operator view: `http://localhost:8000/operator/`
-- writer workspace: `http://localhost:8000/workspace/`
+- operator view: `http://localhost:8000/operator/` (advanced alias)
+- writer workspace: `http://localhost:8000/workspace/` (writer-first alias)
 - API docs: `http://localhost:8000/docs`
+
+Required for the default path: Python with a local `.venv`, Postgres, and
+Qdrant.
+
+Optional for first run: Zotero, Wikibase, and GraphRAG or other
+LLM-backed extraction.
 
 ## How It Works
 
@@ -91,7 +100,6 @@ make bootstrap
 2. Start the local services:
 
 ```bash
-cp .env.example .env
 docker compose up -d postgres qdrant
 ```
 
@@ -101,15 +109,7 @@ docker compose up -d postgres qdrant
 .venv/bin/saw status
 ```
 
-4. If you want semantic retrieval ready before serving, initialize and backfill
-   Qdrant:
-
-```bash
-.venv/bin/saw qdrant-init
-.venv/bin/saw qdrant-rebuild
-```
-
-5. Seed the sample project and serve the app:
+4. Seed the sample project and serve the app:
 
 ```bash
 .venv/bin/saw seed-dev-data
@@ -117,7 +117,8 @@ docker compose up -d postgres qdrant
 ```
 
 The seed dataset includes a sample project, research run, and Bible sections so
-the UI is useful immediately.
+the UI is useful immediately. After seeding, both `/workspace/` and
+`/operator/` should load against the same sample project.
 
 ## Local Modes
 

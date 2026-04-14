@@ -92,3 +92,78 @@ def test_cli_qdrant_rebuild_backfills_projection_from_truth_store(monkeypatch) -
     assert result.exit_code == 0
     assert '"claim_count": 1' in result.stdout
     assert projection.upserted == ([claim], evidence)
+
+
+def test_cli_seed_dev_data_initializes_and_backfills_qdrant(temp_data_dir, monkeypatch) -> None:
+    monkeypatch.setattr(settings, "qdrant_enabled", True)
+    monkeypatch.setattr(settings, "research_semantic_enabled", True)
+
+    init_calls: list[bool] = []
+    rebuild_calls: list[bool] = []
+
+    def fake_init() -> dict[str, object]:
+        init_calls.append(True)
+        return {
+            "qdrant_enabled": True,
+            "projection_collection": "approved_claims",
+            "projection_created": True,
+            "research_semantic_enabled": True,
+            "research_collection": "research_findings",
+            "research_created": True,
+        }
+
+    def fake_rebuild() -> dict[str, object]:
+        rebuild_calls.append(True)
+        return {
+            "qdrant_enabled": True,
+            "projection_collection": "approved_claims",
+            "projection_created": False,
+            "claim_count": 9,
+            "evidence_count": 10,
+        }
+
+    monkeypatch.setattr("source_aware_worldbuilding.cli._initialize_qdrant_runtime", fake_init)
+    monkeypatch.setattr("source_aware_worldbuilding.cli._rebuild_qdrant_projection", fake_rebuild)
+
+    result = runner.invoke(cli_app, ["seed-dev-data"])
+
+    assert result.exit_code == 0
+    assert init_calls == [True]
+    assert rebuild_calls == [True]
+    assert "Qdrant projection ready" in result.stdout
+
+
+def test_cli_seed_dev_data_fails_fast_when_postgres_is_unavailable(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "app_state_backend", "postgres")
+    monkeypatch.setattr(settings, "app_truth_backend", "postgres")
+    monkeypatch.setattr(settings, "app_postgres_dsn", "postgresql://saw:saw@localhost:5432/saw")
+
+    def fake_connect(*args, **kwargs):
+        raise RuntimeError("connection refused")
+
+    monkeypatch.setattr("source_aware_worldbuilding.cli.connect", fake_connect)
+
+    result = runner.invoke(cli_app, ["seed-dev-data"])
+
+    assert result.exit_code == 1
+    assert "docker compose up -d postgres" in result.output
+    assert "APP_POSTGRES_DSN" in result.output
+
+
+def test_cli_seed_dev_data_fails_fast_when_qdrant_is_unavailable(
+    temp_data_dir,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(settings, "qdrant_enabled", True)
+    monkeypatch.setattr(settings, "research_semantic_enabled", True)
+
+    def fake_init() -> dict[str, object]:
+        raise RuntimeError("Failed to initialize Qdrant collection 'approved_claims': boom")
+
+    monkeypatch.setattr("source_aware_worldbuilding.cli._initialize_qdrant_runtime", fake_init)
+
+    result = runner.invoke(cli_app, ["seed-dev-data"])
+
+    assert result.exit_code == 1
+    assert "docker compose up -d qdrant" in result.output
+    assert "QDRANT_ENABLED=false" in result.output

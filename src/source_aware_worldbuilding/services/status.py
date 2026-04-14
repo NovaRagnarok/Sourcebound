@@ -52,7 +52,8 @@ def enforce_runtime_startup_checks(*, strict_runtime_checks: bool | None = None)
         return
 
     next_step = (
-        "Run `saw qdrant-rebuild` to initialize and backfill the projection."
+        "Run `saw seed-dev-data` for the default newcomer path, or "
+        "`saw qdrant-rebuild` to initialize and backfill the projection manually."
         if mode == "qdrant:uninitialized"
         else "Bring Qdrant online or disable strict startup checks for non-retrieval environments."
     )
@@ -71,7 +72,9 @@ def _state_store_status() -> RuntimeDependencyStatus:
             if configured
             else (
                 None,
-                "APP_POSTGRES_DSN is required for the Postgres state backend.",
+                "APP_POSTGRES_DSN is required for the default Postgres newcomer path. "
+                "Run `cp .env.example .env` or set "
+                "`APP_POSTGRES_DSN=postgresql://saw:saw@localhost:5432/saw`.",
             )
         )
         return RuntimeDependencyStatus(
@@ -125,7 +128,9 @@ def _truth_store_status() -> RuntimeDependencyStatus:
             if configured
             else (
                 None,
-                "APP_POSTGRES_DSN is required for the Postgres truth backend.",
+                "APP_POSTGRES_DSN is required for the default Postgres newcomer path. "
+                "Run `cp .env.example .env` or set "
+                "`APP_POSTGRES_DSN=postgresql://saw:saw@localhost:5432/saw`.",
             )
         )
         return RuntimeDependencyStatus(
@@ -323,13 +328,11 @@ def _overall_status(services: list[RuntimeDependencyStatus]) -> str:
 
 
 def _has_quality_degradation(by_name: dict[str, RuntimeDependencyStatus]) -> bool:
-    if by_name["corpus"].ready is False:
-        return True
     projection = by_name["projection"]
     if projection.mode == "disabled" or projection.ready is False:
         return True
     extraction = by_name["extraction"]
-    if extraction.mode == "heuristic" or extraction.ready is False:
+    if extraction.ready is False:
         return True
     return False
 
@@ -340,56 +343,58 @@ def _next_steps(services: list[RuntimeDependencyStatus]) -> list[str]:
 
     if by_name["corpus"].ready is False:
         steps.append(
-            "Recommended for full-source workflows: set ZOTERO_LIBRARY_ID so intake "
-            "can use a real pilot corpus instead of stub sources."
+            "Optional after first run: set ZOTERO_LIBRARY_ID so intake can use a real "
+            "pilot corpus instead of stub sources."
         )
     if by_name["bible_workspace"].ready is False:
         steps.append(
-            "Required before reliable authoring: choose a writable app-state location "
-            "so Bible profiles, sections, and provenance can persist safely."
+            "Required for the default newcomer path: choose a writable app-state "
+            "location so Bible profiles, sections, and provenance can persist safely."
         )
     if by_name["job_worker"].ready is False:
         steps.append(
-            "Required before reliable authoring: enable APP_JOB_WORKER_ENABLED=true "
+            "Required for the default newcomer path: set APP_JOB_WORKER_ENABLED=true "
             "so research, Bible regeneration, and export jobs run without manual intervention."
         )
     if settings.qdrant_enabled and by_name["projection"].ready is False:
         if by_name["projection"].mode == "qdrant:uninitialized":
             steps.append(
-                "Recommended for retrieval quality: initialize the configured "
-                "Qdrant collection so query and composition stop falling back to "
-                "memory ranking."
+                "Required for the default newcomer path: run `saw seed-dev-data` to "
+                "initialize and backfill Qdrant, or run `saw qdrant-rebuild` if you "
+                "need to repair the projection manually."
             )
         else:
             steps.append(
-                "Recommended for retrieval quality: bring Qdrant online and ensure "
-                "the configured collection is reachable for projection-backed retrieval."
+                "Required for the default newcomer path: run "
+                "`docker compose up -d qdrant` and verify QDRANT_URL so projection-backed "
+                "retrieval is available."
             )
     elif not settings.qdrant_enabled:
         steps.append(
-            "Recommended for retrieval quality: set QDRANT_ENABLED=true and run "
-            "`docker compose up -d qdrant`."
+            "Required for the default newcomer path: set QDRANT_ENABLED=true and run "
+            "`docker compose up -d qdrant`. If you intentionally want a degraded local "
+            "mode, you can leave it disabled."
         )
     if settings.app_truth_backend == "postgres" and by_name["truth_store"].ready is False:
         steps.append(
-            "Required before reliable authoring: configure APP_POSTGRES_DSN so "
-            "Postgres can serve as the canonical approved-claim store."
+            "Required for the default newcomer path: run `docker compose up -d postgres` "
+            "and ensure APP_POSTGRES_DSN points at that database."
         )
     if settings.app_truth_backend == "wikibase" and by_name["truth_store"].ready is False:
         steps.append(
-            "Required before reliable authoring: configure WIKIBASE_API_URL, "
+            "Optional after first run: configure WIKIBASE_API_URL, "
             "WIKIBASE_USERNAME, WIKIBASE_PASSWORD, and "
             "WIKIBASE_PROPERTY_MAP to enable canonical approved-claim reads and writes."
         )
     if by_name["extraction"].mode == "heuristic":
         steps.append(
-            "Recommended for extraction quality: replace or augment the heuristic "
-            "extractor with the real GraphRAG or another richer extraction path."
+            "Optional after first run: enable GraphRAG or another richer extraction "
+            "path if you want higher-quality candidate generation."
         )
     elif by_name["extraction"].ready is False:
         steps.append(
-            "Recommended for extraction quality: install/configure GraphRAG and "
-            "ensure the selected GRAPH_RAG_MODE has a runnable workspace or artifact directory."
+            "Optional after first run: install/configure GraphRAG and ensure the "
+            "selected GRAPH_RAG_MODE has a runnable workspace or artifact directory."
         )
 
     return steps
@@ -401,7 +406,12 @@ def _probe_postgres(dsn: str) -> tuple[bool, str]:
             connection.execute("SELECT 1")
         return True, "Postgres connection succeeded."
     except Exception as exc:
-        return False, f"Postgres connection failed: {exc}"
+        return (
+            False,
+            "Postgres connection failed: "
+            f"{exc}. Start it with `docker compose up -d postgres` and verify "
+            f"`APP_POSTGRES_DSN={dsn}`.",
+        )
 
 
 def _probe_wikibase(api_url: str) -> tuple[bool, str]:

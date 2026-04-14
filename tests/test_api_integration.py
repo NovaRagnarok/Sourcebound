@@ -205,7 +205,10 @@ def test_runtime_health_route_reports_degraded_when_quality_layers_are_missing(m
         service["name"] == "projection" and service["mode"] == "disabled"
         for service in body["services"]
     )
-    assert any("recommended for retrieval quality" in step.lower() for step in body["next_steps"])
+    assert any(
+        "required for the default newcomer path" in step.lower()
+        for step in body["next_steps"]
+    )
 
 
 def test_operator_flow_routes_share_file_backed_state(temp_data_dir) -> None:

@@ -29,6 +29,8 @@ def restore_api_dependency_overrides() -> None:
     original_wikibase_property_map = settings.wikibase_property_map
     original_qdrant_enabled = settings.qdrant_enabled
     original_qdrant_collection = settings.qdrant_collection
+    original_research_semantic_enabled = settings.research_semantic_enabled
+    original_research_qdrant_collection = settings.research_qdrant_collection
     original_graph_rag_enabled = settings.graph_rag_enabled
     original_graph_rag_mode = settings.graph_rag_mode
     original_graph_rag_root = settings.graph_rag_root
@@ -57,6 +59,8 @@ def restore_api_dependency_overrides() -> None:
         settings.wikibase_property_map = original_wikibase_property_map
         settings.qdrant_enabled = original_qdrant_enabled
         settings.qdrant_collection = original_qdrant_collection
+        settings.research_semantic_enabled = original_research_semantic_enabled
+        settings.research_qdrant_collection = original_research_qdrant_collection
         settings.graph_rag_enabled = original_graph_rag_enabled
         settings.graph_rag_mode = original_graph_rag_mode
         settings.graph_rag_root = original_graph_rag_root
@@ -169,3 +173,35 @@ def live_qdrant_collection(monkeypatch: pytest.MonkeyPatch) -> str:
                 client.delete_collection(collection)
         except Exception:
             pass
+
+
+@pytest.fixture
+def live_qdrant_runtime(monkeypatch: pytest.MonkeyPatch) -> dict[str, str]:
+    if not settings.qdrant_url:
+        pytest.skip("Live Qdrant test requires QDRANT_URL.")
+
+    projection_collection = f"sourcebound_projection_{uuid4().hex[:12]}"
+    research_collection = f"sourcebound_research_{uuid4().hex[:12]}"
+    client = QdrantClient(url=settings.qdrant_url, check_compatibility=False)
+    try:
+        client.get_collections()
+    except Exception as exc:
+        pytest.skip(f"Qdrant unavailable at {settings.qdrant_url}: {exc}")
+
+    monkeypatch.setattr(settings, "qdrant_enabled", True)
+    monkeypatch.setattr(settings, "research_semantic_enabled", True)
+    monkeypatch.setattr(settings, "qdrant_collection", projection_collection)
+    monkeypatch.setattr(settings, "research_qdrant_collection", research_collection)
+
+    try:
+        yield {
+            "projection_collection": projection_collection,
+            "research_collection": research_collection,
+        }
+    finally:
+        for collection in (projection_collection, research_collection):
+            try:
+                if client.collection_exists(collection):
+                    client.delete_collection(collection)
+            except Exception:
+                pass
