@@ -24,7 +24,6 @@ from source_aware_worldbuilding.adapters.file_backed import (
     FileResearchFindingStore,
     FileResearchProgramStore,
     FileResearchRunStore,
-    FileReviewStore,
     FileSourceDocumentStore,
     FileSourceStore,
     FileTextUnitStore,
@@ -47,6 +46,7 @@ from source_aware_worldbuilding.adapters.postgres_backed import (
     PostgresTextUnitStore,
     PostgresTruthStore,
 )
+from source_aware_worldbuilding.adapters.qdrant_adapter import QdrantResearchSemanticAdapter
 from source_aware_worldbuilding.adapters.sqlite_backed import (
     SqliteBibleProjectProfileStore,
     SqliteBibleSectionStore,
@@ -62,18 +62,21 @@ from source_aware_worldbuilding.adapters.sqlite_backed import (
     SqliteSourceStore,
     SqliteTextUnitStore,
 )
-from source_aware_worldbuilding.adapters.qdrant_adapter import QdrantResearchSemanticAdapter
 from source_aware_worldbuilding.adapters.web_research_scout import (
     BraveSearchApiProvider,
     DuckDuckGoHtmlSearchProvider,
-    ResearchSearchProviderRegistry,
     ResearchScoutRegistry,
+    ResearchSearchProviderRegistry,
     WebOpenResearchScout,
 )
 from source_aware_worldbuilding.adapters.zotero_adapter import ZoteroCorpusAdapter
 from source_aware_worldbuilding.api.dependencies import (
+    get_evidence_store,
     get_intake_service,
     get_normalization_service,
+    get_projection,
+    get_research_semantic,
+    get_truth_store,
 )
 from source_aware_worldbuilding.domain.enums import (
     BibleSectionType,
@@ -82,9 +85,9 @@ from source_aware_worldbuilding.domain.enums import (
     ClaimStatus,
     ExtractionRunStatus,
     JobStatus,
+    ResearchFetchOutcome,
     ResearchFindingDecision,
     ResearchFindingReason,
-    ResearchFetchOutcome,
     ResearchRunStatus,
     ReviewDecision,
     ReviewState,
@@ -121,9 +124,12 @@ from source_aware_worldbuilding.domain.models import (
 )
 from source_aware_worldbuilding.services.bible import BibleWorkspaceService
 from source_aware_worldbuilding.services.ingestion import IngestionService
-from source_aware_worldbuilding.services.research import ResearchService
-from source_aware_worldbuilding.services.status import build_runtime_status
 from source_aware_worldbuilding.services.normalization import NormalizationService
+from source_aware_worldbuilding.services.research import ResearchService
+from source_aware_worldbuilding.services.status import (
+    build_runtime_status,
+    enforce_runtime_startup_checks,
+)
 from source_aware_worldbuilding.settings import settings
 
 app = typer.Typer(help="Source-Aware Worldbuilding CLI")
@@ -181,7 +187,10 @@ def _seed_sources() -> list[SourceRecord]:
             year="1422",
             source_type="petition",
             locator_hint="petition 3",
-            abstract="Bakers described household bread tokens and ration loaves during the shortage.",
+            abstract=(
+                "Bakers described household bread tokens and ration loaves "
+                "during the shortage."
+            ),
             sync_status="ready_for_extraction",
         ),
         SourceRecord(
@@ -433,16 +442,66 @@ def _seed_source_documents() -> list[SourceDocumentRecord]:
 def _seed_text_units() -> list[TextUnit]:
     documents = {item.document_id: item for item in _seed_source_documents()}
     mapping = [
-        ("txt-price-ledger", "src-price-ledger", documents["doc-price-ledger"].locator, documents["doc-price-ledger"].raw_text),
-        ("txt-bakers-petition", "src-bakers-petition", documents["doc-bakers-petition"].locator, documents["doc-bakers-petition"].raw_text),
-        ("txt-port-roll", "src-port-roll", documents["doc-port-roll"].locator, documents["doc-port-roll"].raw_text),
-        ("txt-council-ordinance", "src-council-ordinance", documents["doc-council-ordinance"].locator, documents["doc-council-ordinance"].raw_text),
-        ("txt-council-addendum", "src-council-addendum", documents["doc-council-addendum"].locator, documents["doc-council-addendum"].raw_text),
-        ("txt-chronicle", "src-chronicle", documents["doc-chronicle"].locator, documents["doc-chronicle"].raw_text),
-        ("txt-abbey-accounts", "src-abbey-accounts", documents["doc-abbey-accounts"].locator, documents["doc-abbey-accounts"].raw_text),
-        ("txt-ballad", "src-ballad", documents["doc-ballad"].locator, documents["doc-ballad"].raw_text),
-        ("txt-research-bread-scrip", "research-source-bread-scrip", documents["research-doc-bread-scrip"].locator, documents["research-doc-bread-scrip"].raw_text),
-        ("txt-research-grain-bell", "research-source-grain-bell", documents["research-doc-grain-bell"].locator, documents["research-doc-grain-bell"].raw_text),
+        (
+            "txt-price-ledger",
+            "src-price-ledger",
+            documents["doc-price-ledger"].locator,
+            documents["doc-price-ledger"].raw_text,
+        ),
+        (
+            "txt-bakers-petition",
+            "src-bakers-petition",
+            documents["doc-bakers-petition"].locator,
+            documents["doc-bakers-petition"].raw_text,
+        ),
+        (
+            "txt-port-roll",
+            "src-port-roll",
+            documents["doc-port-roll"].locator,
+            documents["doc-port-roll"].raw_text,
+        ),
+        (
+            "txt-council-ordinance",
+            "src-council-ordinance",
+            documents["doc-council-ordinance"].locator,
+            documents["doc-council-ordinance"].raw_text,
+        ),
+        (
+            "txt-council-addendum",
+            "src-council-addendum",
+            documents["doc-council-addendum"].locator,
+            documents["doc-council-addendum"].raw_text,
+        ),
+        (
+            "txt-chronicle",
+            "src-chronicle",
+            documents["doc-chronicle"].locator,
+            documents["doc-chronicle"].raw_text,
+        ),
+        (
+            "txt-abbey-accounts",
+            "src-abbey-accounts",
+            documents["doc-abbey-accounts"].locator,
+            documents["doc-abbey-accounts"].raw_text,
+        ),
+        (
+            "txt-ballad",
+            "src-ballad",
+            documents["doc-ballad"].locator,
+            documents["doc-ballad"].raw_text,
+        ),
+        (
+            "txt-research-bread-scrip",
+            "research-source-bread-scrip",
+            documents["research-doc-bread-scrip"].locator,
+            documents["research-doc-bread-scrip"].raw_text,
+        ),
+        (
+            "txt-research-grain-bell",
+            "research-source-grain-bell",
+            documents["research-doc-grain-bell"].locator,
+            documents["research-doc-grain-bell"].raw_text,
+        ),
     ]
     return [
         TextUnit(
@@ -912,7 +971,10 @@ def _seed_relationships() -> list[ClaimRelationship]:
             related_claim_id="claim-bell-prime",
             relationship_type="supersedes",
             source_kind="derived",
-            notes="The addendum is treated as the better operational guide for scenes after mid-January.",
+            notes=(
+                "The addendum is treated as the better operational guide for scenes "
+                "after mid-January."
+            ),
         ),
         ClaimRelationship(
             relationship_id="rel-bell-prime-superseded-by-terce",
@@ -920,7 +982,10 @@ def _seed_relationships() -> list[ClaimRelationship]:
             related_claim_id="claim-bell-terce",
             relationship_type="superseded_by",
             source_kind="derived",
-            notes="The earlier bell hour remains visible for provenance, not as the preferred synthesis.",
+            notes=(
+                "The earlier bell hour remains visible for provenance, not as the "
+                "preferred synthesis."
+            ),
         ),
     ]
 
@@ -1153,8 +1218,14 @@ def _seed_research_findings() -> list[ResearchFinding]:
             published_at="2019-01-01",
             access_date="2026-04-12T10:45:30+00:00",
             locator="essay",
-            snippet_text="A retrospective essay repeated the same token economy detail without adding period-specific texture.",
-            page_excerpt="The retrospective essay repeated the same token economy detail without adding new anchors.",
+            snippet_text=(
+                "A retrospective essay repeated the same token economy detail "
+                "without adding period-specific texture."
+            ),
+            page_excerpt=(
+                "The retrospective essay repeated the same token economy detail "
+                "without adding new anchors."
+            ),
             source_type="essay",
             score=0.54,
             relevance_score=0.68,
@@ -1188,8 +1259,14 @@ def _seed_research_findings() -> list[ResearchFinding]:
             published_at="2015-01-01",
             access_date="2026-04-12T10:45:40+00:00",
             locator="overview",
-            snippet_text="A broad overview mentioned hardship but offered no local Rouen anchors or operational detail.",
-            page_excerpt="The overview was broad, undated for Rouen, and too generic for scene construction.",
+            snippet_text=(
+                "A broad overview mentioned hardship but offered no local Rouen "
+                "anchors or operational detail."
+            ),
+            page_excerpt=(
+                "The overview was broad, undated for Rouen, and too generic for "
+                "scene construction."
+            ),
             source_type="reference",
             score=0.32,
             relevance_score=0.4,
@@ -1263,7 +1340,12 @@ def _seed_sections(data_dir: Path, profile: BibleProjectProfile) -> list[BibleSe
 
     rumor_filters = BibleSectionFilters(
         focus="grain bell disputes, hoarding stories, and eerie shrine gossip",
-        statuses=[ClaimStatus.CONTESTED, ClaimStatus.RUMOR, ClaimStatus.LEGEND, ClaimStatus.PROBABLE],
+        statuses=[
+            ClaimStatus.CONTESTED,
+            ClaimStatus.RUMOR,
+            ClaimStatus.LEGEND,
+            ClaimStatus.PROBABLE,
+        ],
         source_types=["ordinance", "chronicle", "broadside"],
         place="Rouen",
         time_start=profile.time_start,
@@ -1289,9 +1371,11 @@ def _seed_sections(data_dir: Path, profile: BibleProjectProfile) -> list[BibleSe
 
     manual_rumor_text = (
         "# What the City Said vs. What the Ledgers Say\n\n"
-        "The working version for the novel keeps the grain-bell timing dispute visible as public confusion, "
-        "not as a solved footnote. The latest generated synthesis stays below as the evidence-backed baseline.\n\n"
-        "- Treat the prime-versus-terce contradiction as a queue-management problem the characters can feel.\n"
+        "The working version for the novel keeps the grain-bell timing dispute "
+        "visible as public confusion, not as a solved footnote. "
+        "The latest generated synthesis stays below as the evidence-backed baseline.\n\n"
+        "- Treat the prime-versus-terce contradiction as a queue-management "
+        "problem the characters can feel.\n"
         "- Keep merchant-hoarding talk in dialogue and rumor, never in omniscient narration.\n"
         "- Use the blue-lantern shrine story for tone, not confirmation."
     )
@@ -1364,9 +1448,7 @@ def _seed_sections(data_dir: Path, profile: BibleProjectProfile) -> list[BibleSe
 
 
 def _seed_jobs(sections: list[BibleSection], profile: BibleProjectProfile) -> list[JobRecord]:
-    economics_section = next(
-        item for item in sections if item.section_id == _SEED_ECON_SECTION_ID
-    )
+    economics_section = next(item for item in sections if item.section_id == _SEED_ECON_SECTION_ID)
     rumor_section = next(item for item in sections if item.section_id == _SEED_RUMOR_SECTION_ID)
     author_section = next(item for item in sections if item.section_id == _SEED_AUTHOR_SECTION_ID)
     return [
@@ -1576,8 +1658,14 @@ def _mirror_truth_to_postgres(
         if review.approved_claim_id is not None
     }
     for claim in claims:
-        claim_evidence = [evidence_by_id[evidence_id] for evidence_id in claim.evidence_ids if evidence_id in evidence_by_id]
-        truth_store.save_claim(claim, evidence=claim_evidence, review=reviews_by_claim.get(claim.claim_id))
+        claim_evidence = [
+            evidence_by_id[evidence_id]
+            for evidence_id in claim.evidence_ids
+            if evidence_id in evidence_by_id
+        ]
+        truth_store.save_claim(
+            claim, evidence=claim_evidence, review=reviews_by_claim.get(claim.claim_id)
+        )
     for relationship in relationships:
         truth_store.upsert_relationship(
             relationship.claim_id,
@@ -1588,14 +1676,118 @@ def _mirror_truth_to_postgres(
         )
 
 
+def _initialize_qdrant_runtime() -> dict[str, object]:
+    if not settings.qdrant_enabled and not settings.research_semantic_enabled:
+        raise RuntimeError(
+            "Qdrant projection and research semantics are both disabled; enable "
+            "at least one collection before initialization."
+        )
+
+    projection = get_projection()
+    projection_created = projection.initialize_collection() if settings.qdrant_enabled else False
+
+    research_created = False
+    if settings.research_semantic_enabled:
+        research_created = get_research_semantic().initialize_collection()
+
+    return {
+        "qdrant_enabled": settings.qdrant_enabled,
+        "projection_collection": settings.qdrant_collection,
+        "projection_created": projection_created,
+        "research_semantic_enabled": settings.research_semantic_enabled,
+        "research_collection": settings.research_qdrant_collection,
+        "research_created": research_created,
+    }
+
+
+def _rebuild_qdrant_projection() -> dict[str, object]:
+    if not settings.qdrant_enabled:
+        raise RuntimeError(
+            "Qdrant projection is disabled; set QDRANT_ENABLED=true before rebuilding."
+        )
+
+    projection = get_projection()
+    truth_store = get_truth_store()
+    evidence_store = get_evidence_store()
+
+    claims = truth_store.list_claims()
+    evidence = evidence_store.list_evidence()
+    projection_created = projection.initialize_collection()
+    projection.upsert_claims(claims, evidence)
+
+    return {
+        "qdrant_enabled": settings.qdrant_enabled,
+        "projection_collection": settings.qdrant_collection,
+        "projection_created": projection_created,
+        "claim_count": len(claims),
+        "evidence_count": len(evidence),
+    }
+
+
 @app.command()
-def serve(reload: bool = False) -> None:
+def serve(
+    reload: bool = False,
+    strict_runtime_checks: bool = typer.Option(
+        False,
+        "--strict-runtime-checks",
+        help="Refuse to serve when runtime dependencies required for retrieval are degraded.",
+    ),
+) -> None:
+    effective_strict = strict_runtime_checks or settings.app_strict_startup_checks
+    try:
+        enforce_runtime_startup_checks(strict_runtime_checks=effective_strict)
+    except RuntimeError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+
     uvicorn.run(
         "source_aware_worldbuilding.api.main:app",
         host=settings.app_host,
         port=settings.app_port,
         reload=reload,
         factory=False,
+    )
+
+
+@app.command("qdrant-init")
+def qdrant_init(json_output: bool = False) -> None:
+    try:
+        report = _initialize_qdrant_runtime()
+    except RuntimeError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    if json_output:
+        typer.echo(json.dumps(report, indent=2))
+        return
+
+    print(
+        f"[green]Qdrant projection collection ready:[/green] "
+        f"{report['projection_collection']} "
+        f"(created={'yes' if report['projection_created'] else 'no'})"
+    )
+    if report["research_semantic_enabled"]:
+        print(
+            f"[green]Research semantic collection ready:[/green] "
+            f"{report['research_collection']} "
+            f"(created={'yes' if report['research_created'] else 'no'})"
+        )
+
+
+@app.command("qdrant-rebuild")
+def qdrant_rebuild(json_output: bool = False) -> None:
+    try:
+        report = _rebuild_qdrant_projection()
+    except RuntimeError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    if json_output:
+        typer.echo(json.dumps(report, indent=2))
+        return
+
+    print(
+        f"[green]Qdrant projection rebuilt:[/green] {report['projection_collection']} "
+        f"with {report['claim_count']} claims and {report['evidence_count']} evidence snippets "
+        f"(created={'yes' if report['projection_created'] else 'no'})."
     )
 
 
@@ -1770,7 +1962,11 @@ def seed_dev_data() -> None:
         for claim in claims:
             truth_store.save_claim(
                 claim,
-                evidence=[evidence_by_id[evidence_id] for evidence_id in claim.evidence_ids if evidence_id in evidence_by_id],
+                evidence=[
+                    evidence_by_id[evidence_id]
+                    for evidence_id in claim.evidence_ids
+                    if evidence_id in evidence_by_id
+                ],
                 review=reviews_by_claim.get(claim.claim_id),
             )
         for relationship in relationships:
@@ -1788,13 +1984,9 @@ def seed_dev_data() -> None:
 def _reset_postgres_schema() -> None:
     with connect(settings.app_postgres_dsn, autocommit=True) as connection:
         connection.execute(
-            SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(
-                Identifier(settings.app_postgres_schema)
-            )
+            SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(Identifier(settings.app_postgres_schema))
         )
-        connection.execute(
-            SQL("CREATE SCHEMA {}").format(Identifier(settings.app_postgres_schema))
-        )
+        connection.execute(SQL("CREATE SCHEMA {}").format(Identifier(settings.app_postgres_schema)))
 
 
 @app.command()
@@ -2151,7 +2343,9 @@ def _build_benchmark_research_service(state_dir: Path) -> ResearchService:
 
 
 def _benchmark_search_provider_ids() -> list[str]:
-    configured = [item.strip() for item in settings.app_research_search_providers.split(",") if item.strip()]
+    configured = [
+        item.strip() for item in settings.app_research_search_providers.split(",") if item.strip()
+    ]
     if configured:
         return configured
     if settings.brave_search_api_key:
@@ -2160,7 +2354,9 @@ def _benchmark_search_provider_ids() -> list[str]:
 
 
 def _benchmark_search_providers() -> list[object]:
-    providers: list[object] = [DuckDuckGoHtmlSearchProvider(user_agent=settings.app_research_user_agent)]
+    providers: list[object] = [
+        DuckDuckGoHtmlSearchProvider(user_agent=settings.app_research_user_agent)
+    ]
     if settings.brave_search_api_key:
         providers.insert(
             0,
@@ -2220,7 +2416,7 @@ def _benchmark_candidate_quality(candidate: CandidateClaim) -> tuple[bool, bool]
     broken = (
         len(value) < 24
         or len(value.split()) < 4
-        or value.endswith((":", "—", "-", "“", "\""))
+        or value.endswith((":", "—", "-", "“", '"'))
         or subject in {"people", "person", "they", "it", "this", "that"}
     )
     noisy = any(
@@ -2279,7 +2475,11 @@ def _benchmark_era_band_for_year(year: int | None, brief) -> str:
     future_start, future_end = _benchmark_future_year_range(brief)
     if core_start is not None and core_end is not None and core_start <= year <= core_end:
         return "core"
-    if historical_start is not None and historical_end is not None and historical_start <= year <= historical_end:
+    if (
+        historical_start is not None
+        and historical_end is not None
+        and historical_start <= year <= historical_end
+    ):
         return "historical"
     if future_start is not None and future_end is not None and future_start <= year <= future_end:
         return "future"
@@ -2303,9 +2503,15 @@ def _benchmark_finding_era_state(finding: ResearchFinding, brief) -> dict[str, o
     staged_text = " ".join(filter(None, [finding.page_excerpt or "", finding.snippet_text]))
     core_tokens = _benchmark_core_year_tokens(brief)
     published_year = _benchmark_year_from_value(finding.published_at)
-    era_band = scoring.era_band if scoring and scoring.era_band else _benchmark_era_band_for_year(published_year, brief)
+    era_band = (
+        scoring.era_band
+        if scoring and scoring.era_band
+        else _benchmark_era_band_for_year(published_year, brief)
+    )
     period_native = scoring.period_native if scoring else era_band == "core"
-    period_evidenced = scoring.period_evidenced if scoring else any(year in staged_text for year in core_tokens)
+    period_evidenced = (
+        scoring.period_evidenced if scoring else any(year in staged_text for year in core_tokens)
+    )
     historical_contextual = scoring.historical_contextual if scoring else era_band == "historical"
     return {
         "published_year": published_year,
@@ -2317,7 +2523,9 @@ def _benchmark_finding_era_state(finding: ResearchFinding, brief) -> dict[str, o
 
 
 def _build_benchmark_scorecard(run_detail, extract_result) -> dict:
-    accepted = [item for item in run_detail.findings if item.decision == ResearchFindingDecision.ACCEPTED]
+    accepted = [
+        item for item in run_detail.findings if item.decision == ResearchFindingDecision.ACCEPTED
+    ]
     top_candidates = extract_result.extraction.candidates[:10]
     brief = run_detail.run.brief
     core_era_count = 0
@@ -2335,11 +2543,16 @@ def _build_benchmark_scorecard(run_detail, extract_result) -> dict:
         era_state = _benchmark_finding_era_state(finding, brief)
         source_identity = finding.canonical_url or finding.url
         source_counts[source_identity] = source_counts.get(source_identity, 0) + 1
-        if finding.provenance and finding.provenance.query_profile in {"anchored", "source_seeking"}:
+        if finding.provenance and finding.provenance.query_profile in {
+            "anchored",
+            "source_seeking",
+        }:
             anchored_profile_count += 1
         scoring = finding.provenance.scoring if finding.provenance else None
-        if scoring and scoring.concreteness_score >= 0.16 and (
-            scoring.anchor_score >= 0.16 or era_state["period_evidenced"]
+        if (
+            scoring
+            and scoring.concreteness_score >= 0.16
+            and (scoring.anchor_score >= 0.16 or era_state["period_evidenced"])
         ):
             concrete_anchor_count += 1
         if era_state["period_native"]:
@@ -2390,7 +2603,9 @@ def _build_benchmark_scorecard(run_detail, extract_result) -> dict:
         "candidate_count": len(extract_result.extraction.candidates),
         "candidate_count_pass": len(extract_result.extraction.candidates) >= 10,
         "top_candidate_proxy_reviewable_count": reviewable_count,
-        "top_candidate_proxy_reviewable_ratio": round(reviewable_count / max(len(top_candidates), 1), 3),
+        "top_candidate_proxy_reviewable_ratio": round(
+            reviewable_count / max(len(top_candidates), 1), 3
+        ),
         "top_candidate_proxy_reviewable_pass": reviewable_count >= 7,
         "top_candidate_proxy_broken_count": broken_count,
         "top_candidate_proxy_broken_pass": broken_count <= 2,
@@ -2413,7 +2628,9 @@ def _build_benchmark_scorecard(run_detail, extract_result) -> dict:
     }
 
 
-def _build_benchmark_report(run_detail, extract_result, artifact_dir: Path, *, label: str | None) -> dict:
+def _build_benchmark_report(
+    run_detail, extract_result, artifact_dir: Path, *, label: str | None
+) -> dict:
     accepted_provider_profile: dict[str, int] = {}
     accepted_by_profile: dict[str, int] = {}
     accepted_anchor_class: dict[str, int] = {
@@ -2432,7 +2649,9 @@ def _build_benchmark_report(run_detail, extract_result, artifact_dir: Path, *, l
         profile = finding.provenance.query_profile if finding.provenance else None
         key = f"{provider or 'unknown'}::{profile or 'unknown'}"
         accepted_provider_profile[key] = accepted_provider_profile.get(key, 0) + 1
-        accepted_by_profile[profile or "unknown"] = accepted_by_profile.get(profile or "unknown", 0) + 1
+        accepted_by_profile[profile or "unknown"] = (
+            accepted_by_profile.get(profile or "unknown", 0) + 1
+        )
         era_state = _benchmark_finding_era_state(finding, brief)
         if era_state["period_native"]:
             accepted_anchor_class["core_era"] += 1
@@ -2457,7 +2676,9 @@ def _build_benchmark_report(run_detail, extract_result, artifact_dir: Path, *, l
         )
         group["count"] = int(group["count"]) + 1
         group["facets"].append(finding.facet_id)
-        group["era_bands"] = list(dict.fromkeys([*(group.get("era_bands") or []), str(era_state["era_band"])]))
+        group["era_bands"] = list(
+            dict.fromkeys([*(group.get("era_bands") or []), str(era_state["era_band"])])
+        )
         if profile:
             group["query_profiles"].append(profile)
     report = {
@@ -2482,9 +2703,7 @@ def _build_benchmark_report(run_detail, extract_result, artifact_dir: Path, *, l
                 "facet_fit_score": (
                     finding.provenance.scoring.facet_fit_score if finding.provenance else None
                 ),
-                "era_band": (
-                    finding.provenance.scoring.era_band if finding.provenance else None
-                ),
+                "era_band": (finding.provenance.scoring.era_band if finding.provenance else None),
                 "period_native": (
                     finding.provenance.scoring.period_native if finding.provenance else None
                 ),
@@ -2495,15 +2714,21 @@ def _build_benchmark_report(run_detail, extract_result, artifact_dir: Path, *, l
                     finding.provenance.scoring.historical_contextual if finding.provenance else None
                 ),
                 "source_saturation_score": (
-                    finding.provenance.scoring.source_saturation_score if finding.provenance else None
+                    finding.provenance.scoring.source_saturation_score
+                    if finding.provenance
+                    else None
                 ),
                 "url": finding.canonical_url or finding.url,
                 "snippet_text": finding.snippet_text,
                 "page_excerpt": finding.page_excerpt,
                 "staged_source_id": finding.staged_source_id,
-                "search_provider_id": finding.provenance.search_provider_id if finding.provenance else None,
+                "search_provider_id": finding.provenance.search_provider_id
+                if finding.provenance
+                else None,
                 "query_profile": finding.provenance.query_profile if finding.provenance else None,
-                "provenance": finding.provenance.model_dump(mode="json") if finding.provenance else None,
+                "provenance": finding.provenance.model_dump(mode="json")
+                if finding.provenance
+                else None,
             }
             for finding in run_detail.findings
             if finding.decision == ResearchFindingDecision.ACCEPTED
@@ -2544,7 +2769,9 @@ def _build_benchmark_report(run_detail, extract_result, artifact_dir: Path, *, l
             "accepted_by_provider_profile": accepted_provider_profile,
             "accepted_anchor_class": accepted_anchor_class,
             "accepted_by_source": list(accepted_by_source.values()),
-            "zero_hit_queries_by_profile": run_detail.run.telemetry.search.zero_hit_queries_by_profile,
+            "zero_hit_queries_by_profile": (
+                run_detail.run.telemetry.search.zero_hit_queries_by_profile
+            ),
         },
         "manual_review": _manual_review_slots(run_detail, extract_result),
     }
@@ -2566,14 +2793,24 @@ def _run_benchmark_2003_dj_once(output_root: Path, *, label: str | None = None) 
     return report
 
 
-def _aggregate_benchmark_reports(reports: list[dict], artifact_dir: Path, *, label: str | None) -> dict:
+def _aggregate_benchmark_reports(
+    reports: list[dict], artifact_dir: Path, *, label: str | None
+) -> dict:
     scorecards = [report["scorecard"]["auto_checks"] for report in reports]
     accepted_counts = [len(report["accepted_findings"]) for report in reports]
     candidate_counts = [report["extraction"]["candidate_count"] for report in reports]
-    core_or_period_counts = [report["scorecard"]["auto_checks"]["core_or_period_evidenced_count"] for report in reports]
-    late_retrospective_counts = [report["scorecard"]["auto_checks"]["late_retrospective_count"] for report in reports]
-    unique_source_counts = [report["scorecard"]["auto_checks"]["unique_accepted_source_count"] for report in reports]
-    max_facets_per_source_counts = [report["scorecard"]["auto_checks"]["max_facets_per_source"] for report in reports]
+    core_or_period_counts = [
+        report["scorecard"]["auto_checks"]["core_or_period_evidenced_count"] for report in reports
+    ]
+    late_retrospective_counts = [
+        report["scorecard"]["auto_checks"]["late_retrospective_count"] for report in reports
+    ]
+    unique_source_counts = [
+        report["scorecard"]["auto_checks"]["unique_accepted_source_count"] for report in reports
+    ]
+    max_facets_per_source_counts = [
+        report["scorecard"]["auto_checks"]["max_facets_per_source"] for report in reports
+    ]
     aggregate = {
         "benchmark_id": "2003_dj_chicago",
         "label": label,
@@ -2586,7 +2823,9 @@ def _aggregate_benchmark_reports(reports: list[dict], artifact_dir: Path, *, lab
                 "status": report["run"]["status"],
                 "accepted_findings": len(report["accepted_findings"]),
                 "candidate_count": report["extraction"]["candidate_count"],
-                "core_or_period_evidenced_count": report["scorecard"]["auto_checks"]["core_or_period_evidenced_count"],
+                "core_or_period_evidenced_count": report["scorecard"]["auto_checks"][
+                    "core_or_period_evidenced_count"
+                ],
             }
             for report in reports
         ],
@@ -2611,7 +2850,9 @@ def _aggregate_benchmark_reports(reports: list[dict], artifact_dir: Path, *, lab
             "late_retrospective_count": {
                 "best": max(late_retrospective_counts, default=0),
                 "worst": min(late_retrospective_counts, default=0),
-                "median": statistics.median(late_retrospective_counts) if late_retrospective_counts else 0,
+                "median": statistics.median(late_retrospective_counts)
+                if late_retrospective_counts
+                else 0,
             },
             "unique_accepted_source_count": {
                 "best": max(unique_source_counts, default=0),
@@ -2621,14 +2862,26 @@ def _aggregate_benchmark_reports(reports: list[dict], artifact_dir: Path, *, lab
             "max_facets_per_source": {
                 "best": max(max_facets_per_source_counts, default=0),
                 "worst": min(max_facets_per_source_counts, default=0),
-                "median": statistics.median(max_facets_per_source_counts) if max_facets_per_source_counts else 0,
+                "median": statistics.median(max_facets_per_source_counts)
+                if max_facets_per_source_counts
+                else 0,
             },
-            "coverage_all_facets_passes": sum(1 for item in scorecards if item["coverage_all_facets"]),
+            "coverage_all_facets_passes": sum(
+                1 for item in scorecards if item["coverage_all_facets"]
+            ),
             "candidate_count_passes": sum(1 for item in scorecards if item["candidate_count_pass"]),
-            "core_or_period_evidenced_passes": sum(1 for item in scorecards if item["core_or_period_evidenced_pass"]),
-            "late_retrospective_passes": sum(1 for item in scorecards if item["late_retrospective_pass"]),
-            "unique_accepted_source_passes": sum(1 for item in scorecards if item["unique_accepted_source_pass"]),
-            "max_facets_per_source_passes": sum(1 for item in scorecards if item["max_facets_per_source_pass"]),
+            "core_or_period_evidenced_passes": sum(
+                1 for item in scorecards if item["core_or_period_evidenced_pass"]
+            ),
+            "late_retrospective_passes": sum(
+                1 for item in scorecards if item["late_retrospective_pass"]
+            ),
+            "unique_accepted_source_passes": sum(
+                1 for item in scorecards if item["unique_accepted_source_pass"]
+            ),
+            "max_facets_per_source_passes": sum(
+                1 for item in scorecards if item["max_facets_per_source_pass"]
+            ),
         },
     }
     return aggregate
@@ -2642,8 +2895,7 @@ def _run_benchmark_2003_dj(output_root: Path, *, label: str | None = None, repea
     batch_dir = output_root / batch_name
     batch_dir.mkdir(parents=True, exist_ok=True)
     reports = [
-        _run_benchmark_2003_dj_once(batch_dir, label=f"run-{index + 1}")
-        for index in range(repeat)
+        _run_benchmark_2003_dj_once(batch_dir, label=f"run-{index + 1}") for index in range(repeat)
     ]
     summary = _aggregate_benchmark_reports(reports, batch_dir, label=label)
     (batch_dir / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
@@ -2669,8 +2921,10 @@ def benchmark_2003_dj(
             f"Passes: {report['summary']['pass_count']} | "
             f"Median accepted: {report['summary']['accepted_findings']['median']} | "
             f"Median candidates: {report['summary']['candidate_count']['median']} | "
-            f"Median core/period-evidenced accepted: {report['summary']['core_or_period_evidenced_count']['median']} | "
-            f"Median unique sources: {report['summary']['unique_accepted_source_count']['median']} | "
+            f"Median core/period-evidenced accepted: "
+            f"{report['summary']['core_or_period_evidenced_count']['median']} | "
+            f"Median unique sources: "
+            f"{report['summary']['unique_accepted_source_count']['median']} | "
             f"Median max facets/source: {report['summary']['max_facets_per_source']['median']}"
         )
         return

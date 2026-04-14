@@ -42,7 +42,9 @@ class NormalizationService:
             if not document.raw_text:
                 document.claim_extraction_status = "failed"
                 updated_documents.append(document)
-                warnings.append(f"Document {document.document_id} had ready raw text status but no raw text.")
+                warnings.append(
+                    f"Document {document.document_id} had ready raw text status but no raw text."
+                )
                 continue
             text = document.raw_text.strip()
             if not text:
@@ -51,7 +53,10 @@ class NormalizationService:
                 warnings.append(f"Document {document.document_id} had empty raw text.")
                 continue
 
-            text_unit_id = f"text-{sha1(f'{document.document_id}:{document.source_id}'.encode()).hexdigest()[:12]}"
+            text_unit_id = (
+                f"text-"
+                f"{sha1(f'{document.document_id}:{document.source_id}'.encode()).hexdigest()[:12]}"
+            )
             normalized.append(
                 TextUnit(
                     text_unit_id=text_unit_id,
@@ -60,7 +65,10 @@ class NormalizationService:
                     text=text,
                     ordinal=1,
                     checksum=sha1(text.encode()).hexdigest(),
-                    notes=f"source_document_id={document.document_id}; document_kind={document.document_kind}",
+                    notes=(
+                        f"source_document_id={document.document_id}; "
+                        f"document_kind={document.document_kind}"
+                    ),
                 )
             )
             document.ingest_status = "ready_for_extraction"

@@ -85,7 +85,9 @@ class WikibaseTruthStore:
         source_kind: str = "manual",
     ) -> ClaimRelationship:
         _ = claim_id, related_claim_id, relationship_type, notes, source_kind
-        raise CanonUnavailableError("Manual claim relationship curation is not supported for Wikibase.")
+        raise CanonUnavailableError(
+            "Manual claim relationship curation is not supported for Wikibase."
+        )
 
     def save_claim(
         self,
@@ -498,16 +500,12 @@ class WikibaseTruthStore:
         self.cache.write_models(claims.values())
 
     def _can_sync(self) -> bool:
-        return bool(
-            self.api_url and self.username and self.password and self.property_map
-        )
+        return bool(self.api_url and self.username and self.password and self.property_map)
 
     def _ensure_canon_available(self) -> None:
         if self._can_sync():
             return
-        raise CanonUnavailableError(
-            "Canonical Wikibase truth store is not configured."
-        )
+        raise CanonUnavailableError("Canonical Wikibase truth store is not configured.")
 
     def _find_claim_statement(
         self,

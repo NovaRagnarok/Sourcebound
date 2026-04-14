@@ -60,15 +60,16 @@ from source_aware_worldbuilding.adapters.web_research_scout import (
     BraveSearchApiProvider,
     CuratedInputsResearchScout,
     DuckDuckGoHtmlSearchProvider,
-    ResearchSearchProviderRegistry,
     ResearchScoutRegistry,
+    ResearchSearchProviderRegistry,
     WebOpenResearchScout,
 )
 from source_aware_worldbuilding.adapters.wikibase_adapter import WikibaseTruthStore
 from source_aware_worldbuilding.adapters.zotero_adapter import ZoteroCorpusAdapter
+from source_aware_worldbuilding.domain.models import ResearchExecutionPolicy
+from source_aware_worldbuilding.services.bible import BibleWorkspaceService
 from source_aware_worldbuilding.services.ingestion import IngestionService
 from source_aware_worldbuilding.services.intake import IntakeService
-from source_aware_worldbuilding.services.bible import BibleWorkspaceService
 from source_aware_worldbuilding.services.jobs import JobService
 from source_aware_worldbuilding.services.lore_packet import LorePacketService
 from source_aware_worldbuilding.services.normalization import NormalizationService
@@ -76,8 +77,6 @@ from source_aware_worldbuilding.services.query import QueryService
 from source_aware_worldbuilding.services.research import ResearchService
 from source_aware_worldbuilding.services.review import ReviewService
 from source_aware_worldbuilding.settings import settings
-from source_aware_worldbuilding.domain.models import ResearchExecutionPolicy
-
 
 _job_service: JobService | None = None
 _job_service_key: tuple[object, ...] | None = None
@@ -266,7 +265,9 @@ def get_research_scout_registry() -> ResearchScoutRegistry:
 
 
 def _resolve_research_search_provider_ids() -> list[str]:
-    configured = [item.strip() for item in settings.app_research_search_providers.split(",") if item.strip()]
+    configured = [
+        item.strip() for item in settings.app_research_search_providers.split(",") if item.strip()
+    ]
     if configured:
         return configured
     if settings.brave_search_api_key:
@@ -335,6 +336,7 @@ def get_query_service() -> QueryService:
         evidence_store=get_evidence_store(),
         source_store=get_source_store(),
         projection=get_projection(),
+        profile_store=get_bible_profile_store(),
     )
 
 

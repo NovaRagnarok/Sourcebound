@@ -4,8 +4,9 @@ Sourcebound’s recommended solo-author setup is intentionally small:
 
 - Postgres-backed app state
 - Postgres-backed canon
+- browser UI enabled
 - background job worker enabled
-- optional Qdrant enabled for better retrieval relevance
+- Qdrant enabled for better retrieval relevance and research semantics
 
 ## Recommended Local Configuration
 
@@ -14,9 +15,12 @@ APP_STATE_BACKEND=postgres
 APP_TRUTH_BACKEND=postgres
 APP_POSTGRES_DSN=postgresql://saw:saw@localhost:5432/saw
 APP_POSTGRES_SCHEMA=sourcebound
+APP_UI_ENABLED=true
 APP_JOB_WORKER_ENABLED=true
 QDRANT_ENABLED=true
 QDRANT_URL=http://localhost:6333
+RESEARCH_SEMANTIC_ENABLED=true
+APP_STRICT_STARTUP_CHECKS=true
 GRAPH_RAG_ENABLED=false
 ```
 
@@ -24,16 +28,23 @@ This keeps the daily writing loop dependable:
 
 1. research runs happen in persisted background jobs
 2. stage/extract work can be cancelled or retried
-3. Bible composition and regeneration do not require waiting on one request
+3. Bible composition, regeneration, and export do not require waiting on one request
 4. export bundles come back through persisted job results
 5. Qdrant improves ranking, but approved canon remains the trust boundary
+6. strict startup checks can block live boot if Qdrant is uninitialized, so
+   `saw qdrant-rebuild` becomes part of deployment bootstrap
 
 ## Reliability Notes
 
-- If Qdrant is unavailable, Sourcebound falls back to in-memory ranking and surfaces the downgrade in query/Bible diagnostics.
+- If Qdrant is unavailable, Sourcebound falls back to in-memory ranking and
+  surfaces the downgrade in query/Bible diagnostics.
+- If the job worker is disabled, jobs can still be enqueued but they will not
+  make progress until a worker is running.
 - Manual Bible edits remain the author’s writable layer and are preserved during regeneration.
-- Provenance explains generated paragraphs only; it does not attempt to justify arbitrary manual rewrites.
-- Keep regular backups of the Postgres schema or completed Bible export bundles if you are using the tool for active manuscript work.
+- Provenance explains generated paragraphs only; it does not attempt to justify
+  arbitrary manual rewrites.
+- Keep regular backups of the Postgres schema or completed Bible export bundles
+  if you are using the tool for active manuscript work.
 
 ## Minimal Deployment Guidance
 

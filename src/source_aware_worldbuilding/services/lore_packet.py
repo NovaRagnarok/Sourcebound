@@ -424,7 +424,9 @@ class LorePacketService:
         source_by_id: dict[str, SourceRecord],
         include_evidence_footnotes: bool,
     ) -> str:
-        fragments = [f"**{claim.subject}** {self._humanize_predicate(claim.predicate)} {claim.value}"]
+        fragments = [
+            f"**{claim.subject}** {self._humanize_predicate(claim.predicate)} {claim.value}"
+        ]
         if claim.place:
             fragments.append(f"in {claim.place}")
         if claim.time_start or claim.time_end:

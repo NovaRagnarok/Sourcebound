@@ -19,12 +19,12 @@ from source_aware_worldbuilding.domain.models import (
     QueryResult,
     ResearchFetchedPage,
     ResearchFinding,
-    ResearchSemanticResult,
-    ResearchSearchProviderResult,
     ResearchProgram,
     ResearchRun,
     ResearchScoutCapabilities,
     ResearchSearchHit,
+    ResearchSearchProviderResult,
+    ResearchSemanticResult,
     ReviewEvent,
     SourceDocumentRecord,
     SourceRecord,
@@ -35,7 +35,9 @@ from source_aware_worldbuilding.domain.models import (
 
 class CorpusPort(Protocol):
     def pull_sources(self) -> list[SourceRecord]: ...
-    def discover_source_documents(self, sources: list[SourceRecord]) -> list[SourceDocumentRecord]: ...
+    def discover_source_documents(
+        self, sources: list[SourceRecord]
+    ) -> list[SourceDocumentRecord]: ...
     def pull_text_units(self, sources: list[SourceRecord]) -> list[TextUnit]: ...
     def pull_sources_by_item_keys(self, item_keys: list[str]) -> list[SourceRecord]: ...
     def create_text_source(self, request: IntakeTextRequest) -> ZoteroCreatedItem: ...

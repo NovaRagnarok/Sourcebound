@@ -90,6 +90,7 @@
     query: {
       question: seed.queryPresets[0],
       mode: "strict_facts",
+      projectId: seed.bibleProfile?.project_id || "project-greyport",
       status: "",
       claimKind: "",
       place: "",
@@ -574,10 +575,13 @@
 
     if (online && runtime?.overall_status === "ready") {
       badgeClass = "status-pill status-pill-live";
-      badgeLabel = "Runtime ready";
+      badgeLabel = "Runtime healthy";
+    } else if (online && runtime?.overall_status === "degraded") {
+      badgeClass = "status-pill status-pill-warning";
+      badgeLabel = "Runtime degraded";
     } else if (online && runtime) {
       badgeClass = "status-pill status-pill-warning";
-      badgeLabel = "Needs setup";
+      badgeLabel = "Runtime blocked";
     }
 
     nodes.modeBadge.className = badgeClass;
@@ -763,7 +767,7 @@
     }
 
     const readyCount = state.runtimeStatus.services.filter((service) => service.ready).length;
-    const overallTone = state.runtimeStatus.overall_status === "ready" ? "live" : "queued";
+    const overallTone = runtimeStatusTone(state.runtimeStatus.overall_status);
     const summaryLine = summarizeRuntime() || "Runtime details are available.";
 
     nodes.runtimePanel.innerHTML = `
@@ -773,7 +777,7 @@
           <h2>${escapeHtml(titleize(state.runtimeStatus.overall_status.replaceAll("_", " ")))}</h2>
           <p>${escapeHtml(summaryLine)}</p>
           <div class="service-meta">
-            <span class="pill ${escapeHtml(overallTone)}">${readyCount}/${state.runtimeStatus.services.length} services ready</span>
+            <span class="pill ${escapeHtml(overallTone)}">${escapeHtml(titleize(state.runtimeStatus.overall_status.replaceAll("_", " ")))} runtime</span>
             <span class="pill ${escapeHtml(state.runtimeStatus.state_backend)}">${escapeHtml(state.runtimeStatus.state_backend)} state</span>
             <span class="pill ${escapeHtml(state.runtimeStatus.truth_backend)}">${escapeHtml(state.runtimeStatus.truth_backend)} truth</span>
             <span class="pill ${escapeHtml(state.runtimeStatus.extraction_backend)}">${escapeHtml(state.runtimeStatus.extraction_backend)}</span>
@@ -796,7 +800,8 @@
         <div class="service-grid">
           ${state.runtimeStatus.services
             .map((service) => {
-              const tone = service.ready ? "live" : service.configured ? "failed" : "queued";
+              const tone = runtimeServiceTone(service);
+              const statusLabel = runtimeServiceLabel(service);
               return `
                 <article class="service-card">
                   <div class="service-head">
@@ -804,7 +809,7 @@
                       <strong>${escapeHtml(titleize(service.name.replaceAll("_", " ")))}</strong>
                       <div class="detail-note">${escapeHtml(service.role)}</div>
                     </div>
-                    <span class="pill ${escapeHtml(tone)}">${service.ready ? "ready" : "attention"}</span>
+                    <span class="pill ${escapeHtml(tone)}">${escapeHtml(statusLabel)}</span>
                   </div>
                   <div class="service-meta">
                     <span class="code">${escapeHtml(service.mode)}</span>
@@ -1797,7 +1802,7 @@
           </div>
           <div class="funnel">
             <div><strong>${state.candidates.filter((candidate) => candidate.review_state === "pending").length}</strong><span>Needs review</span></div>
-            <div><strong>${readyForBible}</strong><span>Ready for bible</span></div>
+            <div><strong>${readyForBible}</strong><span>Eligible canon</span></div>
             <div><strong>${coverage.filter((item) => item.tone === "contested").length}</strong><span>Missing coverage</span></div>
           </div>
         </section>
@@ -2037,6 +2042,27 @@
         ${renderJobControls(section.latest_job)}
       </div>
       ${renderJobDiagnostic(section.latest_job)}
+      <div class="field">
+        <label>Generation posture</label>
+        <div class="detail-list">
+          <div class="mini">
+            <div class="detail-note">retrieval</div>
+            <div>${escapeHtml(renderRetrievalSummary(section.retrieval_metadata || {}))}</div>
+          </div>
+          <div class="mini">
+            <div class="detail-note">diagnostic</div>
+            <div>${escapeHtml(section.coverage_analysis?.diagnostic_summary || "No diagnostic summary.")}</div>
+          </div>
+          <div class="mini">
+            <div class="detail-note">certainty mix</div>
+            <div>${escapeHtml(renderKeyValueMap(section.coverage_analysis?.certainty_mix || {}))}</div>
+          </div>
+          <div class="mini">
+            <div class="detail-note">composition</div>
+            <div>${escapeHtml(renderBibleCompositionSummary(section.composition_metrics || {}))}</div>
+          </div>
+        </div>
+      </div>
       <section class="trust-zone trust-zone-generated">
         <div class="trust-zone-head">
           <div>
@@ -2098,6 +2124,8 @@
       <div class="field">
         <label>Coverage and trust</label>
         <div class="warning-list">
+          ${section.composition_metrics?.thin_section ? `<div class="warning">Thin section warning: ${escapeHtml(renderBibleCompositionSummary(section.composition_metrics || {}))}</div>` : ""}
+          ${(section.composition_metrics?.skipped_beat_ids || []).map((beatId, index) => `<div class="warning">${escapeHtml(renderBibleBeatLabel(beatId))}: ${escapeHtml(section.composition_metrics?.skipped_reasons?.[index] || "skipped")}</div>`).join("")}
           ${(section.coverage_gaps || []).map((item) => `<div class="warning">${escapeHtml(item)}</div>`).join("") || "<div class='helper'>No coverage gaps recorded.</div>"}
           ${(section.contradiction_flags || []).map((item) => `<div class="warning">${escapeHtml(item)}</div>`).join("")}
         </div>
@@ -2134,6 +2162,30 @@
     `;
   }
 
+  function renderBibleBeatLabel(value) {
+    return (value || "")
+      .replace(/:.+$/, "")
+      .replaceAll("_", " ");
+  }
+
+  function renderBibleParagraphLabel(paragraph) {
+    return paragraph.heading || renderBibleBeatLabel(paragraph.paragraph_kind || "paragraph");
+  }
+
+  function renderBibleParagraphRole(paragraph) {
+    return (paragraph.paragraph_role || paragraph.paragraph_kind || "generated")
+      .replaceAll("_", " ");
+  }
+
+  function renderBibleCompositionSummary(metrics) {
+    const target = Number(metrics?.target_beats || 0);
+    const produced = Number(metrics?.produced_beats || 0);
+    const claimDensity = Number(metrics?.claim_density || 0);
+    const evidenceDensity = Number(metrics?.evidence_density || 0);
+    const contradiction = metrics?.contradiction_presence ? "contradictions present" : "no contradictions surfaced";
+    return `${produced}/${target} beats produced · claim density ${claimDensity.toFixed(1)} · evidence density ${evidenceDensity.toFixed(1)} · ${contradiction}`;
+  }
+
   function renderBibleGeneratedParagraphCards(section) {
     const paragraphs = section.paragraphs || [];
     if (!paragraphs.length) {
@@ -2144,8 +2196,8 @@
         ${paragraphs.map((paragraph) => `
           <button class="paragraph-card ${paragraph.paragraph_id === state.bible.selectedParagraphId ? "is-selected" : ""}" type="button" data-select-bible-paragraph="${escapeHtml(paragraph.paragraph_id)}">
             <div class="paragraph-card-head">
-              <div class="row-title">${escapeHtml(paragraph.heading || paragraph.paragraph_kind)}</div>
-              <span class="pill verified">generated</span>
+              <div class="row-title">${escapeHtml(renderBibleParagraphLabel(paragraph))}</div>
+              <span class="pill verified">${escapeHtml(renderBibleParagraphRole(paragraph))}</span>
             </div>
             <div class="paragraph-card-text">${escapeHtml(paragraph.text)}</div>
             <div class="paragraph-card-meta">
@@ -2168,9 +2220,10 @@
       <div class="linked-draft">
         ${paragraphs.map((paragraph) => `
           <button class="linked-draft-paragraph ${paragraph.paragraph_id === state.bible.selectedParagraphId ? "is-selected" : ""}" type="button" data-select-bible-paragraph="${escapeHtml(paragraph.paragraph_id)}">
-            ${paragraph.heading ? `<div class="linked-draft-heading">${escapeHtml(paragraph.heading)}</div>` : ""}
+            <div class="linked-draft-heading">${escapeHtml(renderBibleParagraphLabel(paragraph))}</div>
             <div class="linked-draft-text">${escapeHtml(paragraph.text)}</div>
             <div class="linked-draft-meta">
+              <span>${escapeHtml(renderBibleParagraphRole(paragraph))}</span>
               <span>${escapeHtml(paragraph.claim_ids.length)} claims</span>
               <span>${escapeHtml(paragraph.source_ids.length)} sources</span>
               <span>${escapeHtml(paragraph.evidence_ids.length)} evidence</span>
@@ -2289,7 +2342,8 @@
       return "memory ranking";
     }
     const backend = metadata.retrieval_backend || "memory";
-    const strategy = metadata.ranking_strategy || "lexical";
+    const rawStrategy = metadata.ranking_strategy || "lexical";
+    const strategy = rawStrategy === "intent_blended" ? "topic-first blended" : rawStrategy;
     const fallback = metadata.fallback_used ? ` · fallback ${metadata.fallback_reason || "used"}` : "";
     return `${backend} · ${strategy}${fallback}`;
   }
@@ -2343,7 +2397,7 @@
         }
         return true;
       });
-      const weak = !section || (section.coverage_gaps || []).length;
+      const weak = !section || section.composition_metrics?.thin_section || (section.coverage_gaps || []).length;
       return {
         label,
         tone: weak ? "contested" : "verified",
@@ -2733,7 +2787,7 @@
         <div class="screen-head">
           <div>
             <h2 data-active-screen>Ask</h2>
-            <p>Ask only against approved claims. The query screen keeps mode selection visible so the writer always knows what kind of answer surface they are invoking.</p>
+            <p>Ask only against approved claims. The query screen keeps mode selection visible so the writer always knows what kind of answer surface they are invoking.${state.bible.profile?.project_name ? ` Active project context: ${escapeHtml(state.bible.profile.project_name)}.` : ""}</p>
           </div>
           <div class="screen-actions">
             ${seed.queryPresets
@@ -2784,7 +2838,7 @@
             </div>
             <div class="toolbar">
               <button class="primary-button" type="submit" data-action="query-submit">Ask the record</button>
-              <span class="helper">This uses the current `/v1/query` contract and returns supporting claims, evidence, and warnings.</span>
+              <span class="helper">This uses the current `/v1/query` contract and returns supporting claims, evidence, warnings, and retrieval metadata.${state.bible.projectId ? ` Project context is sent as ${escapeHtml(state.bible.projectId)} when available.` : ""}</span>
             </div>
           </form>
 
@@ -2826,6 +2880,23 @@
         </div>
         <span class="pill ${escapeHtml(result.mode)}">${escapeHtml(result.mode)}</span>
       </div>
+      <div class="field">
+        <label>Query posture</label>
+        <div class="detail-list">
+          <div class="mini">
+            <div class="detail-note">retrieval</div>
+            <div>${escapeHtml(renderRetrievalSummary(result.metadata || {}))}</div>
+          </div>
+          <div class="mini">
+            <div class="detail-note">certainty summary</div>
+            <div>${escapeHtml(renderKeyValueMap(result.certainty_summary || {}))}</div>
+          </div>
+          <div class="mini">
+            <div class="detail-note">coverage gaps</div>
+            <div>${escapeHtml((result.coverage_gaps || []).join(" | ") || "none")}</div>
+          </div>
+        </div>
+      </div>
       <div class="answer-block">
         <pre>${escapeHtml(result.answer)}</pre>
       </div>
@@ -2840,14 +2911,6 @@
       <div class="field">
         <label>Trust summary</label>
         <div class="detail-list">
-          <div class="mini">
-            <div class="detail-note">certainty summary</div>
-            <div>${escapeHtml(renderKeyValueMap(result.certainty_summary || {}))}</div>
-          </div>
-          <div class="mini">
-            <div class="detail-note">coverage gaps</div>
-            <div>${escapeHtml((result.coverage_gaps || []).join(" | ") || "none")}</div>
-          </div>
           <div class="mini">
             <div class="detail-note">recommended next research</div>
             <div>${escapeHtml((result.recommended_next_research || []).join(" | ") || "none")}</div>
@@ -3010,33 +3073,13 @@
 
       await refreshAfterReview(candidateId);
     } catch (error) {
-      const candidate = state.candidates.find((item) => item.candidate_id === candidateId);
-      if (candidate) {
-        const reviewState = decision === "reject" ? "rejected" : "approved";
-        candidate.review_state = reviewState;
-      }
-      if (decision !== "reject" && candidateId) {
-        state.claims = [
-          {
-            claim_id: `local-${Date.now()}`,
-            subject: candidate?.subject || "Unknown",
-            predicate: candidate?.predicate || "unknown",
-            value: candidate?.value || "unknown",
-            claim_kind: candidate?.claim_kind || "belief",
-            status: overrideStatus || candidate?.status_suggestion || "probable",
-            place: candidate?.place || null,
-            time_start: candidate?.time_start || null,
-            time_end: candidate?.time_end || null,
-            viewpoint_scope: candidate?.viewpoint_scope || null,
-            author_choice: overrideStatus === "author_choice",
-            evidence_ids: candidate?.evidence_ids || [],
-            notes: notes || candidate?.notes || null,
-          },
-          ...state.claims,
-        ];
-      }
-      setApiStatus(false, "Review endpoint unavailable. Local state was updated.");
-      setBanner("failed", "Review could not sync", error.message || "The review endpoint is unavailable.");
+      const syncRejected = /^\d{3}\b/.test(String(error.message || ""));
+      setApiStatus(syncRejected || state.apiOnline, "Review sync failed. Canon was not changed.");
+      setBanner(
+        "failed",
+        "Review could not sync",
+        error.message || "The review did not cross the trust boundary. Approved canon was not updated."
+      );
       render();
     } finally {
       applyLoading(false);
@@ -3068,6 +3111,7 @@
     const request = {
       question: String(formData.get("question") || "").trim(),
       mode: state.query.mode,
+      project_id: state.bible.projectId || null,
       filters: {
         status: String(formData.get("status") || "").trim() || null,
         claim_kind: String(formData.get("claimKind") || "").trim() || null,
@@ -3079,6 +3123,7 @@
     state.query = {
       question: request.question,
       mode: request.mode,
+      projectId: request.project_id || "",
       status: request.filters.status || "",
       claimKind: request.filters.claim_kind || "",
       place: request.filters.place || "",
@@ -3094,7 +3139,13 @@
       });
       state.queryResult = payload;
       await refreshRuntimeStatus();
-      setBanner("live", "Query answered", "The question was resolved against approved claims and their evidence.");
+      setBanner(
+        "live",
+        "Query answered",
+        request.project_id
+          ? "The question was resolved against approved claims using the active project context."
+          : "The question was resolved against approved claims and their evidence."
+      );
       setApiStatus(true, "Query response received.");
       render();
     } catch (error) {
@@ -3109,6 +3160,12 @@
         certainty_summary: {},
         coverage_gaps: [],
         recommended_next_research: [],
+        metadata: {
+          retrieval_backend: "memory",
+          fallback_used: true,
+          fallback_reason: error.message || "Query endpoint unavailable.",
+          ranking_strategy: request.project_id ? "intent_blended" : "lexical",
+        },
       };
       setApiStatus(false, "Query failed. Seed and local state remain available.");
       setBanner("failed", "Query failed", error.message || "Could not reach the query endpoint.");
@@ -3197,7 +3254,7 @@
       location.hash = "#research";
       setBanner("queued", "Research queued", `Queued job ${job.job_id} for ${job.result_ref?.run_id || "research run"}.`);
       render();
-      await pollJobUntilSettled(job.job_id, {
+      const settledJob = await pollJobUntilSettled(job.job_id, {
         onProgress: async (activeJob) => {
           setBanner("queued", "Research running", `Job ${activeJob.job_id} is ${renderJobSummary(activeJob)}.`);
           await refreshLiveData({ quiet: true });
@@ -3215,6 +3272,9 @@
           }
         },
       });
+      if (settledJob?.pollTimedOut) {
+        setBanner("queued", "Research still running", `Job ${settledJob.job_id} is still running in the background. You can keep working and check Jobs & Runs anytime.`);
+      }
       render();
     } catch (error) {
       setBanner("failed", "Research run failed", error.message || "The research run could not be created.");
@@ -3350,7 +3410,7 @@
       setBanner("queued", "Bible composition queued", `Queued job ${job.job_id} for ${job.result_ref?.section_id || "new section"}.`);
       await refreshBibleWorkspace({ quiet: true });
       render();
-      await pollJobUntilSettled(job.job_id, {
+      const settledJob = await pollJobUntilSettled(job.job_id, {
         onProgress: async (activeJob) => {
           setBanner("queued", "Bible composition running", `Job ${activeJob.job_id} is ${renderJobSummary(activeJob)}.`);
           await refreshBibleWorkspace({ quiet: true });
@@ -3368,6 +3428,9 @@
           }
         },
       });
+      if (settledJob?.pollTimedOut) {
+        setBanner("queued", "Bible composition still running", `Job ${settledJob.job_id} is still running in the background. The section will stay visible in Workspace and Jobs & Runs.`);
+      }
       render();
     } catch (error) {
       setBanner("failed", "Bible composition failed", error.message || "Could not compose the bible section.");
@@ -3423,7 +3486,7 @@
         },
       });
       setBanner("queued", "Regeneration queued", `Queued job ${job.job_id} for ${sectionId}.`);
-      await pollJobUntilSettled(job.job_id, {
+      const settledJob = await pollJobUntilSettled(job.job_id, {
         onProgress: async (activeJob) => {
           setBanner("queued", "Regeneration running", `Job ${activeJob.job_id} is ${renderJobSummary(activeJob)}.`);
           await refreshBibleWorkspace({ quiet: true });
@@ -3438,6 +3501,9 @@
           }
         },
       });
+      if (settledJob?.pollTimedOut) {
+        setBanner("queued", "Regeneration still running", `Job ${settledJob.job_id} is still running in the background. Manual text remains safe while the generated draft refreshes.`);
+      }
       render();
     } catch (error) {
       setBanner("failed", "Regeneration failed", error.message || "Could not regenerate the selected bible section.");
@@ -3459,7 +3525,7 @@
       state.bible.exportJobId = job.job_id;
       setBanner("queued", "Bible export queued", `Queued job ${job.job_id} for ${state.bible.projectId}.`);
       render();
-      await pollJobUntilSettled(job.job_id, {
+      const settledJob = await pollJobUntilSettled(job.job_id, {
         onProgress: async (activeJob) => {
           state.bible.exportJobId = activeJob.job_id;
           setBanner("queued", "Bible export running", `Job ${activeJob.job_id} is ${renderJobSummary(activeJob)}.`);
@@ -3486,6 +3552,9 @@
           );
         },
       });
+      if (settledJob?.pollTimedOut) {
+        setBanner("queued", "Bible export still running", `Job ${settledJob.job_id} is still preparing the export bundle in the background.`);
+      }
       render();
     } catch (error) {
       setBanner("failed", "Bible export failed", error.message || "Could not export the saved bible.");
@@ -3525,7 +3594,7 @@
     try {
       const job = await fetchJson(API.retryJob(jobId), { method: "POST" });
       setBanner("queued", "Retry queued", `Queued retry job ${job.job_id}.`);
-      await pollJobUntilSettled(job.job_id, {
+      const settledJob = await pollJobUntilSettled(job.job_id, {
         onProgress: async (activeJob) => {
           setBanner("queued", "Retry running", `Job ${activeJob.job_id} is ${renderJobSummary(activeJob)}.`);
         },
@@ -3544,6 +3613,9 @@
           }
         },
       });
+      if (settledJob?.pollTimedOut) {
+        setBanner("queued", "Retry still running", `Job ${settledJob.job_id} is still running in the background. You can keep working and revisit the job list later.`);
+      }
     } catch (error) {
       setBanner("failed", "Retry failed", error.message || "Could not retry the selected job.");
     } finally {
@@ -3594,7 +3666,7 @@
     try {
       const job = await fetchJson(API.stageResearchRun(runId), { method: "POST" });
       setBanner("queued", "Research staging queued", `Queued job ${job.job_id} for ${runId}.`);
-      await pollJobUntilSettled(job.job_id, {
+      const settledJob = await pollJobUntilSettled(job.job_id, {
         onProgress: async (activeJob) => {
           setBanner("queued", "Research staging running", `Job ${activeJob.job_id} is ${renderJobSummary(activeJob)}.`);
           await refreshResearchDetail(runId, { quiet: true });
@@ -3610,6 +3682,9 @@
           }
         },
       });
+      if (settledJob?.pollTimedOut) {
+        setBanner("queued", "Research staging still running", `Job ${settledJob.job_id} is still staging in the background. Jobs & Runs will keep tracking it.`);
+      }
       render();
     } catch (error) {
       setBanner("failed", "Staging failed", error.message || "Could not stage the selected research run.");
@@ -3630,7 +3705,7 @@
     try {
       const job = await fetchJson(API.extractResearchRun(runId), { method: "POST" });
       setBanner("queued", "Research extraction queued", `Queued job ${job.job_id} for ${runId}.`);
-      await pollJobUntilSettled(job.job_id, {
+      const settledJob = await pollJobUntilSettled(job.job_id, {
         onProgress: async (activeJob) => {
           setBanner("queued", "Research extraction running", `Job ${activeJob.job_id} is ${renderJobSummary(activeJob)}.`);
           await refreshResearchDetail(runId, { quiet: true });
@@ -3650,6 +3725,9 @@
           }
         },
       });
+      if (settledJob?.pollTimedOut) {
+        setBanner("queued", "Research extraction still running", `Job ${settledJob.job_id} is still extracting in the background. You can keep working while it finishes.`);
+      }
       render();
     } catch (error) {
       setBanner("failed", "Research extraction failed", error.message || "Could not stage and extract the selected research run.");
@@ -3664,9 +3742,11 @@
     if (!jobId) {
       return null;
     }
-    let attempts = 0;
-    while (attempts < 80) {
+    const startedAt = Date.now();
+    let lastJob = null;
+    while (Date.now() - startedAt < 600000) {
       const job = await fetchJson(API.job(jobId));
+      lastJob = job;
       state.jobs = [job, ...state.jobs.filter((item) => item.job_id !== job.job_id)];
       if (onProgress) {
         await onProgress(job);
@@ -3677,10 +3757,11 @@
         }
         return job;
       }
-      attempts += 1;
-      await new Promise((resolve) => window.setTimeout(resolve, 500));
+      const elapsed = Date.now() - startedAt;
+      const interval = elapsed < 20000 ? 500 : 2000;
+      await new Promise((resolve) => window.setTimeout(resolve, interval));
     }
-    return null;
+    return lastJob ? { ...lastJob, pollTimedOut: true } : null;
   }
 
   function renderJobSummary(job) {
@@ -3973,7 +4054,49 @@
     }
 
     const readyCount = runtime.services.filter((service) => service.ready).length;
-    return `${readyCount}/${runtime.services.length} services ready. Extraction backend: ${runtime.extraction_backend}.`;
+    const projection = runtime.services.find((service) => service.name === "projection");
+    const projectionSummary =
+      projection?.mode === "qdrant:uninitialized"
+        ? " Projection is uninitialized, so query and composition are using memory ranking until the collection exists."
+        : projection && (projection.mode === "disabled" || !projection.ready)
+          ? " Projection is degraded, so query and composition are falling back to memory ranking."
+          : "";
+    const statusLabel =
+      runtime.overall_status === "ready"
+        ? "healthy"
+        : runtime.overall_status === "degraded"
+          ? "degraded"
+          : "blocked";
+    return `Runtime is ${statusLabel}. ${readyCount}/${runtime.services.length} services are currently usable. Extraction backend: ${runtime.extraction_backend}.${projectionSummary}`;
+  }
+
+  function runtimeStatusTone(status) {
+    if (status === "ready") return "live";
+    if (status === "degraded") return "probable";
+    return "queued";
+  }
+
+  function runtimeServiceTone(service) {
+    if (service.mode === "disabled" || service.mode === "stub" || service.mode === "heuristic") {
+      return "probable";
+    }
+    if (service.ready) {
+      return "live";
+    }
+    if (service.mode === "qdrant:uninitialized") {
+      return "queued";
+    }
+    return service.configured ? "failed" : "queued";
+  }
+
+  function runtimeServiceLabel(service) {
+    if (service.mode === "disabled" || service.mode === "stub" || service.mode === "heuristic") {
+      return "degraded";
+    }
+    if (service.mode === "qdrant:uninitialized" && !service.ready) {
+      return "uninitialized";
+    }
+    return service.ready ? "healthy" : "attention";
   }
 
   function renderReachability(value) {

@@ -97,8 +97,7 @@ class GraphRAGExtractionAdapter:
                     ready=False,
                     mode=f"graphrag:{mode}",
                     detail=(
-                        f"GraphRAG root {root} is missing "
-                        "settings.yaml/settings.yml/settings.json."
+                        f"GraphRAG root {root} is missing settings.yaml/settings.yml/settings.json."
                     ),
                 )
             return GraphRAGRuntimeProbe(

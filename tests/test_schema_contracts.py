@@ -118,7 +118,8 @@ def test_repository_fixtures_match_domain_models() -> None:
         for item in load_json_list(DATA_DIR / "bible_project_profiles.json")
     ]
     sections = [
-        BibleSection.model_validate(item) for item in load_json_list(DATA_DIR / "bible_sections.json")
+        BibleSection.model_validate(item)
+        for item in load_json_list(DATA_DIR / "bible_sections.json")
     ]
 
     assert len(sources) == 10
@@ -131,9 +132,9 @@ def test_repository_fixtures_match_domain_models() -> None:
     assert len(review_events) == 4
     assert len(research_runs) == 1
     assert len(research_findings) == 4
-    assert len(jobs) == 5
+    assert len(jobs) == 7
     assert len(profiles) == 1
-    assert len(sections) == 2
+    assert len(sections) == 3
 
     evidence_ids = {item.evidence_id for item in evidence}
     source_ids = {item.source_id for item in sources}
@@ -144,7 +145,9 @@ def test_repository_fixtures_match_domain_models() -> None:
     assert all(item.source_id in source_ids for item in evidence)
     assert all(set(item.evidence_ids) <= evidence_ids for item in candidates)
     assert all(set(item.evidence_ids) <= evidence_ids for item in claims)
-    assert all(item.claim_id in claim_ids and item.related_claim_id in claim_ids for item in relationships)
+    assert all(
+        item.claim_id in claim_ids and item.related_claim_id in claim_ids for item in relationships
+    )
     assert all(item.run_id == "research-rouen-winter" for item in research_findings)
     assert profiles[0].project_id == "project-rouen-winter"
     assert {item.project_id for item in sections} == {"project-rouen-winter"}

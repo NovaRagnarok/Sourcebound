@@ -11,23 +11,23 @@ from source_aware_worldbuilding.api.dependencies import (
 )
 from source_aware_worldbuilding.api.main import app
 from source_aware_worldbuilding.cli import seed_dev_data
+from source_aware_worldbuilding.domain.enums import ClaimKind, ClaimStatus
 from source_aware_worldbuilding.domain.errors import (
     CanonUnavailableError,
     WikibaseSyncError,
     ZoteroWriteError,
 )
 from source_aware_worldbuilding.domain.models import (
-    ExtractionRun,
-    IntakeResult,
     ApprovedClaim,
+    EvidenceSnippet,
+    IntakeResult,
     LorePacketRequest,
     LorePacketResponse,
     SourceDocumentRecord,
-    EvidenceSnippet,
     SourceRecord,
     ZoteroCreatedItem,
 )
-from source_aware_worldbuilding.domain.enums import ClaimKind, ClaimStatus
+from source_aware_worldbuilding.settings import settings
 from source_aware_worldbuilding.storage.json_store import JsonListStore
 
 
@@ -37,7 +37,12 @@ def wait_for_job(client: TestClient, job_id: str, *, attempts: int = 40) -> dict
         response = client.get(f"/v1/jobs/{job_id}")
         assert response.status_code == 200
         last_body = response.json()
-        if last_body.get("status_label") in {"completed", "failed", "cancelled", "partial"} or last_body["status"] in {"completed", "failed", "cancelled"}:
+        if last_body.get("status_label") in {
+            "completed",
+            "failed",
+            "cancelled",
+            "partial",
+        } or last_body["status"] in {"completed", "failed", "cancelled"}:
             return last_body
         time.sleep(0.05)
     return last_body
@@ -174,6 +179,26 @@ def test_openapi_includes_operator_mvp_routes() -> None:
     } <= paths
 
 
+def test_runtime_health_route_reports_degraded_when_quality_layers_are_missing(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "app_state_backend", "file")
+    monkeypatch.setattr(settings, "app_truth_backend", "file")
+    monkeypatch.setattr(settings, "graph_rag_enabled", False)
+    monkeypatch.setattr(settings, "qdrant_enabled", False)
+    monkeypatch.setattr(settings, "zotero_library_id", None)
+
+    with TestClient(app) as client:
+        response = client.get("/health/runtime")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["overall_status"] == "degraded"
+    assert any(
+        service["name"] == "projection" and service["mode"] == "disabled"
+        for service in body["services"]
+    )
+    assert any("recommended for retrieval quality" in step.lower() for step in body["next_steps"])
+
+
 def test_operator_flow_routes_share_file_backed_state(temp_data_dir) -> None:
     seed_dev_data()
 
@@ -247,6 +272,26 @@ def test_operator_flow_routes_share_file_backed_state(temp_data_dir) -> None:
         assert isinstance(query_response.json()["answer_sections"], list)
 
 
+def test_query_route_keeps_bread_token_question_topic_first(temp_data_dir) -> None:
+    seed_dev_data()
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1/query",
+            json={
+                "question": "How were bread tokens handled in Rouen?",
+                "mode": "open_exploration",
+            },
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    returned_ids = [claim["claim_id"] for claim in body["supporting_claims"]]
+    assert returned_ids[:2] == ["claim-bread-tokens", "claim-bread-scrip"]
+    assert body["answer_sections"]
+    assert body["claim_clusters"][0]["lead_claim_id"] == "claim-bread-tokens"
+
+
 def test_review_route_surfaces_wikibase_sync_failures(temp_data_dir) -> None:
     seed_dev_data()
 
@@ -255,16 +300,31 @@ def test_review_route_surfaces_wikibase_sync_failures(temp_data_dir) -> None:
             _ = candidate_id, request
             raise WikibaseSyncError("Wikibase sync failed: upstream unavailable")
 
-    app.dependency_overrides[get_review_service] = lambda: FailingReviewService()
+    try:
+        with TestClient(app) as client:
+            claims_before = client.get("/v1/claims")
+            assert claims_before.status_code == 200
+            claim_count_before = len(claims_before.json())
+            candidates_before = client.get("/v1/candidates?review_state=pending")
+            assert candidates_before.status_code == 200
+            pending_ids_before = {item["candidate_id"] for item in candidates_before.json()}
+            app.dependency_overrides[get_review_service] = lambda: FailingReviewService()
+            response = client.post(
+                "/v1/candidates/cand-grain-bell-beadles/review",
+                json={"decision": "approve"},
+            )
+            app.dependency_overrides.pop(get_review_service, None)
+            claims_after = client.get("/v1/claims")
+            assert claims_after.status_code == 200
+            candidates_after = client.get("/v1/candidates?review_state=pending")
+            assert candidates_after.status_code == 200
 
-    with TestClient(app) as client:
-        response = client.post(
-            "/v1/candidates/cand-grain-bell-beadles/review",
-            json={"decision": "approve"},
-        )
-
-    assert response.status_code == 502
-    assert "Wikibase sync failed" in response.json()["detail"]
+        assert response.status_code == 502
+        assert "Wikibase sync failed" in response.json()["detail"]
+        assert len(claims_after.json()) == claim_count_before
+        assert pending_ids_before == {item["candidate_id"] for item in candidates_after.json()}
+    finally:
+        app.dependency_overrides.pop(get_review_service, None)
 
 
 def test_lore_packet_export_route_returns_markdown_packet(temp_data_dir) -> None:
@@ -316,6 +376,7 @@ def test_bible_workspace_routes_support_profile_section_and_export(temp_data_dir
         section_record = client.get(f"/v1/bible/sections/{section_id}")
         assert section_record.status_code == 200
         assert section_record.json()["references"]["claim_ids"]
+        assert "composition_metrics" in section_record.json()
 
         edited = client.put(
             f"/v1/bible/sections/{section_id}",
@@ -335,6 +396,7 @@ def test_bible_workspace_routes_support_profile_section_and_export(temp_data_dir
         assert refreshed.status_code == 200
         assert refreshed.json()["content"] == "Manual setting notes"
         assert refreshed.json()["generated_markdown"]
+        assert refreshed.json()["composition_metrics"]["target_beats"] >= 1
 
         provenance = client.get(f"/v1/bible/sections/{section_id}/provenance")
         assert provenance.status_code == 200
@@ -342,6 +404,7 @@ def test_bible_workspace_routes_support_profile_section_and_export(temp_data_dir
         assert provenance.json()["paragraphs"][0]["why_this_paragraph_exists"]
         assert provenance.json()["paragraphs"][0]["claim_details"]
         assert provenance.json()["paragraphs"][0]["evidence_details"]
+        assert provenance.json()["paragraphs"][0]["paragraph"]["paragraph_role"] is not None
 
         exported = client.get("/v1/bible/exports/project-greyport")
         assert exported.status_code == 200
@@ -390,13 +453,16 @@ def test_research_routes_accept_nested_execution_policy_and_curated_inputs(temp_
                         "deny_domains": [],
                     },
                     "curated_inputs": [
-                            {
-                                "input_type": "text",
-                                "title": "Flyer archive note",
-                                "text": "Promoters in the local DJ scene described weekly residencies, vinyl crates, and local venue habits.",
-                                "source_type": "archive",
-                                "published_at": "2003-08-01",
-                            }
+                        {
+                            "input_type": "text",
+                            "title": "Flyer archive note",
+                            "text": (
+                                "Promoters in the local DJ scene described weekly "
+                                "residencies, vinyl crates, and local venue habits."
+                            ),
+                            "source_type": "archive",
+                            "published_at": "2003-08-01",
+                        }
                     ],
                 }
             },
@@ -425,45 +491,45 @@ def test_async_author_flow_uses_background_jobs_end_to_end(temp_data_dir) -> Non
     with TestClient(app) as client:
         profile = client.put(
             f"/v1/bible/profiles/{project_id}",
-                json={
-                    "project_name": "Author Flow Demo",
-                    "era": "1421-1422 winter shortage",
-                    "geography": "Rouen",
-                    "narrative_focus": "market control and winter scarcity",
-                    "desired_facets": ["economics", "institutions"],
-                    "composition_defaults": {"include_statuses": ["verified", "probable"]},
-                },
-            )
+            json={
+                "project_name": "Author Flow Demo",
+                "era": "1421-1422 winter shortage",
+                "geography": "Rouen",
+                "narrative_focus": "market control and winter scarcity",
+                "desired_facets": ["economics", "institutions"],
+                "composition_defaults": {"include_statuses": ["verified", "probable"]},
+            },
+        )
         assert profile.status_code == 200
 
         create_run = client.post(
             "/v1/research/runs",
             json={
                 "program_id": "historical-daily-life",
-                    "brief": {
-                        "topic": "Rouen winter shortage daily life",
-                        "focal_year": "1422",
-                        "time_start": "1421-12-01",
-                        "time_end": "1422-02-28",
-                        "locale": "Rouen",
-                        "audience": "historical fiction authors",
-                        "adapter_id": "curated_inputs",
-                        "desired_facets": ["practices"],
-                        "curated_inputs": [
-                            {
-                                "input_type": "text",
-                                "title": "Archive workflow note on bread scrip distribution",
-                                "text": (
-                                    "Rouen bakers described the routine workflow for stamped bread scrip "
-                                    "distribution at the market gate in 1422, and neighbors compared "
-                                    "the tokens before dawn. "
-                                    "Rouen bakers were paid in bread scrip during the winter of 1422, "
-                                    "and neighbors compared the stamped tokens at the market gate."
-                                ),
-                                "source_type": "archive",
-                                "published_at": "1422-01-18",
-                            }
-                        ],
+                "brief": {
+                    "topic": "Rouen winter shortage daily life",
+                    "focal_year": "1422",
+                    "time_start": "1421-12-01",
+                    "time_end": "1422-02-28",
+                    "locale": "Rouen",
+                    "audience": "historical fiction authors",
+                    "adapter_id": "curated_inputs",
+                    "desired_facets": ["practices"],
+                    "curated_inputs": [
+                        {
+                            "input_type": "text",
+                            "title": "Archive workflow note on bread scrip distribution",
+                            "text": (
+                                "Rouen bakers described the routine workflow for "
+                                "stamped bread scrip distribution at the market gate "
+                                "in 1422, and neighbors compared the tokens before dawn. "
+                                "Rouen bakers were paid in bread scrip during the winter of 1422, "
+                                "and neighbors compared the stamped tokens at the market gate."
+                            ),
+                            "source_type": "archive",
+                            "published_at": "1422-01-18",
+                        }
+                    ],
                 },
             },
         )
@@ -512,11 +578,7 @@ def test_async_author_flow_uses_background_jobs_end_to_end(temp_data_dir) -> Non
         ]
         assert new_candidates
         candidate_to_approve = next(
-            (
-                item
-                for item in new_candidates
-                if item["claim_kind"] in {"practice", "object"}
-            ),
+            (item for item in new_candidates if item["claim_kind"] in {"practice", "object"}),
             new_candidates[0],
         )
 
@@ -548,6 +610,7 @@ def test_async_author_flow_uses_background_jobs_end_to_end(temp_data_dir) -> Non
         assert section_body["references"]["claim_ids"]
         assert approved_claim_id in section_body["references"]["claim_ids"]
         assert section_body["latest_job"]["job_id"] == section_job["job_id"]
+        assert "composition_metrics" in section_body
 
         provenance = client.get(f"/v1/bible/sections/{section_id}/provenance")
         assert provenance.status_code == 200

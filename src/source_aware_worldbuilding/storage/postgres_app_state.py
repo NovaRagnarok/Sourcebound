@@ -128,13 +128,21 @@ TABLE_DEFINITIONS = {
         time_end TEXT,
         place TEXT,
         certainty_status TEXT NOT NULL CHECK (
-            certainty_status IN ('verified', 'probable', 'contested', 'rumor', 'legend', 'author_choice')
+            certainty_status IN (
+                'verified', 'probable', 'contested', 'rumor', 'legend', 'author_choice'
+            )
         ),
         claim_kind TEXT NOT NULL CHECK (
-            claim_kind IN ('person', 'place', 'institution', 'event', 'practice', 'belief', 'relationship', 'object')
+            claim_kind IN (
+                'person', 'place', 'institution', 'event', 'practice', 'belief',
+                'relationship', 'object'
+            )
         ),
         review_status TEXT NOT NULL CHECK (
-            review_status IN ('pending', 'approved', 'rejected', 'needs_split', 'needs_edit', 'superseded')
+            review_status IN (
+                'pending', 'approved', 'rejected', 'needs_split', 'needs_edit',
+                'superseded'
+            )
         ),
         created_from_run_id TEXT,
         viewpoint_scope TEXT,
@@ -175,7 +183,9 @@ TABLE_DEFINITIONS = {
         candidate_id TEXT NOT NULL,
         decision TEXT NOT NULL CHECK (decision IN ('approve', 'reject')),
         override_status TEXT CHECK (
-            override_status IS NULL OR override_status IN ('verified', 'probable', 'contested', 'rumor', 'legend', 'author_choice')
+            override_status IS NULL OR override_status IN (
+                'verified', 'probable', 'contested', 'rumor', 'legend', 'author_choice'
+            )
         ),
         notes TEXT,
         approved_claim_id TEXT,
@@ -225,13 +235,31 @@ TABLE_ORDER = [
 ]
 
 POST_INIT_STATEMENTS = [
-    "CREATE INDEX IF NOT EXISTS idx_source_documents_source_id ON {schema}.source_documents (source_id)",
-    "CREATE INDEX IF NOT EXISTS idx_source_chunks_source_id ON {schema}.source_chunks (source_id)",
-    "CREATE INDEX IF NOT EXISTS idx_claims_project_status ON {schema}.claims (project_id, certainty_status, review_status)",
+    (
+        "CREATE INDEX IF NOT EXISTS idx_source_documents_source_id ON "
+        "{schema}.source_documents (source_id)"
+    ),
+    (
+        "CREATE INDEX IF NOT EXISTS idx_source_chunks_source_id ON "
+        "{schema}.source_chunks (source_id)"
+    ),
+    (
+        "CREATE INDEX IF NOT EXISTS idx_claims_project_status ON {schema}.claims "
+        "(project_id, certainty_status, review_status)"
+    ),
     "CREATE INDEX IF NOT EXISTS idx_claims_run_id ON {schema}.claims (created_from_run_id)",
-    "CREATE INDEX IF NOT EXISTS idx_claim_evidence_claim_id ON {schema}.claim_evidence (claim_id, position)",
-    "CREATE INDEX IF NOT EXISTS idx_claim_reviews_claim_id ON {schema}.claim_reviews (claim_id, reviewed_at DESC)",
-    "CREATE INDEX IF NOT EXISTS idx_claim_versions_claim_id ON {schema}.claim_versions (claim_id, version_number DESC)",
+    (
+        "CREATE INDEX IF NOT EXISTS idx_claim_evidence_claim_id ON {schema}.claim_evidence "
+        "(claim_id, position)"
+    ),
+    (
+        "CREATE INDEX IF NOT EXISTS idx_claim_reviews_claim_id ON {schema}.claim_reviews "
+        "(claim_id, reviewed_at DESC)"
+    ),
+    (
+        "CREATE INDEX IF NOT EXISTS idx_claim_versions_claim_id ON {schema}.claim_versions "
+        "(claim_id, version_number DESC)"
+    ),
 ]
 
 
@@ -258,9 +286,7 @@ class PostgresAppStateStore:
                     )
                 )
             for statement in POST_INIT_STATEMENTS:
-                cursor.execute(
-                    SQL(statement.format(schema="{}")).format(Identifier(self.schema))
-                )
+                cursor.execute(SQL(statement.format(schema="{}")).format(Identifier(self.schema)))
 
     def clear_all(self) -> None:
         with self._connect() as connection:
@@ -301,9 +327,7 @@ class PostgresAppStateStore:
                 clauses.append(Identifier(parts[0]))
                 continue
             if len(parts) == 2 and parts[1].upper() in {"ASC", "DESC"}:
-                clauses.append(
-                    SQL("{} {}").format(Identifier(parts[0]), SQL(parts[1].upper()))
-                )
+                clauses.append(SQL("{} {}").format(Identifier(parts[0]), SQL(parts[1].upper())))
                 continue
             raise ValueError(f"Unsupported order_by fragment: {fragment}")
         return SQL(", ").join(clauses)

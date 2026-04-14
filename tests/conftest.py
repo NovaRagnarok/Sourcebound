@@ -21,6 +21,7 @@ def restore_api_dependency_overrides() -> None:
     original_truth_backend = settings.app_truth_backend
     original_postgres_dsn = settings.app_postgres_dsn
     original_postgres_schema = settings.app_postgres_schema
+    original_strict_startup_checks = settings.app_strict_startup_checks
     original_wikibase_base_url = settings.wikibase_base_url
     original_wikibase_api_url = settings.wikibase_api_url
     original_wikibase_username = settings.wikibase_username
@@ -48,6 +49,7 @@ def restore_api_dependency_overrides() -> None:
         settings.app_truth_backend = original_truth_backend
         settings.app_postgres_dsn = original_postgres_dsn
         settings.app_postgres_schema = original_postgres_schema
+        settings.app_strict_startup_checks = original_strict_startup_checks
         settings.wikibase_base_url = original_wikibase_base_url
         settings.wikibase_api_url = original_wikibase_api_url
         settings.wikibase_username = original_wikibase_username
@@ -121,9 +123,7 @@ def postgres_app_state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[
         yield {"dsn": dsn, "schema": schema, "data_dir": tmp_path}
     finally:
         with connect(dsn, autocommit=True) as connection:
-            connection.execute(
-                SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(Identifier(schema))
-            )
+            connection.execute(SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(Identifier(schema)))
 
 
 @pytest.fixture

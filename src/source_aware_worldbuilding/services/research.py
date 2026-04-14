@@ -13,15 +13,15 @@ import httpx
 from tenacity import Retrying, retry_if_exception, stop_after_attempt, wait_exponential_jitter
 
 from source_aware_worldbuilding.adapters.web_research_scout import ResearchScoutRegistry
-from source_aware_worldbuilding.domain.enums import ResearchFindingDecision, ResearchRunStatus
 from source_aware_worldbuilding.domain.enums import (
     ResearchCoverageStatus,
     ResearchFetchOutcome,
+    ResearchFindingDecision,
     ResearchFindingReason,
+    ResearchRunStatus,
 )
 from source_aware_worldbuilding.domain.models import (
     ResearchBrief,
-    ResearchCuratedInput,
     ResearchExecutionPolicy,
     ResearchExtractResult,
     ResearchFacet,
@@ -36,8 +36,6 @@ from source_aware_worldbuilding.domain.models import (
     ResearchRun,
     ResearchRunDetail,
     ResearchRunRequest,
-    ResearchSemanticMatch,
-    ResearchSemanticResult,
     ResearchRunStageResult,
     ResearchRunTelemetry,
     ResearchScoutCapabilities,
@@ -85,11 +83,18 @@ _DEFAULT_FACETS: dict[str, tuple[str, str]] = {
     "people": ("People", "participants eyewitnesses figures biographies"),
     "places": ("Places", "locations venues neighborhoods geographies"),
     "institutions": ("Institutions", "organizations labels networks clubs publishers"),
-    "practices": ("Practices", "habits routines workflows customs methods promotion distribution residencies flyers playlists"),
+    "practices": (
+        "Practices",
+        "habits routines workflows customs methods promotion distribution "
+        "residencies flyers playlists",
+    ),
     "events": ("Events", "events milestones incidents timelines"),
     "objects_technology": ("Objects / Technology", "tools gear formats artifacts technology"),
     "language_slang": ("Language / Slang", "phrases terminology slang discourse"),
-    "economics_commercial": ("Economics / Commercial Context", "prices business trade money markets commerce"),
+    "economics_commercial": (
+        "Economics / Commercial Context",
+        "prices business trade money markets commerce",
+    ),
     "media_culture": ("Media / Culture", "coverage magazines radio press television culture"),
     "regional_context": ("Region-Specific Context", "local scene regional context local history"),
 }
@@ -227,7 +232,9 @@ _LOW_VALUE_RESULT_PATTERNS = (
     "top 20",
     "top 10",
 )
-_SOURCE_SEEKING_TERMS = "interview review listing flyer playlist radio residency archive promoter venue club mix set"
+_SOURCE_SEEKING_TERMS = (
+    "interview review listing flyer playlist radio residency archive promoter venue club mix set"
+)
 _ANCHOR_TERMS = (
     "2002",
     "2003",
@@ -364,7 +371,11 @@ class ResearchService:
             return None
         findings = sorted(
             self.finding_store.list_findings(run_id=run_id),
-            key=lambda item: (item.decision != ResearchFindingDecision.ACCEPTED, -item.score, item.title),
+            key=lambda item: (
+                item.decision != ResearchFindingDecision.ACCEPTED,
+                -item.score,
+                item.title,
+            ),
         )
         return ResearchRunDetail(
             run=run,
@@ -437,9 +448,7 @@ class ResearchService:
             if run.brief.curated_inputs:
                 run.query_count = 0
                 run.telemetry.total_queries = 0
-                run.logs.append(
-                    f"Processing {len(run.brief.curated_inputs)} curated input(s)."
-                )
+                run.logs.append(f"Processing {len(run.brief.curated_inputs)} curated input(s).")
                 stop_reason = self._process_curated_inputs(
                     adapter_id=adapter_id,
                     adapter=adapter,
@@ -481,11 +490,7 @@ class ResearchService:
             self._sync_run_progress(run, facets, findings, started_monotonic)
             self._index_research_findings(
                 run,
-                [
-                    item
-                    for item in findings
-                    if item.decision != ResearchFindingDecision.ACCEPTED
-                ],
+                [item for item in findings if item.decision != ResearchFindingDecision.ACCEPTED],
             )
             run.completed_at = utc_now()
             if stop_reason:
@@ -493,9 +498,8 @@ class ResearchService:
                 run.status = ResearchRunStatus.COMPLETED_PARTIAL
             else:
                 run.status = ResearchRunStatus.COMPLETED
-            if (
-                run.status == ResearchRunStatus.COMPLETED
-                and (run.telemetry.fallback_flags or run.telemetry.semantic.fallback_used)
+            if run.status == ResearchRunStatus.COMPLETED and (
+                run.telemetry.fallback_flags or run.telemetry.semantic.fallback_used
             ):
                 run.status = ResearchRunStatus.DEGRADED_FALLBACK
             self.run_store.update_run(run)
@@ -543,7 +547,8 @@ class ResearchService:
                     external_id=finding.finding_id,
                     title=finding.title,
                     author=finding.publisher,
-                    year=self._year_from_date(finding.published_at) or self._year_from_brief(run.brief),
+                    year=self._year_from_date(finding.published_at)
+                    or self._year_from_brief(run.brief),
                     source_type=finding.source_type or "webpage",
                     locator_hint=finding.locator or finding.query,
                     abstract=finding.snippet_text,
@@ -622,7 +627,9 @@ class ResearchService:
             item.staged_source_id for item in staged_findings if item.staged_source_id is not None
         ]
         staged_document_ids = [
-            item.staged_document_id for item in staged_findings if item.staged_document_id is not None
+            item.staged_document_id
+            for item in staged_findings
+            if item.staged_document_id is not None
         ]
         self._checkpoint(checkpoint)
         normalization = self.normalization_service.normalize_documents(
@@ -675,7 +682,10 @@ class ResearchService:
             ResearchProgram(
                 program_id="historical-period-grounding",
                 name="Historical Fiction / Period Grounding",
-                description="Broad grounding across people, places, institutions, practices, and dated events.",
+                description=(
+                    "Broad grounding across people, places, institutions, practices, "
+                    "and dated events."
+                ),
                 markdown=self.default_program_markdown,
                 built_in=True,
                 default_facets=["people", "places", "institutions", "practices", "events"],
@@ -691,7 +701,10 @@ class ResearchService:
             ResearchProgram(
                 program_id="historical-daily-life",
                 name="Historical Fiction / Daily Life And Material Culture",
-                description="Find routines, tools, domestic details, labor, prices, and objects that make scenes concrete.",
+                description=(
+                    "Find routines, tools, domestic details, labor, prices, and "
+                    "objects that make scenes concrete."
+                ),
                 markdown=self.default_program_markdown,
                 built_in=True,
                 default_facets=["practices", "objects_technology", "economics_commercial"],
@@ -707,7 +720,10 @@ class ResearchService:
             ResearchProgram(
                 program_id="historical-institutions-power",
                 name="Historical Fiction / Institutions And Power",
-                description="Bias toward government, legal, religious, and institutional context for a setting.",
+                description=(
+                    "Bias toward government, legal, religious, and institutional "
+                    "context for a setting."
+                ),
                 markdown=self.default_program_markdown,
                 built_in=True,
                 default_facets=["institutions", "events", "regional_context"],
@@ -723,7 +739,10 @@ class ResearchService:
             ResearchProgram(
                 program_id="historical-slang-discourse",
                 name="Historical Fiction / Speech, Slang, And Discourse",
-                description="Hunt language, discourse, and period-specific phrases without flattening everything into modern summary text.",
+                description=(
+                    "Hunt language, discourse, and period-specific phrases without "
+                    "flattening everything into modern summary text."
+                ),
                 markdown=self.default_program_markdown,
                 built_in=True,
                 default_facets=["language_slang", "media_culture", "people"],
@@ -739,7 +758,10 @@ class ResearchService:
             ResearchProgram(
                 program_id="historical-rumor-folklore",
                 name="Historical Fiction / Rumor And Folklore",
-                description="Collect contested narratives, hearsay, and legend-like material while preserving their lower certainty.",
+                description=(
+                    "Collect contested narratives, hearsay, and legend-like material "
+                    "while preserving their lower certainty."
+                ),
                 markdown=self.default_program_markdown,
                 built_in=True,
                 default_facets=["regional_context", "media_culture", "events"],
@@ -786,7 +808,10 @@ class ResearchService:
         if brief.curated_inputs:
             if not capabilities.supports_text_inputs:
                 return f"Adapter {adapter.adapter_id} does not support curated inputs."
-            if any(item.input_type == "url" for item in brief.curated_inputs) and not capabilities.supports_fetch:
+            if (
+                any(item.input_type == "url" for item in brief.curated_inputs)
+                and not capabilities.supports_fetch
+            ):
                 return f"Adapter {adapter.adapter_id} cannot fetch curated URL inputs."
         elif not capabilities.supports_search:
             return (
@@ -794,7 +819,9 @@ class ResearchService:
             )
         if policy.respect_robots and not capabilities.supports_robots:
             return f"Adapter {adapter.adapter_id} does not support robots checks."
-        if (policy.allow_domains or policy.deny_domains) and not capabilities.supports_domain_policy:
+        if (
+            policy.allow_domains or policy.deny_domains
+        ) and not capabilities.supports_domain_policy:
             return f"Adapter {adapter.adapter_id} does not support domain policy."
         return None
 
@@ -834,7 +861,9 @@ class ResearchService:
         for plan in queries:
             queries_by_facet.setdefault(plan.facet_id, []).append(plan)
 
-        pending_by_facet: dict[str, list[ResearchFinding]] = {facet.facet_id: [] for facet in facets}
+        pending_by_facet: dict[str, list[ResearchFinding]] = {
+            facet.facet_id: [] for facet in facets
+        }
         max_rounds = max((len(items) for items in queries_by_facet.values()), default=0)
 
         def _pending_count() -> int:
@@ -869,8 +898,12 @@ class ResearchService:
                 facet.queries_attempted += 1
                 run.telemetry.queries_attempted += 1
                 try:
-                    raw_hits = self._run_retrying_search(adapter, query, brief.max_results_per_query, run, policy)
-                    self._update_search_telemetry(run, adapter.get_last_search_metadata(), query_plan.profile)
+                    raw_hits = self._run_retrying_search(
+                        adapter, query, brief.max_results_per_query, run, policy
+                    )
+                    self._update_search_telemetry(
+                        run, adapter.get_last_search_metadata(), query_plan.profile
+                    )
                     hits = self._rank_search_hits_for_fetch(
                         brief,
                         facet,
@@ -883,11 +916,15 @@ class ResearchService:
                     continue
                 if not hits:
                     run.telemetry.search.zero_hit_queries_by_profile[query_plan.profile] = (
-                        run.telemetry.search.zero_hit_queries_by_profile.get(query_plan.profile, 0) + 1
+                        run.telemetry.search.zero_hit_queries_by_profile.get(
+                            query_plan.profile, 0
+                        )
+                        + 1
                     )
                 facet.hits_seen += len(hits)
                 run.logs.append(
-                    f"Query [{facet.facet_id}/{query_plan.profile}] returned {len(hits)} candidate hits."
+                    f"Query [{facet.facet_id}/{query_plan.profile}] returned "
+                    f"{len(hits)} candidate hits."
                 )
                 for hit in hits:
                     self._checkpoint(checkpoint)
@@ -941,7 +978,9 @@ class ResearchService:
         started_monotonic: float,
         checkpoint: Callable[[], None] | None = None,
     ) -> str | None:
-        pending_by_facet: dict[str, list[ResearchFinding]] = {facet.facet_id: [] for facet in facets}
+        pending_by_facet: dict[str, list[ResearchFinding]] = {
+            facet.facet_id: [] for facet in facets
+        }
         for item in brief.curated_inputs:
             self._checkpoint(checkpoint)
             pending_count = sum(len(items) for items in pending_by_facet.values())
@@ -969,13 +1008,15 @@ class ResearchService:
                     query_profile="curated_input",
                     hit=ResearchSearchHit(
                         query="curated_input",
-                        url=item.url or f"curated://{sha1((item.title or 'text').encode()).hexdigest()[:12]}",
+                        url=item.url
+                        or f"curated://{sha1((item.title or 'text').encode()).hexdigest()[:12]}",
                         title=item.title or "Curated Text Input",
                         snippet=(item.notes or item.text or "")[:240] or None,
                         rank=1,
                     ),
                     page=ResearchFetchedPage(
-                        url=item.url or f"curated://{sha1((item.title or 'text').encode()).hexdigest()[:12]}",
+                        url=item.url
+                        or f"curated://{sha1((item.title or 'text').encode()).hexdigest()[:12]}",
                         final_url=item.url or None,
                         title=item.title,
                         publisher=item.publisher,
@@ -1119,7 +1160,9 @@ class ResearchService:
             return None
         if host and run.telemetry.per_host_fetch_counts.get(host, 0) >= policy.per_host_fetch_cap:
             facet.skipped_count += 1
-            run.telemetry.skipped_host_counts[host] = run.telemetry.skipped_host_counts.get(host, 0) + 1
+            run.telemetry.skipped_host_counts[host] = (
+                run.telemetry.skipped_host_counts.get(host, 0) + 1
+            )
             run.logs.append(f"Skipped {canonical_url} because host cap for {host} was reached.")
             self._sync_run_progress(run, run.facets, findings, started_monotonic)
             return None
@@ -1133,7 +1176,10 @@ class ResearchService:
                 return None
             if allowed is None and "robots_unavailable" not in run.telemetry.fallback_flags:
                 run.telemetry.fallback_flags.append("robots_unavailable")
-                run.logs.append("Robots check was unavailable for one or more hosts; continuing in degraded mode.")
+                run.logs.append(
+                    "Robots check was unavailable for one or more hosts; "
+                    "continuing in degraded mode."
+                )
         if self._should_skip_hit_before_fetch(brief, facet, hit):
             facet.skipped_count += 1
             run.logs.append(
@@ -1144,7 +1190,9 @@ class ResearchService:
 
         try:
             if host:
-                run.telemetry.per_host_fetch_counts[host] = run.telemetry.per_host_fetch_counts.get(host, 0) + 1
+                run.telemetry.per_host_fetch_counts[host] = (
+                    run.telemetry.per_host_fetch_counts.get(host, 0) + 1
+                )
             page = self._run_retrying_fetch(adapter, canonical_url, run, policy)
             page_cache[canonical_url] = page
             run.telemetry.successful_fetches += 1
@@ -1230,7 +1278,13 @@ class ResearchService:
         source_type = self._classify_source(url)
         relevance = self._relevance_score(
             " ".join(filter(None, [title, snippet])),
-            self._scoring_tokens(brief.topic, facet.label, brief.locale, self._time_hint(brief), *(brief.domain_hints or [])),
+            self._scoring_tokens(
+                brief.topic,
+                facet.label,
+                brief.locale,
+                self._time_hint(brief),
+                *(brief.domain_hints or []),
+            ),
         )
         score = relevance
         score += (hit.fusion_score or 0.0) * 0.35
@@ -1267,7 +1321,9 @@ class ResearchService:
             )
         if metadata.get("fallback_used"):
             run.telemetry.search.fallback_used = True
-            run.telemetry.search.fallback_reason = metadata.get("fallback_reason") or "provider fallback used"
+            run.telemetry.search.fallback_reason = (
+                metadata.get("fallback_reason") or "provider fallback used"
+            )
 
     def _should_skip_hit_before_fetch(
         self,
@@ -1342,7 +1398,11 @@ class ResearchService:
         if scoring.era_band in {"future", "distant_future"} and not scoring.period_evidenced:
             delta -= 0.10
             penalty_flags.append("acceptance_penalty:future_without_period_evidence")
-        if provenance.query_profile == "broad" and not scoring.period_native and not scoring.period_evidenced:
+        if (
+            provenance.query_profile == "broad"
+            and not scoring.period_native
+            and not scoring.period_evidenced
+        ):
             delta -= 0.08
             penalty_flags.append("acceptance_penalty:broad_without_period_evidence")
         if (
@@ -1387,7 +1447,8 @@ class ResearchService:
         for finding in facet_candidates:
             self._apply_source_saturation(finding, accepted_source_usage)
         acceptance_deltas = {
-            finding.finding_id: self._acceptance_preference_delta(finding) for finding in facet_candidates
+            finding.finding_id: self._acceptance_preference_delta(finding)
+            for finding in facet_candidates
         }
         ranked = sorted(
             facet_candidates,
@@ -1395,7 +1456,9 @@ class ResearchService:
                 item.score + acceptance_deltas.get(item.finding_id, 0.0),
                 item.provenance.scoring.period_native if item.provenance else False,
                 item.provenance.scoring.period_evidenced if item.provenance else False,
-                item.provenance.query_profile in {"anchored", "source_seeking"} if item.provenance else False,
+                item.provenance.query_profile in {"anchored", "source_seeking"}
+                if item.provenance
+                else False,
                 item.provenance.scoring.anchor_score if item.provenance else 0.0,
                 item.provenance.scoring.concreteness_score if item.provenance else 0.0,
                 item.provenance.scoring.facet_fit_score if item.provenance else 0.0,
@@ -1471,7 +1534,9 @@ class ResearchService:
                 )
             provenance.scoring.overall_score = finding.score
             provenance.scoring.threshold_passed = finding.score >= program.quality_threshold
-            if duplicate_reason or facet.accepted_count >= min(facet.target_count, brief.max_per_facet):
+            if duplicate_reason or facet.accepted_count >= min(
+                facet.target_count, brief.max_per_facet
+            ):
                 pass
             elif not self._passes_facet_fit(facet, provenance.scoring.facet_fit_score):
                 finding.decision = ResearchFindingDecision.REJECTED
@@ -1480,7 +1545,9 @@ class ResearchService:
                 provenance.policy_flags.append("facet_fit")
             elif self._fails_future_soft_gate(finding):
                 finding.decision = ResearchFindingDecision.REJECTED
-                finding.rejection_reason = "Future-era finding lacked period evidence or strong anchors."
+                finding.rejection_reason = (
+                    "Future-era finding lacked period evidence or strong anchors."
+                )
                 provenance.rejection_reason = ResearchFindingReason.REJECTED_QUALITY_THRESHOLD
                 if "future_soft_gate" not in provenance.policy_flags:
                     provenance.policy_flags.append("future_soft_gate")
@@ -1544,7 +1611,9 @@ class ResearchService:
             with attempt:
                 fetch_started = time.monotonic()
                 result = adapter.search(query, limit=limit)
-                run.telemetry.elapsed_fetch_time_ms += int((time.monotonic() - fetch_started) * 1000)
+                run.telemetry.elapsed_fetch_time_ms += int(
+                    (time.monotonic() - fetch_started) * 1000
+                )
         return result
 
     def _run_retrying_fetch(
@@ -1574,7 +1643,9 @@ class ResearchService:
                 run.telemetry.fetch_attempts += 1
                 fetch_started = time.monotonic()
                 page = adapter.fetch_page(url)
-                run.telemetry.elapsed_fetch_time_ms += int((time.monotonic() - fetch_started) * 1000)
+                run.telemetry.elapsed_fetch_time_ms += int(
+                    (time.monotonic() - fetch_started) * 1000
+                )
         if page is None:
             raise RuntimeError(f"Fetch produced no page for {url}")
         return page
@@ -1585,7 +1656,10 @@ class ResearchService:
         for facet_id in requested:
             label, query_hint = _DEFAULT_FACETS.get(
                 facet_id,
-                (" ".join(part.capitalize() for part in facet_id.split("_")), facet_id.replace("_", " ")),
+                (
+                    " ".join(part.capitalize() for part in facet_id.split("_")),
+                    facet_id.replace("_", " "),
+                ),
             )
             facets.append(
                 ResearchFacet(
@@ -1622,7 +1696,9 @@ class ResearchService:
             ]
             if domain_phrase:
                 primary_parts.append(domain_phrase)
-            primary_query = " ".join(part.strip() for part in primary_parts if part and part.strip())
+            primary_query = " ".join(
+                part.strip() for part in primary_parts if part and part.strip()
+            )
             broad_queries.append(
                 ResearchQueryPlan(
                     facet_id=facet.facet_id,
@@ -1661,9 +1737,7 @@ class ResearchService:
                 source_parts.append(facet_phrase)
             if domain_tail:
                 source_parts.append(domain_tail)
-            source_query = " ".join(
-                part.strip() for part in source_parts if part and part.strip()
-            )
+            source_query = " ".join(part.strip() for part in source_parts if part and part.strip())
             if source_query and source_query not in {primary_query, anchored_query}:
                 source_queries.append(
                     ResearchQueryPlan(
@@ -1702,21 +1776,31 @@ class ResearchService:
         publisher = page.publisher or self._host_for_url(canonical_url)
         relevance = self._relevance_score(
             " ".join(filter(None, [title, hit.snippet or "", excerpt])),
-            self._scoring_tokens(brief.topic, facet.label, brief.locale, self._time_hint(brief)),
+            self._scoring_tokens(
+                brief.topic,
+                facet.label,
+                brief.locale,
+                self._time_hint(brief),
+            ),
         )
         structural_score = self._structural_score(title, snippet, page.published_at)
         source_class_score, boost, penalty = self._source_class_score(source_type)
-        combined_excerpt = " ".join(filter(None, [snippet, excerpt]))
         era_score = self._era_score(page.published_at, brief)
-        anchor_score = self._anchor_score(title=title, snippet=snippet, excerpt=excerpt, brief=brief)
-        concreteness_score = self._concreteness_score(title=title, snippet=snippet, excerpt=excerpt, brief=brief)
-        era_band, period_native, period_evidenced, historical_contextual = self._classify_period_context(
-            title=title,
-            snippet=snippet,
-            excerpt=excerpt,
-            published_at=page.published_at,
-            brief=brief,
-            concreteness_score=concreteness_score,
+        anchor_score = self._anchor_score(
+            title=title, snippet=snippet, excerpt=excerpt, brief=brief
+        )
+        concreteness_score = self._concreteness_score(
+            title=title, snippet=snippet, excerpt=excerpt, brief=brief
+        )
+        era_band, period_native, period_evidenced, historical_contextual = (
+            self._classify_period_context(
+                title=title,
+                snippet=snippet,
+                excerpt=excerpt,
+                published_at=page.published_at,
+                brief=brief,
+                concreteness_score=concreteness_score,
+            )
         )
         facet_fit_score = self._facet_fit_score(
             facet,
@@ -1910,7 +1994,8 @@ class ResearchService:
         accepted_ids = [
             item.finding_id
             for item in findings
-            if item.decision == ResearchFindingDecision.ACCEPTED and item.facet_id == finding.facet_id
+            if item.decision == ResearchFindingDecision.ACCEPTED
+            and item.facet_id == finding.facet_id
         ]
         scoring = finding.provenance.scoring if finding.provenance else ResearchFindingScoring()
         provenance = finding.provenance or ResearchFindingProvenance(
@@ -1940,7 +2025,9 @@ class ResearchService:
             scoring.semantic_fallback_used = True
             scoring.semantic_fallback_reason = result.fallback_reason
             provenance.semantic_decision_notes = (
-                f"Semantic fallback: {result.fallback_reason}" if result.fallback_reason else "Semantic fallback used."
+                f"Semantic fallback: {result.fallback_reason}"
+                if result.fallback_reason
+                else "Semantic fallback used."
             )
             finding.provenance = provenance
             return
@@ -1953,7 +2040,11 @@ class ResearchService:
             rerank_delta = round(self.semantic_rerank_weight * (novelty - 0.5), 4)
             base_score = finding.score
             adjusted_score = max(0.0, min(finding.score + rerank_delta, 1.0))
-            if base_score >= quality_threshold and adjusted_score < quality_threshold and rerank_delta < 0:
+            if (
+                base_score >= quality_threshold
+                and adjusted_score < quality_threshold
+                and rerank_delta < 0
+            ):
                 adjusted_score = quality_threshold
             finding.score = round(adjusted_score, 4)
             if finding.provenance:
@@ -2004,12 +2095,10 @@ class ResearchService:
         for facet in facets:
             facet_findings = [item for item in findings if item.facet_id == facet.facet_id]
             rejected_for_facet = [
-                item for item in facet_findings
-                if item.decision == ResearchFindingDecision.REJECTED
+                item for item in facet_findings if item.decision == ResearchFindingDecision.REJECTED
             ]
             accepted_for_facet = [
-                item for item in facet_findings
-                if item.decision == ResearchFindingDecision.ACCEPTED
+                item for item in facet_findings if item.decision == ResearchFindingDecision.ACCEPTED
             ]
             duplicate_rejections = sum(
                 bool(
@@ -2021,28 +2110,33 @@ class ResearchService:
             threshold_rejections = sum(
                 bool(
                     item.provenance
-                    and item.provenance.rejection_reason == ResearchFindingReason.REJECTED_QUALITY_THRESHOLD
+                    and item.provenance.rejection_reason
+                    == ResearchFindingReason.REJECTED_QUALITY_THRESHOLD
                 )
                 for item in rejected_for_facet
             )
             excluded_source_rejections = sum(
                 bool(
                     item.provenance
-                    and item.provenance.rejection_reason == ResearchFindingReason.REJECTED_EXCLUDED_SOURCE
+                    and item.provenance.rejection_reason
+                    == ResearchFindingReason.REJECTED_EXCLUDED_SOURCE
                 )
                 for item in rejected_for_facet
             )
             fetch_failures = sum(
                 bool(
                     item.provenance
-                    and item.provenance.rejection_reason == ResearchFindingReason.REJECTED_FETCH_FAILURE
+                    and item.provenance.rejection_reason
+                    == ResearchFindingReason.REJECTED_FETCH_FAILURE
                 )
                 for item in rejected_for_facet
             )
             accepted_sources_by_type: dict[str, int] = {}
             for item in accepted_for_facet:
                 source_type = item.source_type or "unknown"
-                accepted_sources_by_type[source_type] = accepted_sources_by_type.get(source_type, 0) + 1
+                accepted_sources_by_type[source_type] = (
+                    accepted_sources_by_type.get(source_type, 0) + 1
+                )
             if facet.accepted_count > facet.target_count:
                 status = ResearchCoverageStatus.OVERSUBSCRIBED
                 gap_reason = None
@@ -2124,7 +2218,12 @@ class ResearchService:
             return "target_met"
         if gap_reason:
             return gap_reason
-        if duplicate_rejections or threshold_rejections or excluded_source_rejections or fetch_failures:
+        if (
+            duplicate_rejections
+            or threshold_rejections
+            or excluded_source_rejections
+            or fetch_failures
+        ):
             return "mixed_rejections"
         return "target_not_met"
 
@@ -2169,10 +2268,19 @@ class ResearchService:
             existing_url = existing.get("canonical_url", "")
             existing_path = existing.get("path", "")
             if existing_url == canonical_url and existing_title_raw and existing_title_raw != title:
-                return "Duplicate URL with a title variant of an already accepted finding.", "same_canonical_url_different_title"
+                return (
+                    "Duplicate URL with a title variant of an already accepted finding.",
+                    "same_canonical_url_different_title",
+                )
             if existing_host and host and existing_host == host:
-                if SequenceMatcher(None, existing_title, normalized_title).ratio() >= similarity_threshold:
-                    return "Near-duplicate of an already accepted finding.", "same_host_similar_title"
+                if (
+                    SequenceMatcher(None, existing_title, normalized_title).ratio()
+                    >= similarity_threshold
+                ):
+                    return (
+                        "Near-duplicate of an already accepted finding.",
+                        "same_host_similar_title",
+                    )
             if (
                 existing_title
                 and existing_title == normalized_title
@@ -2183,7 +2291,10 @@ class ResearchService:
                 and self._has_weak_identity_path(path)
                 and self._has_weak_identity_path(existing_path)
             ):
-                return "Cross-host duplicate of a highly specific titled finding.", "same_title_cross_host"
+                return (
+                    "Cross-host duplicate of a highly specific titled finding.",
+                    "same_title_cross_host",
+                )
         return None, None
 
     def _is_excluded_source(
@@ -2194,7 +2305,9 @@ class ResearchService:
     ) -> bool:
         if not source_type:
             return False
-        return source_type in set(brief.excluded_source_types) | set(program.excluded_source_classes)
+        return source_type in set(brief.excluded_source_types) | set(
+            program.excluded_source_classes
+        )
 
     def _coverage_warnings(
         self,
@@ -2270,7 +2383,9 @@ class ResearchService:
                 chosen.append(sentence)
                 if len(chosen) == 4:
                     break
-        if high_anchor_sentences and not any(sentence in chosen for sentence in high_anchor_sentences):
+        if high_anchor_sentences and not any(
+            sentence in chosen for sentence in high_anchor_sentences
+        ):
             anchor_sentence = max(
                 high_anchor_sentences,
                 key=lambda sentence: self._stage_sentence_score(sentence, run.brief, finding),
@@ -2370,7 +2485,9 @@ class ResearchService:
         text: str,
     ) -> ResearchFacet:
         desired_tokens_by_facet = {
-            facet.facet_id: self._scoring_tokens(brief.topic, facet.label, brief.locale, self._time_hint(brief))
+            facet.facet_id: self._scoring_tokens(
+                brief.topic, facet.label, brief.locale, self._time_hint(brief)
+            )
             for facet in facets
         }
         return max(
@@ -2449,8 +2566,10 @@ class ResearchService:
             return 0.0
         if any(core_start <= year <= core_end for year in explicit_years):
             score += 0.34
-        elif historical_start is not None and historical_end is not None and any(
-            historical_start <= year <= historical_end for year in explicit_years
+        elif (
+            historical_start is not None
+            and historical_end is not None
+            and any(historical_start <= year <= historical_end for year in explicit_years)
         ):
             score += 0.12
         if self._has_specific_date_anchor(combined):
@@ -2549,23 +2668,43 @@ class ResearchService:
     ) -> float:
         combined = " ".join(filter(None, [title, snippet, excerpt]))
         lower = combined.lower()
-        score = max(self._facet_specificity_score(facet, title=title, snippet=snippet, excerpt=excerpt), -0.2)
-        score += min(self._relevance_score(combined, self._scoring_tokens(facet.label, facet.query_hint)) * 0.2, 0.2)
+        score = max(
+            self._facet_specificity_score(facet, title=title, snippet=snippet, excerpt=excerpt),
+            -0.2,
+        )
+        score += min(
+            self._relevance_score(combined, self._scoring_tokens(facet.label, facet.query_hint))
+            * 0.2,
+            0.2,
+        )
         if facet.facet_id == "people":
-            if re.search(r"\bDJ\b", combined) or re.search(r"\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,2}\b", combined):
+            if re.search(r"\bDJ\b", combined) or re.search(
+                r"\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,2}\b", combined
+            ):
                 score += 0.08
             return score
         facet_anchor_bonus = 0.0
         if facet.facet_id == "objects_technology" and any(
-            term in lower for term in ("vinyl", "cdj", "turntable", "mixtape", "record pool", "gear", "format")
+            term in lower
+            for term in ("vinyl", "cdj", "turntable", "mixtape", "record pool", "gear", "format")
         ):
             facet_anchor_bonus = 0.16
         elif facet.facet_id == "media_culture" and any(
-            term in lower for term in ("radio", "press", "magazine", "coverage", "media", "television", "feature")
+            term in lower
+            for term in ("radio", "press", "magazine", "coverage", "media", "television", "feature")
         ):
             facet_anchor_bonus = 0.16
         elif facet.facet_id == "regional_context" and any(
-            term in lower for term in ("chicago", "neighborhood", "south side", "north side", "wicker park", "local", "regional")
+            term in lower
+            for term in (
+                "chicago",
+                "neighborhood",
+                "south side",
+                "north side",
+                "wicker park",
+                "local",
+                "regional",
+            )
         ):
             facet_anchor_bonus = 0.16
         elif facet.facet_id == "practices" and any(term in lower for term in _PRACTICE_TERMS):
@@ -2619,7 +2758,9 @@ class ResearchService:
         saturation_score = self._source_saturation_penalty(accepted_count)
         provenance.scoring.source_saturation_score = round(saturation_score, 4)
         if accepted_count > 0:
-            flags = [flag for flag in provenance.policy_flags if not flag.startswith("source_saturation")]
+            flags = [
+                flag for flag in provenance.policy_flags if not flag.startswith("source_saturation")
+            ]
             flags.append(f"source_saturation:{accepted_count}")
             provenance.policy_flags = flags
         if saturation_score:
@@ -2655,14 +2796,19 @@ class ResearchService:
         title_lower = title.lower()
         combined_lower = " ".join(filter(None, [title, snippet, excerpt])).lower()
         has_time_anchor = self._finding_text_has_time_anchor(title, snippet, excerpt, brief)
-        has_specific_date_anchor = self._has_specific_date_anchor(" ".join(filter(None, [url, title, snippet, excerpt])))
+        has_specific_date_anchor = self._has_specific_date_anchor(
+            " ".join(filter(None, [url, title, snippet, excerpt]))
+        )
         has_query_identity = self._url_has_strong_query_identity(url)
-        has_concrete_anchor = self._concreteness_score(
-            title=title,
-            snippet=snippet,
-            excerpt=excerpt,
-            brief=brief,
-        ) >= 0.16
+        has_concrete_anchor = (
+            self._concreteness_score(
+                title=title,
+                snippet=snippet,
+                excerpt=excerpt,
+                brief=brief,
+            )
+            >= 0.16
+        )
 
         if path == "/":
             score -= 0.2
@@ -2692,11 +2838,26 @@ class ResearchService:
             score -= 0.16
         elif source_type == "archive" and path == "/" and not has_time_anchor:
             score -= 0.1
-        elif source_type == "web" and any(pattern in title_lower for pattern in ("guide", "history", "top ", "about ")):
+        elif source_type == "web" and any(
+            pattern in title_lower for pattern in ("guide", "history", "top ", "about ")
+        ):
             score -= 0.14
-        elif source_type == "educational" and any(pattern in title_lower for pattern in ("abstract", "introduction", "paper", "thesis")):
+        elif source_type == "educational" and any(
+            pattern in title_lower for pattern in ("abstract", "introduction", "paper", "thesis")
+        ):
             score -= 0.14
-        if any(pattern in combined_lower for pattern in ("interview", "review", "residency", "flyer", "radio show", "track listing", "event listing")):
+        if any(
+            pattern in combined_lower
+            for pattern in (
+                "interview",
+                "review",
+                "residency",
+                "flyer",
+                "radio show",
+                "track listing",
+                "event listing",
+            )
+        ):
             score += 0.1
         return score
 
@@ -2714,7 +2875,9 @@ class ResearchService:
         matches = sum(1 for token in facet_tokens if token in lower)
         score = min(matches * 0.03, 0.12)
         if facet.facet_id == "people":
-            if re.search(r"\bDJ\b", combined) or re.search(r"\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,2}\b", combined):
+            if re.search(r"\bDJ\b", combined) or re.search(
+                r"\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,2}\b", combined
+            ):
                 score += 0.05
             return score
         if matches == 0:
@@ -2722,15 +2885,26 @@ class ResearchService:
         elif matches == 1:
             score -= 0.02
         if facet.facet_id == "objects_technology" and not any(
-            term in lower for term in ("vinyl", "cdj", "turntable", "mixtape", "record pool", "gear", "format")
+            term in lower
+            for term in ("vinyl", "cdj", "turntable", "mixtape", "record pool", "gear", "format")
         ):
             score -= 0.08
         if facet.facet_id == "media_culture" and not any(
-            term in lower for term in ("radio", "press", "magazine", "coverage", "media", "television", "feature")
+            term in lower
+            for term in ("radio", "press", "magazine", "coverage", "media", "television", "feature")
         ):
             score -= 0.08
         if facet.facet_id == "regional_context" and not any(
-            term in lower for term in ("chicago", "neighborhood", "south side", "north side", "wicker park", "local", "regional")
+            term in lower
+            for term in (
+                "chicago",
+                "neighborhood",
+                "south side",
+                "north side",
+                "wicker park",
+                "local",
+                "regional",
+            )
         ):
             score -= 0.08
         if facet.facet_id == "practices" and not any(term in lower for term in _PRACTICE_TERMS):
@@ -2770,9 +2944,22 @@ class ResearchService:
             )
         ):
             return "news"
-        if any(part in lower for part in ("youtube", "youtu.be", "vimeo", "soundcloud", "mixcloud")):
+        if any(
+            part in lower for part in ("youtube", "youtu.be", "vimeo", "soundcloud", "mixcloud")
+        ):
             return "video"
-        if any(part in lower for part in ("magazine", "rollingstone", "billboard", "vice", "djmag", "5mag", "chicagomag")):
+        if any(
+            part in lower
+            for part in (
+                "magazine",
+                "rollingstone",
+                "billboard",
+                "vice",
+                "djmag",
+                "5mag",
+                "chicagomag",
+            )
+        ):
             return "magazine"
         if any(part in lower for part in ("forum", "board")):
             return "forum"
@@ -2898,14 +3085,22 @@ class ResearchService:
 
     def _query_time_phrase(self, brief: ResearchBrief) -> str:
         if brief.focal_year:
-            return f"\"{brief.focal_year}\""
+            return f'"{brief.focal_year}"'
         return self._time_hint(brief)
 
     def _query_topic_phrase(self, brief: ResearchBrief) -> str:
         return brief.topic.strip()
 
     def _expanded_time_hint(self, brief: ResearchBrief) -> str:
-        years = [year for year in [brief.focal_year, self._year_from_date(brief.time_start), self._year_from_date(brief.time_end)] if year]
+        years = [
+            year
+            for year in [
+                brief.focal_year,
+                self._year_from_date(brief.time_start),
+                self._year_from_date(brief.time_end),
+            ]
+            if year
+        ]
         unique_years: list[str] = []
         for year in years:
             if year not in unique_years:
@@ -2916,11 +3111,11 @@ class ResearchService:
 
     def _expanded_query_time_phrase(self, brief: ResearchBrief) -> str:
         if brief.focal_year:
-            return f"\"{brief.focal_year}\""
+            return f'"{brief.focal_year}"'
         start_year = self._year_from_date(brief.time_start)
         end_year = self._year_from_date(brief.time_end)
         if start_year and end_year and start_year != end_year:
-            return f"\"{start_year}\" \"{end_year}\""
+            return f'"{start_year}" "{end_year}"'
         return self._query_time_phrase(brief)
 
     def _compact_query_phrase(self, value: str, *, max_words: int) -> str:
@@ -2946,14 +3141,16 @@ class ResearchService:
         if not compacted:
             return ""
         if len(compacted.split()) >= 2:
-            return f"\"{compacted}\""
+            return f'"{compacted}"'
         return compacted
 
     def _domain_tail_phrase(self, brief: ResearchBrief) -> str:
         raw = " ".join(brief.domain_hints or [])
         if not raw:
             return ""
-        words = [part.strip(" ,.;:()[]{}\"'") for part in raw.split() if part.strip(" ,.;:()[]{}\"'")]
+        words = [
+            part.strip(" ,.;:()[]{}\"'") for part in raw.split() if part.strip(" ,.;:()[]{}\"'")
+        ]
         if len(words) <= 2:
             return ""
         return self._compact_query_phrase(" ".join(words[2:]), max_words=4)
@@ -2978,7 +3175,11 @@ class ResearchService:
         return set(re.findall(r"\b((?:19|20)\d{2})\b", text))
 
     def _year_from_brief(self, brief: ResearchBrief) -> str | None:
-        return brief.focal_year or self._year_from_date(brief.time_start) or self._year_from_date(brief.time_end)
+        return (
+            brief.focal_year
+            or self._year_from_date(brief.time_start)
+            or self._year_from_date(brief.time_end)
+        )
 
     def _core_year_range(self, brief: ResearchBrief) -> tuple[int | None, int | None]:
         target_year = self._target_year(brief)
@@ -3030,9 +3231,17 @@ class ResearchService:
         future_start, future_end = self._future_year_range(brief)
         if core_start is not None and core_end is not None and core_start <= year <= core_end:
             return "core"
-        if historical_start is not None and historical_end is not None and historical_start <= year <= historical_end:
+        if (
+            historical_start is not None
+            and historical_end is not None
+            and historical_start <= year <= historical_end
+        ):
             return "historical"
-        if future_start is not None and future_end is not None and future_start <= year <= future_end:
+        if (
+            future_start is not None
+            and future_end is not None
+            and future_start <= year <= future_end
+        ):
             return "future"
         if future_end is not None and year > future_end:
             return "distant_future"
@@ -3081,9 +3290,13 @@ class ResearchService:
         excerpt: str,
         brief: ResearchBrief,
     ) -> bool:
-        return self._text_mentions_contextual_time(" ".join(filter(None, [title, snippet, excerpt])), brief)
+        return self._text_mentions_contextual_time(
+            " ".join(filter(None, [title, snippet, excerpt])), brief
+        )
 
-    def _finding_has_requested_time_anchor(self, finding: ResearchFinding, brief: ResearchBrief) -> bool:
+    def _finding_has_requested_time_anchor(
+        self, finding: ResearchFinding, brief: ResearchBrief
+    ) -> bool:
         return self._finding_text_has_time_anchor(
             finding.title,
             finding.snippet_text,
@@ -3109,7 +3322,11 @@ class ResearchService:
             for fragment in re.split(r"(?<=[.!?])\s+|\n+", text)
             if fragment and fragment.strip()
         ]
-        return [sentence for sentence in candidates if self._is_secondary_stage_sentence_usable(sentence)]
+        return [
+            sentence
+            for sentence in candidates
+            if self._is_secondary_stage_sentence_usable(sentence)
+        ]
 
     def _is_stage_sentence_usable(self, sentence: str) -> bool:
         cleaned = " ".join(sentence.split()).strip(" -")
@@ -3118,9 +3335,18 @@ class ResearchService:
             return False
         if len(cleaned) > 320:
             return False
-        if cleaned.endswith((":", "—", "-", "“", "\"")):
+        if cleaned.endswith((":", "—", "-", "“", '"')):
             return False
-        if lower.startswith(("after defining", "this paper", "this article", "this essay", "this project", "in this paper")):
+        if lower.startswith(
+            (
+                "after defining",
+                "this paper",
+                "this article",
+                "this essay",
+                "this project",
+                "in this paper",
+            )
+        ):
             return False
         if any(pattern in lower for pattern in _PROMO_TEXT_PATTERNS):
             return False
@@ -3137,9 +3363,18 @@ class ResearchService:
             return False
         if len(cleaned) > 220:
             return False
-        if cleaned.endswith((":", "—", "-", "“", "\"")):
+        if cleaned.endswith((":", "—", "-", "“", '"')):
             return False
-        if lower.startswith(("after defining", "this paper", "this article", "this essay", "this project", "in this paper")):
+        if lower.startswith(
+            (
+                "after defining",
+                "this paper",
+                "this article",
+                "this essay",
+                "this project",
+                "in this paper",
+            )
+        ):
             return False
         if any(pattern in lower for pattern in _PROMO_TEXT_PATTERNS):
             return False
@@ -3175,19 +3410,45 @@ class ResearchService:
         lower = sentence.lower()
         if re.search(r"\b(19|20)\d{2}\b", sentence) or self._has_specific_date_anchor(sentence):
             return "time"
-        if any(term in lower for term in ("wicker park", "south side", "north side", "chicago", "neighborhood", "street")):
+        if any(
+            term in lower
+            for term in (
+                "wicker park",
+                "south side",
+                "north side",
+                "chicago",
+                "neighborhood",
+                "street",
+            )
+        ):
             return "place"
-        if any(term in lower for term in ("vinyl", "cdj", "turntable", "mixtape", "record pool", "gear", "format")):
+        if any(
+            term in lower
+            for term in ("vinyl", "cdj", "turntable", "mixtape", "record pool", "gear", "format")
+        ):
             return "gear"
         if any(term in lower for term in ("radio", "magazine", "press", "feature", "coverage")):
             return "media"
-        if any(term in lower for term in ("residency", "flyer", "door policy", "workflow", "practice", "routine", "promoter")):
+        if any(
+            term in lower
+            for term in (
+                "residency",
+                "flyer",
+                "door policy",
+                "workflow",
+                "practice",
+                "routine",
+                "promoter",
+            )
+        ):
             return "practice"
         if re.search(r"\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,2}\b", sentence):
             return "person"
         return "other"
 
-    def _stage_sentence_score(self, sentence: str, brief: ResearchBrief, finding: ResearchFinding) -> float:
+    def _stage_sentence_score(
+        self, sentence: str, brief: ResearchBrief, finding: ResearchFinding
+    ) -> float:
         cleaned = " ".join(sentence.split()).strip()
         score = self._stage_sentence_anchor_score(cleaned, brief)
         if re.search(r"\b(19|20)\d{2}\b", cleaned):
@@ -3204,7 +3465,9 @@ class ResearchService:
             score += 0.05
         if finding.publisher and finding.publisher.lower() not in cleaned.lower():
             score += 0.02
-        if cleaned.lower().startswith(("after defining", "this paper", "this article", "in this paper")):
+        if cleaned.lower().startswith(
+            ("after defining", "this paper", "this article", "in this paper")
+        ):
             score -= 0.25
         if any(pattern in cleaned.lower() for pattern in _PROMO_TEXT_PATTERNS):
             score -= 0.25
@@ -3226,11 +3489,15 @@ class ResearchService:
         if any(host == domain or host.endswith(f".{domain}") for domain in policy.deny_domains):
             return True
         if policy.allow_domains:
-            return not any(host == domain or host.endswith(f".{domain}") for domain in policy.allow_domains)
+            return not any(
+                host == domain or host.endswith(f".{domain}") for domain in policy.allow_domains
+            )
         return False
 
     def _record_failure(self, telemetry: ResearchRunTelemetry, category: str) -> None:
-        telemetry.fetch_failures_by_category[category] = telemetry.fetch_failures_by_category.get(category, 0) + 1
+        telemetry.fetch_failures_by_category[category] = (
+            telemetry.fetch_failures_by_category.get(category, 0) + 1
+        )
 
     def _failure_category(self, exc: Exception) -> str:
         if isinstance(exc, httpx.TimeoutException):

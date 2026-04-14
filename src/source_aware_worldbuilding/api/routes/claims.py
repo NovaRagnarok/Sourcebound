@@ -1,8 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException
 
 from source_aware_worldbuilding.api.dependencies import get_truth_store
-from source_aware_worldbuilding.domain.models import ClaimRelationshipRequest
 from source_aware_worldbuilding.domain.errors import CanonUnavailableError, WikibaseSyncError
+from source_aware_worldbuilding.domain.models import ClaimRelationshipRequest
 
 router = APIRouter(prefix="/v1/claims", tags=["claims"])
 

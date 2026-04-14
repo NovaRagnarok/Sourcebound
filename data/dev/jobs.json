@@ -3,6 +3,8 @@
     "job_id": "job-research-create",
     "job_type": "research_run_create",
     "status": "completed",
+    "status_label": "completed",
+    "completion_state": null,
     "payload": {
       "run_id": "research-rouen-winter",
       "request": {
@@ -37,14 +39,25 @@
         "program_id": "historical-daily-life"
       }
     },
+    "result_payload": null,
     "progress_stage": "completed",
     "progress_current": 100,
     "progress_total": 100,
     "result_ref": {
       "run_id": "research-rouen-winter",
-      "section_id": null
+      "section_id": null,
+      "project_id": null
     },
     "error": null,
+    "error_code": null,
+    "error_detail": null,
+    "warnings": [],
+    "retryable": false,
+    "attempt_count": 1,
+    "max_attempts": 1,
+    "retry_of_job_id": null,
+    "cancel_requested_at": null,
+    "last_heartbeat_at": null,
     "created_at": "2026-04-12T10:45:00+00:00",
     "started_at": "2026-04-12T10:45:02+00:00",
     "completed_at": "2026-04-12T10:49:00+00:00",
@@ -54,17 +67,30 @@
     "job_id": "job-research-stage",
     "job_type": "research_run_stage",
     "status": "completed",
+    "status_label": "completed",
+    "completion_state": null,
     "payload": {
       "run_id": "research-rouen-winter"
     },
+    "result_payload": null,
     "progress_stage": "completed",
     "progress_current": 100,
     "progress_total": 100,
     "result_ref": {
       "run_id": "research-rouen-winter",
-      "section_id": null
+      "section_id": null,
+      "project_id": null
     },
     "error": null,
+    "error_code": null,
+    "error_detail": null,
+    "warnings": [],
+    "retryable": false,
+    "attempt_count": 1,
+    "max_attempts": 1,
+    "retry_of_job_id": null,
+    "cancel_requested_at": null,
+    "last_heartbeat_at": null,
     "created_at": "2026-04-12T10:50:00+00:00",
     "started_at": "2026-04-12T10:50:03+00:00",
     "completed_at": "2026-04-12T10:52:00+00:00",
@@ -74,17 +100,30 @@
     "job_id": "job-research-extract",
     "job_type": "research_run_extract",
     "status": "completed",
+    "status_label": "completed",
+    "completion_state": null,
     "payload": {
       "run_id": "research-rouen-winter"
     },
+    "result_payload": null,
     "progress_stage": "completed",
     "progress_current": 100,
     "progress_total": 100,
     "result_ref": {
       "run_id": "research-rouen-winter",
-      "section_id": null
+      "section_id": null,
+      "project_id": null
     },
     "error": null,
+    "error_code": null,
+    "error_detail": null,
+    "warnings": [],
+    "retryable": false,
+    "attempt_count": 1,
+    "max_attempts": 1,
+    "retry_of_job_id": null,
+    "cancel_requested_at": null,
+    "last_heartbeat_at": null,
     "created_at": "2026-04-12T10:54:00+00:00",
     "started_at": "2026-04-12T10:54:02+00:00",
     "completed_at": "2026-04-12T10:57:00+00:00",
@@ -94,6 +133,8 @@
     "job_id": "job-bible-compose-economics",
     "job_type": "bible_section_compose",
     "status": "completed",
+    "status_label": "completed",
+    "completion_state": null,
     "payload": {
       "section_id": "section-rouen-economics",
       "request": {
@@ -123,14 +164,25 @@
         }
       }
     },
+    "result_payload": null,
     "progress_stage": "completed",
     "progress_current": 100,
     "progress_total": 100,
     "result_ref": {
       "run_id": null,
-      "section_id": "section-rouen-economics"
+      "section_id": "section-rouen-economics",
+      "project_id": null
     },
     "error": null,
+    "error_code": null,
+    "error_detail": null,
+    "warnings": [],
+    "retryable": false,
+    "attempt_count": 1,
+    "max_attempts": 1,
+    "retry_of_job_id": null,
+    "cancel_requested_at": null,
+    "last_heartbeat_at": null,
     "created_at": "2026-04-12T12:18:00+00:00",
     "started_at": "2026-04-12T12:18:03+00:00",
     "completed_at": "2026-04-12T12:20:00+00:00",
@@ -140,6 +192,8 @@
     "job_id": "job-bible-regenerate-rumors",
     "job_type": "bible_section_regenerate",
     "status": "completed",
+    "status_label": "completed",
+    "completion_state": null,
     "payload": {
       "section_id": "section-rouen-rumors",
       "request": {
@@ -169,17 +223,442 @@
         }
       }
     },
+    "result_payload": null,
     "progress_stage": "completed",
     "progress_current": 100,
     "progress_total": 100,
     "result_ref": {
       "run_id": null,
-      "section_id": "section-rouen-rumors"
+      "section_id": "section-rouen-rumors",
+      "project_id": null
     },
     "error": null,
+    "error_code": null,
+    "error_detail": null,
+    "warnings": [],
+    "retryable": false,
+    "attempt_count": 1,
+    "max_attempts": 1,
+    "retry_of_job_id": null,
+    "cancel_requested_at": null,
+    "last_heartbeat_at": null,
     "created_at": "2026-04-12T12:58:00+00:00",
     "started_at": "2026-04-12T12:58:04+00:00",
     "completed_at": "2026-04-12T13:00:00+00:00",
     "updated_at": "2026-04-12T13:00:00+00:00"
+  },
+  {
+    "job_id": "job-bible-export-latest",
+    "job_type": "bible_project_export",
+    "status": "completed",
+    "status_label": "completed",
+    "completion_state": "completed",
+    "payload": {
+      "project_id": "project-rouen-winter"
+    },
+    "result_payload": {
+      "profile": {
+        "project_id": "project-rouen-winter",
+        "project_name": "Rouen Winter Shortage Bible",
+        "era": "1421-1422 winter shortage",
+        "time_start": "1421-12-01",
+        "time_end": "1422-02-28",
+        "geography": "Rouen",
+        "social_lens": "bakers, porters, clerks, and households waiting on ration lines",
+        "narrative_focus": "market control, winter scarcity, rumor, and ritualized public order",
+        "taboo_topics": [
+          "modern slang",
+          "clean heroic famine myths"
+        ],
+        "desired_facets": [
+          "economics",
+          "daily life",
+          "institutions",
+          "ritual",
+          "rumor"
+        ],
+        "tone": "grounded_literary",
+        "composition_defaults": {
+          "include_statuses": [
+            "verified",
+            "probable"
+          ],
+          "source_types": [
+            "record",
+            "petition",
+            "archive",
+            "account_book"
+          ],
+          "focus": "bread prices, ration tokens, and bell-controlled market flow"
+        },
+        "created_at": "2026-04-12T08:00:00+00:00",
+        "updated_at": "2026-04-12T13:15:00+00:00"
+      },
+      "sections": [
+        {
+          "section_id": "section-rouen-author-decisions",
+          "project_id": "project-rouen-winter",
+          "section_type": "author_decisions",
+          "title": "House Style Decisions",
+          "content": "# Author Decisions\n\nNo approved canon matches this section yet.\n\n## Coverage Notes\nCoverage is usable for drafting and stays bounded by approved canon.\n- No approved canon supports author decisions yet.",
+          "generated_markdown": "# Author Decisions\n\nNo approved canon matches this section yet.\n\n## Coverage Notes\nCoverage is usable for drafting and stays bounded by approved canon.\n- No approved canon supports author decisions yet.",
+          "manual_markdown": null,
+          "paragraphs": [
+            {
+              "paragraph_id": "para-967522526d",
+              "heading": null,
+              "text": "No approved canon matches this section yet.",
+              "paragraph_kind": "empty_state",
+              "claim_ids": [],
+              "evidence_ids": [],
+              "source_ids": [],
+              "contradiction_flags": [],
+              "supersession_flags": []
+            }
+          ],
+          "generation_filters": {
+            "focus": "narrative defaults for queues, cold weather, and shrine atmosphere",
+            "statuses": [],
+            "source_types": [],
+            "place": "Rouen",
+            "viewpoint_scope": null,
+            "claim_kind": null,
+            "time_start": "1421-12-01",
+            "time_end": "1422-02-28",
+            "relationship_types": []
+          },
+          "references": {
+            "claim_ids": [],
+            "evidence_ids": [],
+            "source_ids": [],
+            "certainty_buckets": []
+          },
+          "certainty_summary": {},
+          "coverage_gaps": [
+            "No approved canon supports author decisions yet."
+          ],
+          "contradiction_flags": [],
+          "recommended_next_research": [],
+          "coverage_analysis": {
+            "desired_facets": [
+              "economics",
+              "daily life",
+              "institutions",
+              "ritual",
+              "rumor"
+            ],
+            "facet_distribution": {},
+            "missing_facets": [],
+            "certainty_mix": {},
+            "time_coverage": [],
+            "place_coverage": [],
+            "missing_named_actors": false,
+            "missing_material_detail": false,
+            "missing_dated_anchors": false,
+            "diagnostic_summary": "Coverage is usable for drafting and stays bounded by approved canon."
+          },
+          "retrieval_metadata": {
+            "retrieval_backend": "memory",
+            "fallback_used": false,
+            "fallback_reason": null,
+            "seed_query": "Author Decisions narrative defaults for queues, cold weather, and shrine atmosphere market control, winter scarcity, rumor, and ritualized public order bakers, porters, clerks, and households waiting on ration lines Rouen 1421-1422 winter shortage economics daily life institutions ritual rumor",
+            "ranking_strategy": "intent_blended"
+          },
+          "has_manual_edits": false,
+          "latest_job": null,
+          "created_at": "2026-04-12T13:05:00+00:00",
+          "updated_at": "2026-04-12T13:05:00+00:00",
+          "last_generated_at": "2026-04-12T13:05:00+00:00",
+          "last_edited_at": null
+        },
+        {
+          "section_id": "section-rouen-economics",
+          "project_id": "project-rouen-winter",
+          "section_type": "economics_and_material_culture",
+          "title": "Markets, Tokens, and Grain Flow",
+          "content": "# Economics And Material Culture\n\n## Trade, exchange, and pressure\nTrade pressure is clearest when Bakers in Rouen used household bread tokens. Stage scenes in Rouen, mainly around 1422-01-01. Keep uncertainty bounded: treat Bakers in Rouen used household bread tokens as the working read rather than hard fact. Sources: Petition of the Rouen bakers (petition 3).\n\n## Writer's working line\nUse the economy as daily pressure rather than abstract background. Treat prices, tools, and exchange routines as something characters handle in motion. Stage scenes in Rouen, mainly around 1422-01-01. Keep uncertainty bounded: treat Bakers in Rouen used household bread tokens as the working read rather than hard fact. Sources: Petition of the Rouen bakers (petition 3).\n\n## Coverage Notes\nCoverage currently supports economics and daily life.",
+          "generated_markdown": "# Economics And Material Culture\n\n## Trade, exchange, and pressure\nTrade pressure is clearest when Bakers in Rouen used household bread tokens. Stage scenes in Rouen, mainly around 1422-01-01. Keep uncertainty bounded: treat Bakers in Rouen used household bread tokens as the working read rather than hard fact. Sources: Petition of the Rouen bakers (petition 3).\n\n## Writer's working line\nUse the economy as daily pressure rather than abstract background. Treat prices, tools, and exchange routines as something characters handle in motion. Stage scenes in Rouen, mainly around 1422-01-01. Keep uncertainty bounded: treat Bakers in Rouen used household bread tokens as the working read rather than hard fact. Sources: Petition of the Rouen bakers (petition 3).\n\n## Coverage Notes\nCoverage currently supports economics and daily life.",
+          "manual_markdown": null,
+          "paragraphs": [
+            {
+              "paragraph_id": "para-6cecfff645",
+              "heading": "Trade, exchange, and pressure",
+              "text": "Trade pressure is clearest when Bakers in Rouen used household bread tokens. Stage scenes in Rouen, mainly around 1422-01-01. Keep uncertainty bounded: treat Bakers in Rouen used household bread tokens as the working read rather than hard fact. Sources: Petition of the Rouen bakers (petition 3).",
+              "paragraph_kind": "economy_cluster",
+              "claim_ids": [
+                "claim-bread-tokens"
+              ],
+              "evidence_ids": [
+                "evi-bread-tokens"
+              ],
+              "source_ids": [
+                "src-bakers-petition"
+              ],
+              "contradiction_flags": [],
+              "supersession_flags": []
+            },
+            {
+              "paragraph_id": "para-f78d47b05e",
+              "heading": "Writer's working line",
+              "text": "Use the economy as daily pressure rather than abstract background. Treat prices, tools, and exchange routines as something characters handle in motion. Stage scenes in Rouen, mainly around 1422-01-01. Keep uncertainty bounded: treat Bakers in Rouen used household bread tokens as the working read rather than hard fact. Sources: Petition of the Rouen bakers (petition 3).",
+              "paragraph_kind": "economy_notebook",
+              "claim_ids": [
+                "claim-bread-tokens"
+              ],
+              "evidence_ids": [
+                "evi-bread-tokens"
+              ],
+              "source_ids": [
+                "src-bakers-petition"
+              ],
+              "contradiction_flags": [],
+              "supersession_flags": []
+            }
+          ],
+          "generation_filters": {
+            "focus": "bread prices, ration tokens, debt tracking, and market movement",
+            "statuses": [
+              "verified",
+              "probable"
+            ],
+            "source_types": [
+              "record",
+              "petition",
+              "archive",
+              "account_book"
+            ],
+            "place": "Rouen",
+            "viewpoint_scope": null,
+            "claim_kind": null,
+            "time_start": "1421-12-01",
+            "time_end": "1422-02-28",
+            "relationship_types": [
+              "supports"
+            ]
+          },
+          "references": {
+            "claim_ids": [
+              "claim-bread-tokens"
+            ],
+            "evidence_ids": [
+              "evi-bread-tokens"
+            ],
+            "source_ids": [
+              "src-bakers-petition"
+            ],
+            "certainty_buckets": [
+              "probable"
+            ]
+          },
+          "certainty_summary": {
+            "probable": 1
+          },
+          "coverage_gaps": [],
+          "contradiction_flags": [],
+          "recommended_next_research": [],
+          "coverage_analysis": {
+            "desired_facets": [
+              "economics",
+              "daily life",
+              "institutions",
+              "ritual",
+              "rumor"
+            ],
+            "facet_distribution": {
+              "daily life": 1,
+              "economics": 1,
+              "practices": 1
+            },
+            "missing_facets": [],
+            "certainty_mix": {
+              "probable": 1
+            },
+            "time_coverage": [
+              {
+                "label": "1422-01-01",
+                "count": 1
+              }
+            ],
+            "place_coverage": [
+              {
+                "label": "Rouen",
+                "count": 1
+              }
+            ],
+            "missing_named_actors": false,
+            "missing_material_detail": false,
+            "missing_dated_anchors": false,
+            "diagnostic_summary": "Coverage currently supports economics and daily life."
+          },
+          "retrieval_metadata": {},
+          "has_manual_edits": false,
+          "latest_job": null,
+          "created_at": "2026-04-12T12:20:00+00:00",
+          "updated_at": "2026-04-12T12:20:00+00:00",
+          "last_generated_at": "2026-04-12T12:20:00+00:00",
+          "last_edited_at": null
+        },
+        {
+          "section_id": "section-rouen-rumors",
+          "project_id": "project-rouen-winter",
+          "section_type": "rumors_and_contested_accounts",
+          "title": "What the City Said vs. What the Ledgers Say",
+          "content": "# What the City Said vs. What the Ledgers Say\n\nThe working version for the novel keeps the grain-bell timing dispute visible as public confusion, not as a solved footnote. The latest generated synthesis stays below as the evidence-backed baseline.\n\n- Treat the prime-versus-terce contradiction as a queue-management problem the characters can feel.\n- Keep merchant-hoarding talk in dialogue and rumor, never in omniscient narration.\n- Use the blue-lantern shrine story for tone, not confirmation.",
+          "generated_markdown": "# Rumors And Contested Accounts\n\nNo approved canon matches this section yet.\n\n## Coverage Notes\nStill thin on ritual and rumor.\n- No approved canon supports rumors and contested accounts yet.",
+          "manual_markdown": "# What the City Said vs. What the Ledgers Say\n\nThe working version for the novel keeps the grain-bell timing dispute visible as public confusion, not as a solved footnote. The latest generated synthesis stays below as the evidence-backed baseline.\n\n- Treat the prime-versus-terce contradiction as a queue-management problem the characters can feel.\n- Keep merchant-hoarding talk in dialogue and rumor, never in omniscient narration.\n- Use the blue-lantern shrine story for tone, not confirmation.",
+          "paragraphs": [
+            {
+              "paragraph_id": "para-967522526d",
+              "heading": null,
+              "text": "No approved canon matches this section yet.",
+              "paragraph_kind": "empty_state",
+              "claim_ids": [],
+              "evidence_ids": [],
+              "source_ids": [],
+              "contradiction_flags": [],
+              "supersession_flags": []
+            }
+          ],
+          "generation_filters": {
+            "focus": "grain bell disputes, hoarding stories, and eerie shrine gossip",
+            "statuses": [
+              "contested",
+              "rumor",
+              "legend",
+              "probable"
+            ],
+            "source_types": [
+              "ordinance",
+              "chronicle",
+              "broadside"
+            ],
+            "place": "Rouen",
+            "viewpoint_scope": null,
+            "claim_kind": null,
+            "time_start": "1421-12-01",
+            "time_end": "1422-02-28",
+            "relationship_types": [
+              "contradicts",
+              "supersedes",
+              "superseded_by"
+            ]
+          },
+          "references": {
+            "claim_ids": [],
+            "evidence_ids": [],
+            "source_ids": [],
+            "certainty_buckets": []
+          },
+          "certainty_summary": {},
+          "coverage_gaps": [
+            "No approved canon supports rumors and contested accounts yet."
+          ],
+          "contradiction_flags": [],
+          "recommended_next_research": [],
+          "coverage_analysis": {
+            "desired_facets": [
+              "economics",
+              "daily life",
+              "institutions",
+              "ritual",
+              "rumor"
+            ],
+            "facet_distribution": {},
+            "missing_facets": [
+              "ritual",
+              "rumor"
+            ],
+            "certainty_mix": {},
+            "time_coverage": [],
+            "place_coverage": [],
+            "missing_named_actors": false,
+            "missing_material_detail": false,
+            "missing_dated_anchors": false,
+            "diagnostic_summary": "Still thin on ritual and rumor."
+          },
+          "retrieval_metadata": {},
+          "has_manual_edits": true,
+          "latest_job": null,
+          "created_at": "2026-04-12T12:45:00+00:00",
+          "updated_at": "2026-04-12T13:15:00+00:00",
+          "last_generated_at": "2026-04-12T13:00:00+00:00",
+          "last_edited_at": "2026-04-12T13:15:00+00:00"
+        }
+      ],
+      "generated_at": "2026-04-14T15:10:21.958364+00:00"
+    },
+    "progress_stage": "completed",
+    "progress_current": 100,
+    "progress_total": 100,
+    "result_ref": {
+      "run_id": null,
+      "section_id": null,
+      "project_id": "project-rouen-winter"
+    },
+    "error": null,
+    "error_code": null,
+    "error_detail": null,
+    "warnings": [],
+    "retryable": false,
+    "attempt_count": 1,
+    "max_attempts": 1,
+    "retry_of_job_id": null,
+    "cancel_requested_at": null,
+    "last_heartbeat_at": "2026-04-14T15:10:21.958581+00:00",
+    "created_at": "2026-04-12T13:10:00+00:00",
+    "started_at": "2026-04-14T15:10:21.952692+00:00",
+    "completed_at": "2026-04-14T15:10:21.958574+00:00",
+    "updated_at": "2026-04-14T15:10:21.958581+00:00"
+  },
+  {
+    "job_id": "job-bible-compose-author-failed",
+    "job_type": "bible_section_compose",
+    "status": "failed",
+    "status_label": "failed",
+    "completion_state": null,
+    "payload": {
+      "section_id": "section-rouen-author-decisions",
+      "request": {
+        "project_id": "project-rouen-winter",
+        "section_type": "author_decisions",
+        "title": "House Style Decisions",
+        "filters": {
+          "focus": "narrative defaults for queues, cold weather, and shrine atmosphere",
+          "statuses": [],
+          "source_types": [],
+          "place": "Rouen",
+          "viewpoint_scope": null,
+          "claim_kind": null,
+          "time_start": "1421-12-01",
+          "time_end": "1422-02-28",
+          "relationship_types": []
+        }
+      }
+    },
+    "result_payload": null,
+    "progress_stage": "failed",
+    "progress_current": 40,
+    "progress_total": 100,
+    "result_ref": {
+      "run_id": null,
+      "section_id": "section-rouen-author-decisions",
+      "project_id": null
+    },
+    "error": "Background worker restarted before this compose job finished.",
+    "error_code": null,
+    "error_detail": "Background worker restarted before this compose job finished.",
+    "warnings": [
+      "Retrying this job is safe; author manual text is not involved."
+    ],
+    "retryable": true,
+    "attempt_count": 1,
+    "max_attempts": 1,
+    "retry_of_job_id": null,
+    "cancel_requested_at": null,
+    "last_heartbeat_at": null,
+    "created_at": "2026-04-12T13:06:00+00:00",
+    "started_at": "2026-04-12T13:06:05+00:00",
+    "completed_at": "2026-04-12T13:07:10+00:00",
+    "updated_at": "2026-04-12T13:07:10+00:00"
   }
 ]

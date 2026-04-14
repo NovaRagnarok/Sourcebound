@@ -135,10 +135,13 @@ def test_live_wikibase_review_flow_round_trips_claim(require_live_wikibase, monk
     assert adapter._statement_qualifier_value(statement, "time_start") == "2026-04-01"
     assert adapter._statement_qualifier_value(statement, "time_end") == "2026-04-12"
     assert adapter._statement_qualifier_value(statement, "viewpoint_scope") == "integration"
-    assert adapter._statement_qualifier_value(
-        statement,
-        "notes",
-    ) == "Created by Sourcebound live integration test."
+    assert (
+        adapter._statement_qualifier_value(
+            statement,
+            "notes",
+        )
+        == "Created by Sourcebound live integration test."
+    )
     assert adapter._statement_qualifier_value(statement, "app_claim_id") == claim_id
     assert adapter._reference_values(statement, "source_id") == ["live-source"]
     assert adapter._reference_values(statement, "locator") == ["integration-test"]

@@ -8,7 +8,8 @@ from typer.testing import CliRunner
 from source_aware_worldbuilding.cli import (
     _benchmark_brief_2003_dj,
     _run_benchmark_2003_dj,
-    _run_benchmark_2003_dj_once,
+)
+from source_aware_worldbuilding.cli import (
     app as cli_app,
 )
 from source_aware_worldbuilding.domain.enums import (
@@ -63,7 +64,11 @@ def test_benchmark_runner_writes_complete_report_artifact(tmp_path: Path, monkey
                 status=ResearchRunStatus.COMPLETED,
                 brief=_benchmark_brief_2003_dj(),
                 program_id="default-generic",
-                facets=[ResearchFacet(facet_id="people", label="People", query_hint="participants", target_count=1)],
+                facets=[
+                    ResearchFacet(
+                        facet_id="people", label="People", query_hint="participants", target_count=1
+                    )
+                ],
                 accepted_count=1,
                 rejected_count=0,
             )
@@ -174,7 +179,15 @@ def test_cli_benchmark_command_emits_json(monkeypatch) -> None:
             "artifact_dir": str(output_root / "artifact"),
             "accepted_findings": [],
             "extraction": {"candidate_count": 0},
-            "scorecard": {"auto_pass": False, "auto_checks": {"coverage_all_facets": False, "core_or_period_evidenced_count": 0, "late_retrospective_count": 0, "top_candidate_proxy_reviewable_count": 0}},
+            "scorecard": {
+                "auto_pass": False,
+                "auto_checks": {
+                    "coverage_all_facets": False,
+                    "core_or_period_evidenced_count": 0,
+                    "late_retrospective_count": 0,
+                    "top_candidate_proxy_reviewable_count": 0,
+                },
+            },
         },
     )
 
@@ -197,7 +210,11 @@ def test_benchmark_repeat_writes_summary_artifact(tmp_path: Path, monkeypatch) -
                 status=ResearchRunStatus.COMPLETED,
                 brief=_benchmark_brief_2003_dj(),
                 program_id="default-generic",
-                facets=[ResearchFacet(facet_id="people", label="People", query_hint="participants", target_count=1)],
+                facets=[
+                    ResearchFacet(
+                        facet_id="people", label="People", query_hint="participants", target_count=1
+                    )
+                ],
                 accepted_count=1,
                 rejected_count=0,
             )
@@ -223,7 +240,12 @@ def test_benchmark_repeat_writes_summary_artifact(tmp_path: Path, monkeypatch) -
             return ResearchRunDetail(
                 run=run,
                 findings=[finding],
-                program=ResearchProgram(program_id="default-generic", name="Default", markdown="# Default", built_in=True),
+                program=ResearchProgram(
+                    program_id="default-generic",
+                    name="Default",
+                    markdown="# Default",
+                    built_in=True,
+                ),
                 facet_coverage=[
                     ResearchFacetCoverage(
                         facet_id="people",
@@ -255,12 +277,19 @@ def test_benchmark_repeat_writes_summary_artifact(tmp_path: Path, monkeypatch) -
             )
             return ResearchExtractResult(
                 stage_result=ResearchRunStageResult(
-                    run=ResearchRun(run_id=f"research-test-{self.calls}", status=ResearchRunStatus.COMPLETED, brief=_benchmark_brief_2003_dj(), program_id="default-generic"),
+                    run=ResearchRun(
+                        run_id=f"research-test-{self.calls}",
+                        status=ResearchRunStatus.COMPLETED,
+                        brief=_benchmark_brief_2003_dj(),
+                        program_id="default-generic",
+                    ),
                     staged_source_ids=["research-source-1"],
                     staged_document_ids=["research-doc-1"],
                 ),
                 normalization={"document_count": 1, "text_unit_count": 1, "warnings": []},
-                extraction=ExtractionOutput(run=extraction_run, candidates=[candidate], evidence=[]),
+                extraction=ExtractionOutput(
+                    run=extraction_run, candidates=[candidate], evidence=[]
+                ),
             )
 
     service = FakeResearchService()

@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Iterable
 
 from source_aware_worldbuilding.adapters.file_backed import (
     FileCandidateStore,
@@ -28,12 +28,12 @@ from source_aware_worldbuilding.domain.models import (
     ResearchExecutionPolicy,
     ResearchFetchedPage,
     ResearchFinding,
-    ResearchSemanticMatch,
-    ResearchSemanticResult,
     ResearchProgramCreateRequest,
     ResearchRunRequest,
     ResearchScoutCapabilities,
     ResearchSearchHit,
+    ResearchSemanticMatch,
+    ResearchSemanticResult,
     SourceDocumentRecord,
     SourceRecord,
 )
@@ -150,7 +150,8 @@ class FakeScout:
                 published_at="2003-05-12",
                 source_type="archive",
                 text=(
-                    "Participants described the scene, named venues, and documented the local habits. "
+                    "Participants described the scene, named venues, and "
+                    "documented the local habits. "
                     "The 2003 oral history mentions equipment, promoters, and neighborhood changes."
                 ),
             )
@@ -198,9 +199,11 @@ class FakeResearchSemantic:
         if self.fallback_reason:
             return ResearchSemanticResult(fallback_used=True, fallback_reason=self.fallback_reason)
         matches: list[ResearchSemanticMatch] = []
-        if self.match_feature and (
-            "Feature Coverage" in finding.title or "Scene Magazine Overview" in finding.title
-        ) and allowed_finding_ids:
+        if (
+            self.match_feature
+            and ("Feature Coverage" in finding.title or "Scene Magazine Overview" in finding.title)
+            and allowed_finding_ids
+        ):
             matches.append(
                 ResearchSemanticMatch(
                     finding_id=allowed_finding_ids[0],
@@ -240,9 +243,9 @@ def build_service(
         candidate_store=FileCandidateStore(data_dir),
         evidence_store=FileEvidenceStore(data_dir),
     )
-    default_markdown = (Path(__file__).resolve().parents[1] / "docs" / "research" / "default_program.md").read_text(
-        encoding="utf-8"
-    )
+    default_markdown = (
+        Path(__file__).resolve().parents[1] / "docs" / "research" / "default_program.md"
+    ).read_text(encoding="utf-8")
     scouts = list(scout) if not isinstance(scout, FakeScout) else [scout]
     return ResearchService(
         scout_registry=ResearchScoutRegistry(
@@ -307,12 +310,18 @@ def test_research_run_allows_same_source_to_support_multiple_facets(temp_data_di
         )
     )
 
-    accepted = [item for item in detail.findings if item.decision == ResearchFindingDecision.ACCEPTED]
-    rejected = [item for item in detail.findings if item.decision == ResearchFindingDecision.REJECTED]
+    accepted = [
+        item for item in detail.findings if item.decision == ResearchFindingDecision.ACCEPTED
+    ]
+    rejected = [
+        item for item in detail.findings if item.decision == ResearchFindingDecision.REJECTED
+    ]
     assert len(accepted) == 2
     assert len(rejected) == 0
     assert accepted[0].provenance is not None
-    assert accepted[0].provenance.acceptance_reason == ResearchFindingReason.ACCEPTED_QUALITY_THRESHOLD
+    assert (
+        accepted[0].provenance.acceptance_reason == ResearchFindingReason.ACCEPTED_QUALITY_THRESHOLD
+    )
     assert accepted[0].provenance.search_provider_id == "duckduckgo_html"
     assert accepted[0].provenance.query_profile == "anchored"
 
@@ -339,14 +348,20 @@ def test_source_saturation_prefers_alternative_when_reused_source_is_only_slight
                         query=query,
                         url="https://archive.example.org/shared-source",
                         title="2003 Chicago DJs and residencies",
-                        snippet="In 2003, Chicago DJs shaped the local scene through club residencies.",
+                        snippet=(
+                            "In 2003, Chicago DJs shaped the local scene through "
+                            "club residencies."
+                        ),
                         rank=1,
                     ),
                     ResearchSearchHit(
                         query=query,
                         url="https://news.example.com/radio-feature",
                         title="2003 Chicago radio coverage feature",
-                        snippet="A 2003 radio feature covered venues, DJs, and local club reporting.",
+                        snippet=(
+                            "A 2003 radio feature covered venues, DJs, and local "
+                            "club reporting."
+                        ),
                         rank=2,
                     ),
                 ]
@@ -361,7 +376,10 @@ def test_source_saturation_prefers_alternative_when_reused_source_is_only_slight
                     publisher="Scene Archive",
                     published_at="2023-01-01",
                     source_type="archive",
-                    text="In 2003, influential Chicago DJs reshaped the local scene through residencies and club nights.",
+                    text=(
+                        "In 2003, influential Chicago DJs reshaped the local scene "
+                        "through residencies and club nights."
+                    ),
                 )
             return ResearchFetchedPage(
                 url=url,
@@ -370,7 +388,10 @@ def test_source_saturation_prefers_alternative_when_reused_source_is_only_slight
                 publisher="City News",
                 published_at="2003-07-12",
                 source_type="news",
-                text="In 2003, radio coverage tracked Chicago venues, promoters, and weekly club reporting.",
+                text=(
+                    "In 2003, radio coverage tracked Chicago venues, promoters, and "
+                    "weekly club reporting."
+                ),
             )
 
     service = build_service(temp_data_dir, SaturationScout())
@@ -388,13 +409,19 @@ def test_source_saturation_prefers_alternative_when_reused_source_is_only_slight
         )
     )
 
-    accepted = [item for item in detail.findings if item.decision == ResearchFindingDecision.ACCEPTED]
+    accepted = [
+        item for item in detail.findings if item.decision == ResearchFindingDecision.ACCEPTED
+    ]
     accepted_by_facet = {item.facet_id: item for item in accepted}
     assert accepted_by_facet["people"].canonical_url == "https://archive.example.org/shared-source"
-    assert accepted_by_facet["media_culture"].canonical_url == "https://news.example.com/radio-feature"
+    assert (
+        accepted_by_facet["media_culture"].canonical_url == "https://news.example.com/radio-feature"
+    )
 
 
-def test_source_saturation_does_not_block_clearly_stronger_reused_source(temp_data_dir: Path) -> None:
+def test_source_saturation_does_not_block_clearly_stronger_reused_source(
+    temp_data_dir: Path,
+) -> None:
     class StrongReuseScout(FakeScout):
         def search(self, query: str, *, limit: int = 5) -> list[ResearchSearchHit]:
             lowered = query.lower()
@@ -414,7 +441,10 @@ def test_source_saturation_does_not_block_clearly_stronger_reused_source(temp_da
                         query=query,
                         url="https://archive.example.org/shared-source",
                         title="2003 Chicago DJs and media coverage",
-                        snippet="In 2003, radio play, press features, and venue coverage followed Chicago DJs.",
+                        snippet=(
+                            "In 2003, radio play, press features, and venue coverage "
+                            "followed Chicago DJs."
+                        ),
                         rank=1,
                     ),
                     ResearchSearchHit(
@@ -436,7 +466,10 @@ def test_source_saturation_does_not_block_clearly_stronger_reused_source(temp_da
                     publisher="Scene Archive",
                     published_at="2003-02-15",
                     source_type="archive",
-                    text="In 2003, Chicago DJs were covered by radio stations, local magazines, and venue flyers across the city.",
+                    text=(
+                        "In 2003, Chicago DJs were covered by radio stations, local "
+                        "magazines, and venue flyers across the city."
+                    ),
                 )
             return ResearchFetchedPage(
                 url=url,
@@ -463,9 +496,13 @@ def test_source_saturation_does_not_block_clearly_stronger_reused_source(temp_da
         )
     )
 
-    accepted = [item for item in detail.findings if item.decision == ResearchFindingDecision.ACCEPTED]
+    accepted = [
+        item for item in detail.findings if item.decision == ResearchFindingDecision.ACCEPTED
+    ]
     assert len(accepted) == 2
-    assert {item.canonical_url for item in accepted} == {"https://archive.example.org/shared-source"}
+    assert {item.canonical_url for item in accepted} == {
+        "https://archive.example.org/shared-source"
+    }
 
 
 def test_stage_and_extract_flow_creates_text_backed_sources_and_candidates(
@@ -526,7 +563,9 @@ def test_stage_and_extract_flow_creates_text_backed_sources_and_candidates(
     assert extract_result.normalization["text_unit_count"] >= 1
     assert extract_result.extraction.candidates
     assert extract_result.stage_result.run.extraction_run_id is not None
-    assert {item.source_id for item in extract_result.extraction.evidence} <= set(stage_result.staged_source_ids)
+    assert {item.source_id for item in extract_result.extraction.evidence} <= set(
+        stage_result.staged_source_ids
+    )
 
 
 def test_program_creation_and_empty_runs_surface_coverage_gaps(temp_data_dir: Path) -> None:
@@ -559,7 +598,10 @@ def test_program_creation_and_empty_runs_surface_coverage_gaps(temp_data_dir: Pa
     )
 
     assert detail.run.warnings
-    assert any("no accepted findings" in item.lower() or "coverage gap" in item.lower() for item in detail.run.warnings)
+    assert any(
+        "no accepted findings" in item.lower() or "coverage gap" in item.lower()
+        for item in detail.run.warnings
+    )
     assert detail.facet_coverage
     assert detail.facet_coverage[0].coverage_status == ResearchCoverageStatus.EMPTY
     assert detail.facet_coverage[0].coverage_gap_reason == "no_hits"
@@ -606,12 +648,18 @@ def test_research_run_continues_when_one_fetch_fails(temp_data_dir: Path) -> Non
         )
     )
 
-    accepted = [item for item in detail.findings if item.decision == ResearchFindingDecision.ACCEPTED]
-    rejected = [item for item in detail.findings if item.decision == ResearchFindingDecision.REJECTED]
+    accepted = [
+        item for item in detail.findings if item.decision == ResearchFindingDecision.ACCEPTED
+    ]
+    rejected = [
+        item for item in detail.findings if item.decision == ResearchFindingDecision.REJECTED
+    ]
     assert len(accepted) == 1
     assert any((item.rejection_reason or "").startswith("Fetch failed:") for item in rejected)
     assert any("fetch failed" in log.lower() for log in detail.run.logs)
-    failed = next(item for item in rejected if (item.rejection_reason or "").startswith("Fetch failed:"))
+    failed = next(
+        item for item in rejected if (item.rejection_reason or "").startswith("Fetch failed:")
+    )
     assert failed.provenance is not None
     assert failed.provenance.fetch_outcome == ResearchFetchOutcome.FAILED
     assert failed.provenance.rejection_reason == ResearchFindingReason.REJECTED_FETCH_FAILURE
@@ -646,7 +694,10 @@ def test_research_run_uses_curated_text_inputs_without_search(temp_data_dir: Pat
                     ResearchCuratedInput(
                         input_type="text",
                         title="Curated oral history",
-                        text="The local music scene promoter described neighborhood venues, mixtapes, and weekly residencies.",
+                        text=(
+                            "The local music scene promoter described neighborhood "
+                            "venues, mixtapes, and weekly residencies."
+                        ),
                         source_type="archive",
                         published_at="2003-04-01",
                     )
@@ -663,7 +714,9 @@ def test_research_run_uses_curated_text_inputs_without_search(temp_data_dir: Pat
     assert detail.findings[0].provenance.originating_query == "curated_input"
 
 
-def test_research_run_marks_failed_policy_for_impossible_adapter_request(temp_data_dir: Path) -> None:
+def test_research_run_marks_failed_policy_for_impossible_adapter_request(
+    temp_data_dir: Path,
+) -> None:
     class CuratedScout(FakeScout):
         adapter_id = "curated_inputs"
         capabilities = ResearchScoutCapabilities(
@@ -692,12 +745,20 @@ def test_research_run_marks_failed_policy_for_impossible_adapter_request(temp_da
 def test_title_normalization_strips_boilerplate_and_publisher_suffixes(temp_data_dir: Path) -> None:
     service = build_service(temp_data_dir, FakeScout())
 
-    assert service._normalize_title("Scene Participants Oral History | City Archive") == "scene participants oral history"
-    assert service._normalize_title("Feature Coverage of the Local Scene - Regional News") == "feature coverage of the local scene"
+    assert (
+        service._normalize_title("Scene Participants Oral History | City Archive")
+        == "scene participants oral history"
+    )
+    assert (
+        service._normalize_title("Feature Coverage of the Local Scene - Regional News")
+        == "feature coverage of the local scene"
+    )
     assert service._normalize_title("2003 DJ Scene: Official Site") == "2003 dj scene"
 
 
-def test_url_canonicalization_collapses_tracking_and_default_page_variants(temp_data_dir: Path) -> None:
+def test_url_canonicalization_collapses_tracking_and_default_page_variants(
+    temp_data_dir: Path,
+) -> None:
     service = build_service(temp_data_dir, FakeScout())
 
     first = service._canonical_url("https://www.example.org/index.html?utm_source=test&id=5")
@@ -709,7 +770,9 @@ def test_url_canonicalization_collapses_tracking_and_default_page_variants(temp_
     assert third == "https://example.org/?id=5"
 
 
-def test_duplicate_reason_distinguishes_canonical_url_and_cross_host_title_cases(temp_data_dir: Path) -> None:
+def test_duplicate_reason_distinguishes_canonical_url_and_cross_host_title_cases(
+    temp_data_dir: Path,
+) -> None:
     service = build_service(temp_data_dir, FakeScout())
     accepted = {
         "sig-a": {
@@ -908,7 +971,7 @@ def test_research_run_derives_quality_threshold_rejection_and_facet_coverage(
                 desired_facets=["people", "media_culture"],
                 max_queries=2,
                 max_results_per_query=1,
-            )
+            ),
         )
     )
 
@@ -995,7 +1058,9 @@ def test_scoring_exposes_era_and_coverage_components(temp_data_dir: Path) -> Non
         facet=facet,
         query="test",
         query_profile="test",
-        hit=ResearchSearchHit(query="test", url="https://archive.example.org/close", title="Close source", rank=1),
+        hit=ResearchSearchHit(
+            query="test", url="https://archive.example.org/close", title="Close source", rank=1
+        ),
         page=ResearchFetchedPage(
             url="https://archive.example.org/close",
             final_url="https://archive.example.org/close",
@@ -1014,7 +1079,12 @@ def test_scoring_exposes_era_and_coverage_components(temp_data_dir: Path) -> Non
         facet=facet,
         query="test",
         query_profile="test",
-        hit=ResearchSearchHit(query="test", url="https://archive.example.org/retro", title="Retrospective source", rank=2),
+        hit=ResearchSearchHit(
+            query="test",
+            url="https://archive.example.org/retro",
+            title="Retrospective source",
+            rank=2,
+        ),
         page=ResearchFetchedPage(
             url="https://archive.example.org/retro",
             final_url="https://archive.example.org/retro",
@@ -1141,7 +1211,12 @@ def test_historical_context_remains_relevant_but_below_core_era(temp_data_dir: P
         facet=facet,
         query="test",
         query_profile="test",
-        hit=ResearchSearchHit(query="test", url="https://archive.example.org/1978-scene", title="1978 Chicago nightlife background", rank=1),
+        hit=ResearchSearchHit(
+            query="test",
+            url="https://archive.example.org/1978-scene",
+            title="1978 Chicago nightlife background",
+            rank=1,
+        ),
         page=ResearchFetchedPage(
             url="https://archive.example.org/1978-scene",
             final_url="https://archive.example.org/1978-scene",
@@ -1160,14 +1235,22 @@ def test_historical_context_remains_relevant_but_below_core_era(temp_data_dir: P
         facet=facet,
         query="test",
         query_profile="test",
-        hit=ResearchSearchHit(query="test", url="https://archive.example.org/2001-scene", title="2001 Chicago club report", rank=2),
+        hit=ResearchSearchHit(
+            query="test",
+            url="https://archive.example.org/2001-scene",
+            title="2001 Chicago club report",
+            rank=2,
+        ),
         page=ResearchFetchedPage(
             url="https://archive.example.org/2001-scene",
             final_url="https://archive.example.org/2001-scene",
             title="2001 Chicago club report",
             published_at="2001-08-18",
             source_type="archive",
-            text="In 2001, Chicago DJs moved between club residencies, venue flyers, and radio coverage.",
+            text=(
+                "In 2001, Chicago DJs moved between club residencies, venue flyers, "
+                "and radio coverage."
+            ),
         ),
         fetch_outcome=ResearchFetchOutcome.FETCHED,
         fetch_status="fetched",
@@ -1183,7 +1266,9 @@ def test_historical_context_remains_relevant_but_below_core_era(temp_data_dir: P
     assert core.score > historical.score
 
 
-def test_later_retrospective_becomes_period_evidenced_with_core_year_anchors(temp_data_dir: Path) -> None:
+def test_later_retrospective_becomes_period_evidenced_with_core_year_anchors(
+    temp_data_dir: Path,
+) -> None:
     service = build_service(temp_data_dir, FakeScout())
     brief = ResearchBrief(topic="Chicago DJ scene", focal_year="2003")
     facet = service._expand_facets(brief, service.list_programs()[0])[0]
@@ -1206,14 +1291,22 @@ def test_later_retrospective_becomes_period_evidenced_with_core_year_anchors(tem
         facet=facet,
         query="test",
         query_profile="test",
-        hit=ResearchSearchHit(query="test", url="https://archive.example.org/retro-anchored", title="Chicago scene retrospective", rank=1),
+        hit=ResearchSearchHit(
+            query="test",
+            url="https://archive.example.org/retro-anchored",
+            title="Chicago scene retrospective",
+            rank=1,
+        ),
         page=ResearchFetchedPage(
             url="https://archive.example.org/retro-anchored",
             final_url="https://archive.example.org/retro-anchored",
             title="Chicago scene retrospective",
             published_at="2022-07-01",
             source_type="archive",
-            text="In 1999 and 2003, Chicago radio shows, record pools, and venue flyers shaped how DJs built the scene.",
+            text=(
+                "In 1999 and 2003, Chicago radio shows, record pools, and venue "
+                "flyers shaped how DJs built the scene."
+            ),
         ),
         fetch_outcome=ResearchFetchOutcome.FETCHED,
         fetch_status="fetched",
@@ -1225,7 +1318,12 @@ def test_later_retrospective_becomes_period_evidenced_with_core_year_anchors(tem
         facet=facet,
         query="test",
         query_profile="test",
-        hit=ResearchSearchHit(query="test", url="https://archive.example.org/retro-weak", title="Chicago scene retrospective", rank=2),
+        hit=ResearchSearchHit(
+            query="test",
+            url="https://archive.example.org/retro-weak",
+            title="Chicago scene retrospective",
+            rank=2,
+        ),
         page=ResearchFetchedPage(
             url="https://archive.example.org/retro-weak",
             final_url="https://archive.example.org/retro-weak",
@@ -1284,7 +1382,10 @@ def test_facet_acceptance_reranks_before_accepting(temp_data_dir: Path) -> None:
                 publisher="Scene Archive",
                 published_at="2003-08-10",
                 source_type="archive",
-                text="In 2003, record pools, club flyers, and weekly residencies shaped the Chicago DJ scene.",
+                text=(
+                    "In 2003, record pools, club flyers, and weekly residencies "
+                    "shaped the Chicago DJ scene."
+                ),
             )
 
     service = build_service(temp_data_dir, RerankScout())
@@ -1300,7 +1401,9 @@ def test_facet_acceptance_reranks_before_accepting(temp_data_dir: Path) -> None:
         )
     )
 
-    accepted = [item for item in detail.findings if item.decision == ResearchFindingDecision.ACCEPTED]
+    accepted = [
+        item for item in detail.findings if item.decision == ResearchFindingDecision.ACCEPTED
+    ]
     assert len(accepted) == 1
     assert accepted[0].title == "Chicago DJ scene report from 2003"
 
@@ -1321,8 +1424,9 @@ def test_stage_text_prefers_factual_complete_sentences(temp_data_dir: Path) -> N
     finding = detail.findings[0].model_copy(
         update={
             "page_excerpt": (
-                "Listen to our documentary about the scene. In 2003, DJs rotated between Wicker Park loft parties "
-                "and South Side club residencies. Promoters enforced door policies to keep the parties safe."
+                "Listen to our documentary about the scene. In 2003, DJs rotated "
+                "between Wicker Park loft parties and South Side club residencies. "
+                "Promoters enforced door policies to keep the parties safe."
             ),
             "snippet_text": "Read more about the scene. Photo by archive staff.",
         }
@@ -1351,12 +1455,16 @@ def test_stage_text_diversifies_secondary_anchor_sentences(temp_data_dir: Path) 
     finding = detail.findings[0].model_copy(
         update={
             "page_excerpt": (
-                "In 2003, DJs rotated between Wicker Park loft parties and South Side club residencies. "
+                "In 2003, DJs rotated between Wicker Park loft parties and South "
+                "Side club residencies. "
                 "Weekly flyers promoted Friday sets across Chicago neighborhoods. "
                 "Radio shows announced resident DJs and venue changes. "
                 "Record pool drops supplied vinyl for the weekend."
             ),
-            "snippet_text": "In 2003, DJs rotated between Wicker Park loft parties and South Side club residencies.",
+            "snippet_text": (
+                "In 2003, DJs rotated between Wicker Park loft parties and South "
+                "Side club residencies."
+            ),
         }
     )
 
@@ -1366,7 +1474,9 @@ def test_stage_text_diversifies_secondary_anchor_sentences(temp_data_dir: Path) 
     assert "Record pool drops supplied vinyl for the weekend." in staged
 
 
-def test_best_excerpt_prefers_anchored_factual_sentences_over_boilerplate(temp_data_dir: Path) -> None:
+def test_best_excerpt_prefers_anchored_factual_sentences_over_boilerplate(
+    temp_data_dir: Path,
+) -> None:
     service = build_service(temp_data_dir, FakeScout())
     brief = ResearchBrief(topic="Chicago DJ scene", focal_year="2003")
 
@@ -1374,7 +1484,8 @@ def test_best_excerpt_prefers_anchored_factual_sentences_over_boilerplate(temp_d
         (
             'Retrieved from "https://example.org/archive". '
             "Read more about the exhibition. "
-            "In 2003, DJs rotated between Wicker Park loft parties and South Side club residencies. "
+            "In 2003, DJs rotated between Wicker Park loft parties and South Side "
+            "club residencies. "
             "Promoters posted weekly flyers and coordinated record pool drops for Friday sets."
         ),
         service._scoring_tokens("Chicago DJ scene", "people", "Chicago", "2003"),
@@ -1518,7 +1629,10 @@ def test_specific_date_artifact_url_can_outrank_retrospective_timeline(temp_data
             title="2003-02-07 DJ Set Chicago",
             published_at="2003",
             source_type="web",
-            text="2003-02-07 DJ set listing for a Chicago venue with resident DJs and flyer support.",
+            text=(
+                "2003-02-07 DJ set listing for a Chicago venue with resident DJs "
+                "and flyer support."
+            ),
         ),
         fetch_outcome=ResearchFetchOutcome.FETCHED,
         fetch_status="fetched",
@@ -1557,11 +1671,19 @@ def test_specific_date_artifact_url_can_outrank_retrospective_timeline(temp_data
 
 def test_explicit_year_anchor_boosts_retrospective_source(temp_data_dir: Path) -> None:
     service = build_service(temp_data_dir, FakeScout())
-    brief = ResearchBrief(topic="Chicago DJ scene", focal_year="2003", time_start="2002", time_end="2004")
+    brief = ResearchBrief(
+        topic="Chicago DJ scene", focal_year="2003", time_start="2002", time_end="2004"
+    )
     facet = service._expand_facets(brief, service.list_programs()[0])[0]
     seed_run = service.run_research(
         ResearchRunRequest(
-            brief=ResearchBrief(topic="seed", focal_year="2003", desired_facets=["people"], max_queries=1, max_results_per_query=1)
+            brief=ResearchBrief(
+                topic="seed",
+                focal_year="2003",
+                desired_facets=["people"],
+                max_queries=1,
+                max_results_per_query=1,
+            )
         )
     ).run
 
@@ -1576,7 +1698,10 @@ def test_explicit_year_anchor_boosts_retrospective_source(temp_data_dir: Path) -
             query="test",
             url="https://archive.example.org/chicago-house-essay",
             title="Remembering Chicago nightlife in 2003",
-            snippet="A retrospective essay that specifically cites 2003 club residencies and record pool drops.",
+            snippet=(
+                "A retrospective essay that specifically cites 2003 club "
+                "residencies and record pool drops."
+            ),
             rank=1,
         ),
         page=ResearchFetchedPage(
@@ -1585,7 +1710,10 @@ def test_explicit_year_anchor_boosts_retrospective_source(temp_data_dir: Path) -
             title="Remembering Chicago nightlife in 2003",
             published_at="2021-06-01",
             source_type="archive",
-            text="In 2003, weekly residencies at Chicago clubs depended on record pool drops, flyer runs, and late-night radio support.",
+            text=(
+                "In 2003, weekly residencies at Chicago clubs depended on record "
+                "pool drops, flyer runs, and late-night radio support."
+            ),
         ),
         fetch_outcome=ResearchFetchOutcome.FETCHED,
         fetch_status="fetched",
@@ -1618,11 +1746,16 @@ def test_explicit_year_anchor_boosts_retrospective_source(temp_data_dir: Path) -
 
     assert anchored_retrospective.provenance is not None
     assert vague_retrospective.provenance is not None
-    assert anchored_retrospective.provenance.scoring.anchor_score > vague_retrospective.provenance.scoring.anchor_score
+    assert (
+        anchored_retrospective.provenance.scoring.anchor_score
+        > vague_retrospective.provenance.scoring.anchor_score
+    )
     assert anchored_retrospective.score > vague_retrospective.score
 
 
-def test_profile_weighting_prefers_anchored_query_when_other_signals_are_close(temp_data_dir: Path) -> None:
+def test_profile_weighting_prefers_anchored_query_when_other_signals_are_close(
+    temp_data_dir: Path,
+) -> None:
     class ProfileScout(FakeScout):
         def search(self, query: str, *, limit: int = 5) -> list[ResearchSearchHit]:
             self.search_queries.append(query)
@@ -1662,7 +1795,9 @@ def test_profile_weighting_prefers_anchored_query_when_other_signals_are_close(t
         )
     )
 
-    accepted = [item for item in detail.findings if item.decision == ResearchFindingDecision.ACCEPTED]
+    accepted = [
+        item for item in detail.findings if item.decision == ResearchFindingDecision.ACCEPTED
+    ]
     assert len(accepted) == 1
     assert accepted[0].provenance is not None
     assert accepted[0].provenance.query_profile == "anchored"
@@ -1672,12 +1807,20 @@ def test_acceptance_preference_rerank_prefers_period_evidenced_candidate_with_sm
     temp_data_dir: Path,
 ) -> None:
     service = build_service(temp_data_dir, FakeScout())
-    brief = ResearchBrief(topic="Chicago DJ scene", focal_year="2003", desired_facets=["people"], max_per_facet=1)
+    brief = ResearchBrief(
+        topic="Chicago DJ scene", focal_year="2003", desired_facets=["people"], max_per_facet=1
+    )
     program = service.list_programs()[0]
     facet = service._expand_facets(brief, program)[0]
     seed_run = service.run_research(
         ResearchRunRequest(
-            brief=ResearchBrief(topic="seed", focal_year="2003", desired_facets=["people"], max_queries=1, max_results_per_query=1)
+            brief=ResearchBrief(
+                topic="seed",
+                focal_year="2003",
+                desired_facets=["people"],
+                max_queries=1,
+                max_results_per_query=1,
+            )
         )
     ).run
 
@@ -1726,7 +1869,10 @@ def test_acceptance_preference_rerank_prefers_period_evidenced_candidate_with_sm
             title="Remembering Chicago nightlife in 2003",
             published_at="2021-06-01",
             source_type="archive",
-            text="In 2003, weekly residencies, record pool drops, and radio support shaped the Chicago scene.",
+            text=(
+                "In 2003, weekly residencies, record pool drops, and radio support "
+                "shaped the Chicago scene."
+            ),
         ),
         fetch_outcome=ResearchFetchOutcome.FETCHED,
         fetch_status="fetched",
@@ -1763,7 +1909,13 @@ def test_acceptance_preference_penalizes_broad_non_period_candidate(temp_data_di
     facet = service._expand_facets(brief, service.list_programs()[0])[0]
     seed_run = service.run_research(
         ResearchRunRequest(
-            brief=ResearchBrief(topic="seed", focal_year="2003", desired_facets=["people"], max_queries=1, max_results_per_query=1)
+            brief=ResearchBrief(
+                topic="seed",
+                focal_year="2003",
+                desired_facets=["people"],
+                max_queries=1,
+                max_results_per_query=1,
+            )
         )
     ).run
 
@@ -1824,8 +1976,14 @@ def test_acceptance_preference_penalizes_broad_non_period_candidate(temp_data_di
     anchored_delta = service._acceptance_preference_delta(anchored_historical)
 
     assert broad_delta < anchored_delta
-    assert "acceptance_penalty:broad_without_period_evidence" in broad_historical.provenance.policy_flags
-    assert "acceptance_penalty:broad_without_period_evidence" not in anchored_historical.provenance.policy_flags
+    assert (
+        "acceptance_penalty:broad_without_period_evidence"
+        in broad_historical.provenance.policy_flags
+    )
+    assert (
+        "acceptance_penalty:broad_without_period_evidence"
+        not in anchored_historical.provenance.policy_flags
+    )
 
 
 def test_retrospective_title_penalty_is_conditional(temp_data_dir: Path) -> None:
@@ -1834,7 +1992,13 @@ def test_retrospective_title_penalty_is_conditional(temp_data_dir: Path) -> None
     facet = service._expand_facets(brief, service.list_programs()[0])[0]
     seed_run = service.run_research(
         ResearchRunRequest(
-            brief=ResearchBrief(topic="seed", focal_year="2003", desired_facets=["people"], max_queries=1, max_results_per_query=1)
+            brief=ResearchBrief(
+                topic="seed",
+                focal_year="2003",
+                desired_facets=["people"],
+                max_queries=1,
+                max_results_per_query=1,
+            )
         )
     ).run
 
@@ -1925,7 +2089,10 @@ def test_retrospective_title_penalty_is_conditional(temp_data_dir: Path) -> None
     assert evidenced_delta > 0
     assert weak_delta < 0
     assert "acceptance_penalty:retrospective_title" not in core_guide.provenance.policy_flags
-    assert "acceptance_penalty:retrospective_title" not in evidenced_retrospective.provenance.policy_flags
+    assert (
+        "acceptance_penalty:retrospective_title"
+        not in evidenced_retrospective.provenance.policy_flags
+    )
     assert "acceptance_penalty:retrospective_title" in weak_retrospective.provenance.policy_flags
 
 
@@ -1933,12 +2100,20 @@ def test_future_soft_gate_rejects_weak_future_retrospective_but_allows_strong_an
     temp_data_dir: Path,
 ) -> None:
     service = build_service(temp_data_dir, FakeScout())
-    brief = ResearchBrief(topic="Chicago DJ scene", focal_year="2003", desired_facets=["people"], max_per_facet=2)
+    brief = ResearchBrief(
+        topic="Chicago DJ scene", focal_year="2003", desired_facets=["people"], max_per_facet=2
+    )
     program = service.list_programs()[0]
     facet = service._expand_facets(brief, program)[0]
     seed_run = service.run_research(
         ResearchRunRequest(
-            brief=ResearchBrief(topic="seed", focal_year="2003", desired_facets=["people"], max_queries=1, max_results_per_query=1)
+            brief=ResearchBrief(
+                topic="seed",
+                focal_year="2003",
+                desired_facets=["people"],
+                max_queries=1,
+                max_results_per_query=1,
+            )
         )
     ).run
 
@@ -1987,7 +2162,10 @@ def test_future_soft_gate_rejects_weak_future_retrospective_but_allows_strong_an
             title="Chicago residency field notes",
             published_at="2021-06-01",
             source_type="archive",
-            text="Venue notes mention resident DJs, equipment lists, and neighborhood club routines.",
+            text=(
+                "Venue notes mention resident DJs, equipment lists, and "
+                "neighborhood club routines."
+            ),
         ),
         fetch_outcome=ResearchFetchOutcome.FETCHED,
         fetch_status="fetched",
@@ -2029,7 +2207,9 @@ def test_future_soft_gate_rejects_weak_future_retrospective_but_allows_strong_an
     )
 
     assert weak_future.decision == ResearchFindingDecision.REJECTED
-    assert weak_future.provenance.rejection_reason == ResearchFindingReason.REJECTED_QUALITY_THRESHOLD
+    assert (
+        weak_future.provenance.rejection_reason == ResearchFindingReason.REJECTED_QUALITY_THRESHOLD
+    )
     assert "future_soft_gate" in weak_future.provenance.policy_flags
     assert strong_future.decision == ResearchFindingDecision.ACCEPTED
 
@@ -2056,7 +2236,13 @@ def test_source_shape_penalty_demotes_abstract_intro_pages(temp_data_dir: Path) 
     facet = service._expand_facets(brief, service.list_programs()[0])[0]
     seed_run = service.run_research(
         ResearchRunRequest(
-            brief=ResearchBrief(topic="seed", focal_year="2003", desired_facets=["people"], max_queries=1, max_results_per_query=1)
+            brief=ResearchBrief(
+                topic="seed",
+                focal_year="2003",
+                desired_facets=["people"],
+                max_queries=1,
+                max_results_per_query=1,
+            )
         )
     ).run
 
@@ -2080,7 +2266,10 @@ def test_source_shape_penalty_demotes_abstract_intro_pages(temp_data_dir: Path) 
             title="This paper introduces the origins of Chicago house culture",
             published_at="2024-01-05",
             source_type="educational",
-            text="This paper introduces the origins of Chicago house culture and outlines the argument.",
+            text=(
+                "This paper introduces the origins of Chicago house culture and "
+                "outlines the argument."
+            ),
         ),
         fetch_outcome=ResearchFetchOutcome.FETCHED,
         fetch_status="fetched",
@@ -2096,7 +2285,10 @@ def test_source_shape_penalty_demotes_abstract_intro_pages(temp_data_dir: Path) 
             query="test",
             url="https://archive.example.org/flyer-scan",
             title="2003 flyer scan for South Side residency",
-            snippet="A 2003 listing for a South Side residency with DJs, venue, and radio support.",
+            snippet=(
+                "A 2003 listing for a South Side residency with DJs, venue, and "
+                "radio support."
+            ),
             rank=1,
         ),
         page=ResearchFetchedPage(
@@ -2105,7 +2297,10 @@ def test_source_shape_penalty_demotes_abstract_intro_pages(temp_data_dir: Path) 
             title="2003 flyer scan for South Side residency",
             published_at=None,
             source_type="archive",
-            text="On March 7, 2003, the South Side residency at The Note listed resident DJs, the venue address, and radio sponsors.",
+            text=(
+                "On March 7, 2003, the South Side residency at The Note listed "
+                "resident DJs, the venue address, and radio sponsors."
+            ),
         ),
         fetch_outcome=ResearchFetchOutcome.FETCHED,
         fetch_status="fetched",
@@ -2113,12 +2308,19 @@ def test_source_shape_penalty_demotes_abstract_intro_pages(temp_data_dir: Path) 
 
     assert abstract_page.provenance is not None
     assert concrete_page.provenance is not None
-    assert concrete_page.provenance.scoring.shape_score > abstract_page.provenance.scoring.shape_score
-    assert concrete_page.provenance.scoring.concreteness_score > abstract_page.provenance.scoring.concreteness_score
+    assert (
+        concrete_page.provenance.scoring.shape_score > abstract_page.provenance.scoring.shape_score
+    )
+    assert (
+        concrete_page.provenance.scoring.concreteness_score
+        > abstract_page.provenance.scoring.concreteness_score
+    )
     assert concrete_page.score > abstract_page.score
 
 
-def test_facet_specificity_penalizes_generic_anchored_pages_for_non_people_facets(temp_data_dir: Path) -> None:
+def test_facet_specificity_penalizes_generic_anchored_pages_for_non_people_facets(
+    temp_data_dir: Path,
+) -> None:
     service = build_service(temp_data_dir, FakeScout())
     brief = ResearchBrief(topic="Chicago DJ scene", focal_year="2003", locale="Chicago")
     facets = service._expand_facets(brief, service.list_programs()[0])
@@ -2126,7 +2328,13 @@ def test_facet_specificity_penalizes_generic_anchored_pages_for_non_people_facet
     people_facet = next(item for item in facets if item.facet_id == "people")
     seed_run = service.run_research(
         ResearchRunRequest(
-            brief=ResearchBrief(topic="seed", focal_year="2003", desired_facets=["people"], max_queries=1, max_results_per_query=1)
+            brief=ResearchBrief(
+                topic="seed",
+                focal_year="2003",
+                desired_facets=["people"],
+                max_queries=1,
+                max_results_per_query=1,
+            )
         )
     ).run
 
@@ -2183,17 +2391,31 @@ def test_facet_specificity_penalizes_generic_anchored_pages_for_non_people_facet
 
     assert tech_mismatch.provenance is not None
     assert people_match.provenance is not None
-    assert people_match.provenance.scoring.shape_score > tech_mismatch.provenance.scoring.shape_score
+    assert (
+        people_match.provenance.scoring.shape_score > tech_mismatch.provenance.scoring.shape_score
+    )
     assert people_match.score > tech_mismatch.score
 
 
-def test_facet_fit_threshold_rejects_people_focused_source_for_media_culture(temp_data_dir: Path) -> None:
+def test_facet_fit_threshold_rejects_people_focused_source_for_media_culture(
+    temp_data_dir: Path,
+) -> None:
     service = build_service(temp_data_dir, FakeScout())
     brief = ResearchBrief(topic="Chicago DJ scene", focal_year="2003", locale="Chicago")
-    media_facet = next(item for item in service._expand_facets(brief, service.list_programs()[0]) if item.facet_id == "media_culture")
+    media_facet = next(
+        item
+        for item in service._expand_facets(brief, service.list_programs()[0])
+        if item.facet_id == "media_culture"
+    )
     seed_run = service.run_research(
         ResearchRunRequest(
-            brief=ResearchBrief(topic="seed", focal_year="2003", desired_facets=["people"], max_queries=1, max_results_per_query=1)
+            brief=ResearchBrief(
+                topic="seed",
+                focal_year="2003",
+                desired_facets=["people"],
+                max_queries=1,
+                max_results_per_query=1,
+            )
         )
     ).run
     finding = service._build_finding(
@@ -2222,7 +2444,9 @@ def test_facet_fit_threshold_rejects_people_focused_source_for_media_culture(tem
         fetch_status="fetched",
     )
     assert finding.provenance is not None
-    assert service._passes_facet_fit(media_facet, finding.provenance.scoring.facet_fit_score) is False
+    assert (
+        service._passes_facet_fit(media_facet, finding.provenance.scoring.facet_fit_score) is False
+    )
 
 
 def test_semantic_similarity_records_duplicate_hints_without_auto_rejecting(
@@ -2234,20 +2458,26 @@ def test_semantic_similarity_records_duplicate_hints_without_auto_rejecting(
             lowered = query.lower()
             if "coverage" in lowered:
                 return [
-                        ResearchSearchHit(
-                            query=query,
-                            url="https://zine.example.com/scene-overview",
-                            title="Scene Magazine Feature Coverage",
-                            snippet="A 2003 local zine feature covered the scene's radio ecosystem, named venues, and club-night reporting.",
-                            rank=1,
+                    ResearchSearchHit(
+                        query=query,
+                        url="https://zine.example.com/scene-overview",
+                        title="Scene Magazine Feature Coverage",
+                        snippet=(
+                            "A 2003 local zine feature covered the scene's radio "
+                            "ecosystem, named venues, and club-night reporting."
                         ),
-                        ResearchSearchHit(
-                            query=query,
-                            url="https://news.example.com/feature",
-                            title="2003 Chicago Radio Coverage Notes",
-                            snippet="A 2003 Chicago magazine report covered local radio culture, named venues, and club-night promotion practices.",
-                            rank=2,
+                        rank=1,
+                    ),
+                    ResearchSearchHit(
+                        query=query,
+                        url="https://news.example.com/feature",
+                        title="2003 Chicago Radio Coverage Notes",
+                        snippet=(
+                            "A 2003 Chicago magazine report covered local radio "
+                            "culture, named venues, and club-night promotion practices."
                         ),
+                        rank=2,
+                    ),
                 ]
             return []
 
@@ -2261,7 +2491,8 @@ def test_semantic_similarity_records_duplicate_hints_without_auto_rejecting(
                     published_at="2003-03-10",
                     source_type="news",
                     text=(
-                        "A 2003 local zine feature described promoters, venues, neighborhood shifts, and "
+                        "A 2003 local zine feature described promoters, venues, "
+                        "neighborhood shifts, and "
                         "scene reporting across local radio and print."
                     ),
                 )
@@ -2274,7 +2505,8 @@ def test_semantic_similarity_records_duplicate_hints_without_auto_rejecting(
                     published_at="2003-04-18",
                     source_type="news",
                     text=(
-                        "A 2003 Chicago magazine report described late-night radio play, venue flyers, and "
+                        "A 2003 Chicago magazine report described late-night radio "
+                        "play, venue flyers, and "
                         "promotion practices tied to the local DJ scene."
                     ),
                 )
@@ -2298,9 +2530,13 @@ def test_semantic_similarity_records_duplicate_hints_without_auto_rejecting(
         )
     )
 
-    accepted = [item for item in detail.findings if item.decision == ResearchFindingDecision.ACCEPTED]
+    accepted = [
+        item for item in detail.findings if item.decision == ResearchFindingDecision.ACCEPTED
+    ]
     assert len(accepted) == 2
-    hinted = next(item for item in accepted if item.provenance and item.provenance.semantic_duplicate_hint)
+    hinted = next(
+        item for item in accepted if item.provenance and item.provenance.semantic_duplicate_hint
+    )
     assert hinted.provenance is not None
     assert hinted.provenance.semantic_matches
     assert hinted.provenance.scoring.semantic_duplicate_similarity is not None
@@ -2322,13 +2558,16 @@ def test_semantic_backend_fallback_preserves_lexical_behavior(temp_data_dir: Pat
                         snippet="A local zine overview of the scene and its coverage ecosystem.",
                         rank=1,
                     ),
-                        ResearchSearchHit(
-                            query=query,
-                            url="https://news.example.com/feature",
-                            title="Feature Coverage of the Local Scene",
-                            snippet="A 2003 Chicago magazine feature covered local radio culture with named venues.",
-                            rank=2,
+                    ResearchSearchHit(
+                        query=query,
+                        url="https://news.example.com/feature",
+                        title="Feature Coverage of the Local Scene",
+                        snippet=(
+                            "A 2003 Chicago magazine feature covered local radio "
+                            "culture with named venues."
                         ),
+                        rank=2,
+                    ),
                 ]
             return []
 
@@ -2342,7 +2581,8 @@ def test_semantic_backend_fallback_preserves_lexical_behavior(temp_data_dir: Pat
                     published_at="2003-03-10",
                     source_type="news",
                     text=(
-                        "The overview described promoters, venues, neighborhood shifts, and scene reporting "
+                        "The overview described promoters, venues, neighborhood "
+                        "shifts, and scene reporting "
                         "across local radio and print."
                     ),
                 )

@@ -66,7 +66,9 @@ class IntakeService:
         self.source_store.save_sources(sources)
         self.source_document_store.save_source_documents(source_documents)
         if not source_documents:
-            warnings.append("No source documents were discovered; nothing has been queued for normalization.")
+            warnings.append(
+                "No source documents were discovered; nothing has been queued for normalization."
+            )
         return IntakeResult(
             created_item=created_item,
             pulled_sources=sources,

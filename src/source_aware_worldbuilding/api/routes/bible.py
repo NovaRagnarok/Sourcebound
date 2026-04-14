@@ -9,14 +9,16 @@ from source_aware_worldbuilding.domain.models import (
     BibleSectionRegenerateRequest,
     BibleSectionUpdateRequest,
 )
-from source_aware_worldbuilding.services.jobs import JobService
 from source_aware_worldbuilding.services.bible import BibleWorkspaceService
+from source_aware_worldbuilding.services.jobs import JobService
 
 router = APIRouter(prefix="/v1/bible", tags=["bible"])
 
 
 @router.get("/profiles")
-def list_profiles(service: BibleWorkspaceService = Depends(get_bible_workspace_service)) -> list[dict]:
+def list_profiles(
+    service: BibleWorkspaceService = Depends(get_bible_workspace_service),
+) -> list[dict]:
     return [item.model_dump(mode="json") for item in service.list_profiles()]
 
 

@@ -1,6 +1,8 @@
+import pytest
 from fastapi.testclient import TestClient
 from typer.testing import CliRunner
 
+from source_aware_worldbuilding.adapters.qdrant_adapter import QdrantProjectionAdapter
 from source_aware_worldbuilding.api.main import app
 from source_aware_worldbuilding.cli import app as cli_app
 from source_aware_worldbuilding.settings import settings
@@ -31,13 +33,12 @@ def test_runtime_health_reports_local_mvp_mode(monkeypatch) -> None:
 
     assert response.status_code == 200
     body = response.json()
-    assert body["overall_status"] == "needs_setup"
+    assert body["overall_status"] == "degraded"
     assert body["state_backend"] == "file"
     assert body["truth_backend"] == "file"
     assert body["extraction_backend"] == "heuristic"
     assert any(
-        service["name"] == "corpus" and service["mode"] == "stub"
-        for service in body["services"]
+        service["name"] == "corpus" and service["mode"] == "stub" for service in body["services"]
     )
     assert any(
         service["name"] == "projection" and service["mode"] == "disabled"
@@ -65,7 +66,7 @@ def test_cli_status_json_reports_runtime_state(monkeypatch) -> None:
     result = runner.invoke(cli_app, ["status", "--json-output"])
 
     assert result.exit_code == 0
-    assert '"overall_status": "needs_setup"' in result.stdout
+    assert '"overall_status": "degraded"' in result.stdout
     assert '"extraction_backend": "heuristic"' in result.stdout
     assert '"truth_backend": "file"' in result.stdout
 
@@ -115,6 +116,103 @@ def test_runtime_health_reports_postgres_truth_backend(monkeypatch) -> None:
     assert body["truth_backend"] == "postgres"
     assert truth_store["mode"] == "postgres"
     assert truth_store["configured"] is True
+
+
+def test_runtime_health_marks_qdrant_uninitialized_when_collection_is_missing(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "app_state_backend", "file")
+    monkeypatch.setattr(settings, "app_truth_backend", "file")
+    monkeypatch.setattr(settings, "graph_rag_enabled", False)
+    monkeypatch.setattr(settings, "qdrant_enabled", True)
+    monkeypatch.setattr(settings, "zotero_library_id", None)
+    monkeypatch.setattr(
+        QdrantProjectionAdapter,
+        "runtime_probe",
+        lambda self: (
+            "qdrant:uninitialized",
+            True,
+            False,
+            "Qdrant is reachable, but collection 'approved_claims' is not "
+            "initialized; query and composition fall back to memory ranking.",
+        ),
+    )
+
+    client = TestClient(app)
+    response = client.get("/health/runtime")
+
+    assert response.status_code == 200
+    body = response.json()
+    projection = next(service for service in body["services"] if service["name"] == "projection")
+    assert projection["mode"] == "qdrant:uninitialized"
+    assert projection["ready"] is False
+    assert "fall back to memory ranking" in projection["detail"]
+    assert body["overall_status"] == "degraded"
+    assert any(
+        "initialize the configured qdrant collection" in step.lower()
+        for step in body["next_steps"]
+    )
+
+
+def test_runtime_health_reports_needs_setup_when_worker_is_disabled(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "app_state_backend", "file")
+    monkeypatch.setattr(settings, "app_truth_backend", "file")
+    monkeypatch.setattr(settings, "graph_rag_enabled", False)
+    monkeypatch.setattr(settings, "qdrant_enabled", False)
+    monkeypatch.setattr(settings, "zotero_library_id", None)
+    monkeypatch.setattr(settings, "app_job_worker_enabled", False)
+
+    client = TestClient(app)
+    response = client.get("/health/runtime")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["overall_status"] == "needs_setup"
+    worker = next(service for service in body["services"] if service["name"] == "job_worker")
+    assert worker["ready"] is False
+    assert any(
+        "required before reliable authoring" in step.lower()
+        for step in body["next_steps"]
+    )
+
+
+def test_strict_startup_checks_fail_fast_when_qdrant_is_uninitialized(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "app_strict_startup_checks", True)
+    monkeypatch.setattr(settings, "qdrant_enabled", True)
+    monkeypatch.setattr(
+        QdrantProjectionAdapter,
+        "runtime_probe",
+        lambda self: (
+            "qdrant:uninitialized",
+            True,
+            False,
+            "Qdrant is reachable, but collection 'approved_claims' is not "
+            "initialized; query and composition fall back to memory ranking.",
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="qdrant-rebuild"):
+        with TestClient(app):
+            pass
+
+
+def test_cli_serve_strict_runtime_checks_fail_fast_when_projection_is_degraded(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "app_strict_startup_checks", False)
+    monkeypatch.setattr(settings, "qdrant_enabled", True)
+    monkeypatch.setattr(
+        QdrantProjectionAdapter,
+        "runtime_probe",
+        lambda self: (
+            "qdrant:uninitialized",
+            True,
+            False,
+            "Qdrant is reachable, but collection 'approved_claims' is not "
+            "initialized; query and composition fall back to memory ranking.",
+        ),
+    )
+
+    result = runner.invoke(cli_app, ["serve", "--strict-runtime-checks"])
+
+    assert result.exit_code == 1
+    assert "qdrant-rebuild" in result.output
 
 
 def test_cli_zotero_check_reports_missing_configuration(monkeypatch) -> None:

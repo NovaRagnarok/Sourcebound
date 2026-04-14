@@ -550,8 +550,12 @@ class ZoteroCorpusAdapter:
     def _text_note_body(self, text: str, notes: str | None) -> str:
         fragments = []
         if notes:
-            fragments.append(f"<p><strong>Sourcebound notes:</strong> {self._html_escape(notes)}</p>")
-        fragments.extend(f"<p>{self._html_escape(line)}</p>" for line in text.splitlines() if line.strip())
+            fragments.append(
+                f"<p><strong>Sourcebound notes:</strong> {self._html_escape(notes)}</p>"
+            )
+        fragments.extend(
+            f"<p>{self._html_escape(line)}</p>" for line in text.splitlines() if line.strip()
+        )
         return "".join(fragments) or "<p></p>"
 
     def _notes_only_body(self, notes: str) -> str:
@@ -572,7 +576,9 @@ class ZoteroCorpusAdapter:
         if notes:
             parts.append(f"<p><strong>Sourcebound notes:</strong> {self._html_escape(notes)}</p>")
         parts.extend(
-            f"<p>{self._html_escape(line)}</p>" for line in extracted_text.splitlines() if line.strip()
+            f"<p>{self._html_escape(line)}</p>"
+            for line in extracted_text.splitlines()
+            if line.strip()
         )
         return "".join(parts)
 
@@ -609,11 +615,7 @@ class ZoteroCorpusAdapter:
         return cleaned or None
 
     def _html_escape(self, value: str) -> str:
-        return (
-            value.replace("&", "&amp;")
-            .replace("<", "&lt;")
-            .replace(">", "&gt;")
-        )
+        return value.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
     def _stub_sources(self) -> list[SourceRecord]:
         return [
@@ -628,7 +630,10 @@ class ZoteroCorpusAdapter:
                 locator_hint="folios 10-14",
                 abstract="Bread prices rose sharply during the winter shortage.",
                 sync_status="imported",
-                raw_metadata_json={"itemType": "record", "title": "Municipal price records of Rouen"},
+                raw_metadata_json={
+                    "itemType": "record",
+                    "title": "Municipal price records of Rouen",
+                },
             ),
             SourceRecord(
                 source_id="src-2",

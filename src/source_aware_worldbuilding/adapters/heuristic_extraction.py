@@ -126,7 +126,7 @@ class HeuristicExtractionAdapter:
             return False
         if len(normalized) > 320:
             return False
-        if normalized.endswith((":", "—", "-", "“", "\"")):
+        if normalized.endswith((":", "—", "-", "“", '"')):
             return False
         if "…" in normalized or normalized.endswith("..."):
             return False
@@ -144,7 +144,9 @@ class HeuristicExtractionAdapter:
 
         if " whispered that " in lower:
             return [("rumored_that", self._after_phrase(normalized, "whispered that"))]
-        if " at " in lower and re.search(r"\b(?:club|venue|warehouse|radio|residency|record pool|label)\b", lower):
+        if " at " in lower and re.search(
+            r"\b(?:club|venue|warehouse|radio|residency|record pool|label)\b", lower
+        ):
             return [("occurred_at", normalized)]
         if " record pool " in f" {lower} ":
             return [("distributed_via", normalized)]
@@ -206,7 +208,7 @@ class HeuristicExtractionAdapter:
         lower = cleaned.lower()
         if len(cleaned) < 24 or len(cleaned.split()) < 4:
             return False
-        if cleaned.endswith((":", "—", "-", "“", "\"")):
+        if cleaned.endswith((":", "—", "-", "“", '"')):
             return False
         if cleaned.startswith(("After defining", "This paper", "This article", "In this paper")):
             return False

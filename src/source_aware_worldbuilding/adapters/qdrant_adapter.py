@@ -1,9 +1,9 @@
 from __future__ import annotations
 
+import re
 from collections import defaultdict
 from hashlib import sha1
 from math import sqrt
-import re
 from uuid import NAMESPACE_URL, uuid5
 
 from source_aware_worldbuilding.domain.models import (
@@ -20,12 +20,12 @@ _EMBED_TOKEN_RE = re.compile(r"[a-z0-9]+")
 
 
 def _stable_token_slot(token: str, vector_size: int) -> int:
-    digest = sha1(token.encode("utf-8")).digest()
+    digest = sha1(token.encode()).digest()
     return int.from_bytes(digest[:8], "big") % vector_size
 
 
 def _stable_token_sign(token: str) -> float:
-    digest = sha1(f"sign:{token}".encode("utf-8")).digest()
+    digest = sha1(f"sign:{token}".encode()).digest()
     return 1.0 if digest[0] % 2 == 0 else -1.0
 
 
@@ -46,8 +46,8 @@ def _weighted_text_features(
         features[f"w:{token}"] += unigram_weight
         if len(token) >= 6:
             for index in range(len(token) - 2):
-                features[f"c3:{token[index:index + 3]}"] += trigram_weight
-    for left, right in zip(tokens, tokens[1:]):
+                features[f"c3:{token[index : index + 3]}"] += trigram_weight
+    for left, right in zip(tokens, tokens[1:], strict=False):
         features[f"b:{left}_{right}"] += bigram_weight
     return dict(features)
 
@@ -101,7 +101,7 @@ class QdrantProjectionAdapter:
             points.append(
                 PointStruct(
                     id=self._point_id(claim.claim_id),
-                    vector=self._embed(text),
+                    vector=self._embed_features(self._claim_features(claim, evidence_by_id)),
                     payload={
                         "claim_id": claim.claim_id,
                         "subject": claim.subject,
@@ -184,6 +184,68 @@ class QdrantProjectionAdapter:
             )
         return ProjectionSearchResult(claim_ids=claim_ids)
 
+    def runtime_probe(self) -> tuple[str, bool | None, bool, str]:
+        if not self.enabled:
+            return (
+                "disabled",
+                None,
+                True,
+                (
+                    "Qdrant projection is optional and disabled; query and composition "
+                    "fall back to memory ranking."
+                ),
+            )
+        try:
+            client = self._client()
+        except Exception:
+            return (
+                "qdrant:degraded",
+                None,
+                False,
+                (
+                    "Qdrant client is unavailable, so query and composition fall back "
+                    "to memory ranking."
+                ),
+            )
+        try:
+            collection_ready = client.collection_exists(self.collection)
+        except Exception as exc:
+            return (
+                "qdrant:degraded",
+                False,
+                False,
+                f"Qdrant is configured but not queryable: {exc}",
+            )
+        if not collection_ready:
+            return (
+                "qdrant:uninitialized",
+                True,
+                False,
+                (
+                    f"Qdrant is reachable, but collection '{self.collection}' is not "
+                    "initialized; query and composition fall back to memory ranking."
+                ),
+            )
+        return (
+            "qdrant:ready",
+            True,
+            True,
+            f"Qdrant collection '{self.collection}' is queryable.",
+        )
+
+    def initialize_collection(self) -> bool:
+        if not self.enabled:
+            return False
+        try:
+            client = self._client()
+            existed = client.collection_exists(self.collection)
+            self._ensure_collection(client)
+        except Exception as exc:
+            raise RuntimeError(
+                f"Failed to initialize Qdrant collection '{self.collection}': {exc}"
+            ) from exc
+        return not existed
+
     def _client(self):
         from qdrant_client import QdrantClient
 
@@ -205,13 +267,79 @@ class QdrantProjectionAdapter:
             for evidence_id in claim.evidence_ids
             if evidence_id in evidence_by_id
         )
-        return f"{claim.subject} {claim.predicate} {claim.value}. {evidence_text}".strip()
+        text = " ".join(
+            part
+            for part in [
+                claim.subject,
+                claim.predicate.replace("_", " "),
+                claim.value,
+                claim.place or "",
+                claim.viewpoint_scope or "",
+                claim.notes or "",
+            ]
+            if part
+        ).strip()
+        if evidence_text:
+            return f"{text}. Evidence: {evidence_text}".strip()
+        return text
+
+    def _claim_features(
+        self,
+        claim: ApprovedClaim,
+        evidence_by_id: dict[str, EvidenceSnippet],
+    ) -> dict[str, float]:
+        evidence_text = " ".join(
+            evidence_by_id[evidence_id].text
+            for evidence_id in claim.evidence_ids
+            if evidence_id in evidence_by_id
+        )
+        return _merge_weighted_features(
+            _weighted_text_features(
+                f"{claim.subject} {claim.value}",
+                unigram_weight=1.8,
+                bigram_weight=1.05,
+                trigram_weight=0.18,
+            ),
+            _weighted_text_features(
+                claim.predicate.replace("_", " "),
+                unigram_weight=0.55,
+                bigram_weight=0.3,
+                trigram_weight=0.05,
+            ),
+            _weighted_text_features(
+                claim.place or "",
+                unigram_weight=1.2,
+                bigram_weight=0.7,
+                trigram_weight=0.12,
+            ),
+            _weighted_text_features(
+                claim.viewpoint_scope or "",
+                unigram_weight=1.1,
+                bigram_weight=0.65,
+                trigram_weight=0.12,
+            ),
+            _weighted_text_features(
+                claim.notes or "",
+                unigram_weight=0.85,
+                bigram_weight=0.45,
+                trigram_weight=0.08,
+            ),
+            _weighted_text_features(
+                evidence_text,
+                unigram_weight=0.3,
+                bigram_weight=0.12,
+                trigram_weight=0.03,
+            ),
+        )
 
     def _point_id(self, claim_id: str) -> str:
         return str(uuid5(NAMESPACE_URL, f"sourcebound:{claim_id}"))
 
     def _embed(self, text: str) -> list[float]:
         return _embed_weighted_features(_weighted_text_features(text), self.VECTOR_SIZE)
+
+    def _embed_features(self, features: dict[str, float]) -> list[float]:
+        return _embed_weighted_features(features, self.VECTOR_SIZE)
 
 
 class QdrantResearchSemanticAdapter:
@@ -227,8 +355,8 @@ class QdrantResearchSemanticAdapter:
             return 0
         try:
             from qdrant_client.models import PointStruct
-        except Exception:
-            raise RuntimeError("Qdrant client is unavailable for research semantics.")
+        except Exception as exc:
+            raise RuntimeError("Qdrant client is unavailable for research semantics.") from exc
         client = self._client()
         self._ensure_collection(client)
 
@@ -330,6 +458,19 @@ class QdrantResearchSemanticAdapter:
 
         return QdrantClient(url=self.url)
 
+    def initialize_collection(self) -> bool:
+        if not settings.research_semantic_enabled:
+            return False
+        try:
+            client = self._client()
+            existed = client.collection_exists(self.collection)
+            self._ensure_collection(client)
+        except Exception as exc:
+            raise RuntimeError(
+                f"Failed to initialize research Qdrant collection '{self.collection}': {exc}"
+            ) from exc
+        return not existed
+
     def _ensure_collection(self, client) -> None:
         from qdrant_client.models import Distance, VectorParams
 
@@ -341,7 +482,9 @@ class QdrantResearchSemanticAdapter:
         )
 
     def _finding_text(self, finding: ResearchFinding) -> str:
-        normalized_title = finding.provenance.scoring.normalized_title if finding.provenance else finding.title
+        normalized_title = (
+            finding.provenance.scoring.normalized_title if finding.provenance else finding.title
+        )
         facet = finding.provenance.facet_label if finding.provenance else finding.facet_id
         excerpt = finding.page_excerpt or finding.snippet_text
         return f"{normalized_title}. {facet}. {excerpt}".strip()
@@ -353,14 +496,36 @@ class QdrantResearchSemanticAdapter:
         return _embed_weighted_features(_weighted_text_features(text), self.VECTOR_SIZE)
 
     def _embed_finding(self, finding: ResearchFinding) -> list[float]:
-        normalized_title = finding.provenance.scoring.normalized_title if finding.provenance else finding.title
+        normalized_title = (
+            finding.provenance.scoring.normalized_title if finding.provenance else finding.title
+        )
         facet = finding.provenance.facet_label if finding.provenance else finding.facet_id
         excerpt = finding.page_excerpt or finding.snippet_text or ""
         source_type = finding.source_type or ""
         features = _merge_weighted_features(
-            _weighted_text_features(normalized_title or "", unigram_weight=2.6, bigram_weight=1.2, trigram_weight=0.3),
-            _weighted_text_features(excerpt, unigram_weight=1.2, bigram_weight=0.75, trigram_weight=0.15),
-            _weighted_text_features(facet or "", unigram_weight=0.45, bigram_weight=0.2, trigram_weight=0.0),
-            _weighted_text_features(source_type, unigram_weight=0.2, bigram_weight=0.0, trigram_weight=0.0),
+            _weighted_text_features(
+                normalized_title or "",
+                unigram_weight=2.6,
+                bigram_weight=1.2,
+                trigram_weight=0.3,
+            ),
+            _weighted_text_features(
+                excerpt,
+                unigram_weight=1.2,
+                bigram_weight=0.75,
+                trigram_weight=0.15,
+            ),
+            _weighted_text_features(
+                facet or "",
+                unigram_weight=0.45,
+                bigram_weight=0.2,
+                trigram_weight=0.0,
+            ),
+            _weighted_text_features(
+                source_type,
+                unigram_weight=0.2,
+                bigram_weight=0.0,
+                trigram_weight=0.0,
+            ),
         )
         return _embed_weighted_features(features, self.VECTOR_SIZE)

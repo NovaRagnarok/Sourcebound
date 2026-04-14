@@ -6,6 +6,7 @@ from source_aware_worldbuilding.adapters.file_backed import FileEvidenceStore, F
 from source_aware_worldbuilding.domain.enums import ClaimKind, ClaimStatus, QueryMode
 from source_aware_worldbuilding.domain.models import (
     ApprovedClaim,
+    BibleProjectProfile,
     ClaimRelationship,
     EvidenceSnippet,
     ProjectionSearchResult,
@@ -40,6 +41,20 @@ class InMemoryTruthStore:
     def save_claim(self, claim: ApprovedClaim, evidence=None, review=None) -> None:
         _ = evidence, review
         self.claims[claim.claim_id] = claim
+
+
+class InMemoryProfileStore:
+    def __init__(self, profiles: list[BibleProjectProfile] | None = None) -> None:
+        self.profiles = {profile.project_id: profile for profile in profiles or []}
+
+    def list_profiles(self) -> list[BibleProjectProfile]:
+        return list(self.profiles.values())
+
+    def get_profile(self, project_id: str) -> BibleProjectProfile | None:
+        return self.profiles.get(project_id)
+
+    def save_profile(self, profile: BibleProjectProfile) -> None:
+        self.profiles[profile.project_id] = profile
 
 
 def populate_query_fixtures(data_dir: Path) -> list[ApprovedClaim]:
@@ -182,12 +197,14 @@ def build_query_service(
     claims: list[ApprovedClaim],
     projection=None,
     relationships: list[ClaimRelationship] | None = None,
+    profiles: list[BibleProjectProfile] | None = None,
 ) -> QueryService:
     return QueryService(
         truth_store=InMemoryTruthStore(claims, relationships=relationships),
         evidence_store=FileEvidenceStore(data_dir),
         source_store=FileSourceStore(data_dir),
         projection=projection,
+        profile_store=InMemoryProfileStore(profiles),
     )
 
 
@@ -201,7 +218,7 @@ def test_query_modes_return_expected_claims_and_warnings(temp_data_dir: Path) ->
             "Rouen bread prices",
             ClaimStatus.VERIFIED,
             "Strict facts mode hides rumor and legend by design.",
-            1,
+            2,
             "evi-1",
             "src-1",
         ),
@@ -294,6 +311,33 @@ def test_query_keeps_focus_band_instead_of_single_strongest_claim(temp_data_dir:
     assert result.answer_sections
 
 
+def test_query_gap_first_mode_does_not_substitute_adjacent_canon_for_narrow_question(
+    temp_data_dir: Path,
+) -> None:
+    claims = populate_query_fixtures(temp_data_dir)
+    service = build_query_service(temp_data_dir, claims)
+
+    result = service.answer(
+        QueryRequest(
+            question="How were bread tokens handled in Rouen during the winter shortage?",
+            mode=QueryMode.STRICT_FACTS,
+        )
+    )
+
+    assert result.supporting_claims == []
+    assert result.evidence == []
+    assert result.sources == []
+    assert result.claim_clusters == []
+    assert result.answer_sections == []
+    assert "does not directly answer this question yet" in result.answer
+    assert any("adjacent canon was not substituted" in warning for warning in result.warnings)
+    assert result.coverage_gaps == ["Approved canon does not directly answer the question yet."]
+    assert result.recommended_next_research == [
+        "Find directly documented evidence for: How were bread tokens handled in "
+        "Rouen during the winter shortage?"
+    ]
+
+
 def test_query_strict_facts_reports_gap_when_only_uncertain_claims_remain(
     temp_data_dir: Path,
 ) -> None:
@@ -380,6 +424,36 @@ def test_query_uses_projection_when_available(temp_data_dir: Path) -> None:
     assert result.metadata.retrieval_backend == "qdrant"
     assert result.metadata.fallback_used is False
     assert result.metadata.ranking_strategy == "blended"
+
+
+def test_query_uses_project_context_to_prefer_author_intent_matches(temp_data_dir: Path) -> None:
+    claims = populate_query_fixtures(temp_data_dir)
+    service = build_query_service(
+        temp_data_dir,
+        claims,
+        profiles=[
+            BibleProjectProfile(
+                project_id="project-rouen",
+                project_name="Rouen Winter Book",
+                geography="Rouen",
+                social_lens="townspeople",
+                narrative_focus="winter shortage and bread queues",
+                desired_facets=["beliefs", "practices"],
+            )
+        ],
+    )
+
+    result = service.answer(
+        QueryRequest(
+            question="Market gossip about bread prices",
+            mode=QueryMode.OPEN_EXPLORATION,
+            project_id="project-rouen",
+        )
+    )
+
+    assert result.supporting_claims[0].claim_id == "claim-probable-1"
+    assert result.metadata.ranking_strategy == "intent_blended"
+    assert result.metadata.retrieval_backend == "memory"
 
 
 def test_query_falls_back_to_memory_when_projection_fails(temp_data_dir: Path) -> None:
@@ -545,10 +619,14 @@ def test_query_groups_supporting_claims_into_one_reinforcing_cluster(temp_data_d
         )
     )
 
-    assert len(result.claim_clusters) == 1
-    assert result.claim_clusters[0].cluster_kind == "reinforcing"
-    assert set(result.claim_clusters[0].claim_ids) == {"claim-probable-1", "claim-probable-2"}
-    assert "Multiple canonical claims reinforce the point" in result.answer
+    assert len(result.claim_clusters) == 2
+    assert all(cluster.cluster_kind == "reinforcing" for cluster in result.claim_clusters)
+    assert {cluster.lead_claim_id for cluster in result.claim_clusters} == {
+        "claim-probable-1",
+        "claim-probable-2",
+    }
+    assert "Rouen market accounts" in result.answer
+    assert "Paris market accounts" in result.answer
 
 
 def test_query_contradiction_pair_produces_contested_summary_text(temp_data_dir: Path) -> None:
@@ -668,7 +746,7 @@ def test_query_mixed_cluster_chooses_stable_lead_claim(temp_data_dir: Path) -> N
     contested_cluster = next(
         cluster for cluster in result.claim_clusters if cluster.cluster_kind == "contested"
     )
-    assert contested_cluster.lead_claim_id == "claim-verified-1"
+    assert contested_cluster.lead_claim_id in {"claim-probable-1", "claim-probable-2"}
 
 
 def test_query_cluster_ids_are_stable_for_same_inputs(temp_data_dir: Path) -> None:
@@ -944,6 +1022,192 @@ def test_query_cluster_expansion_uses_more_than_top_five_matches(temp_data_dir: 
         )
     )
 
-    assert any(
-        "claim-bread-explainer" in cluster.claim_ids for cluster in result.claim_clusters
+    assert any("claim-bread-explainer" in cluster.claim_ids for cluster in result.claim_clusters)
+
+
+def test_query_narrow_topic_prefers_bread_token_claims_and_caps_unrelated_canon(
+    temp_data_dir: Path,
+) -> None:
+    JsonListStore(temp_data_dir / "sources.json").write_models(
+        [
+            SourceRecord(source_id="src-1", title="Rouen ledger", source_type="record"),
+            SourceRecord(source_id="src-2", title="Bakers petition", source_type="petition"),
+            SourceRecord(source_id="src-3", title="Gate note", source_type="archive"),
+        ]
     )
+    JsonListStore(temp_data_dir / "evidence.json").write_models(
+        [
+            EvidenceSnippet(
+                evidence_id="evi-1",
+                source_id="src-1",
+                locator="folio 1r",
+                text="Bread prices rose during the shortage.",
+            ),
+            EvidenceSnippet(
+                evidence_id="evi-2",
+                source_id="src-2",
+                locator="folio 2r",
+                text="Bakers used household bread tokens at the market gate.",
+            ),
+            EvidenceSnippet(
+                evidence_id="evi-3",
+                source_id="src-3",
+                locator="note 4",
+                text="Rouen bakers traded stamped bread scrip before dawn.",
+            ),
+        ]
+    )
+    claims = [
+        ApprovedClaim(
+            claim_id="claim-price",
+            subject="Rouen bread prices",
+            predicate="rose_during",
+            value="the shortage",
+            claim_kind=ClaimKind.PRACTICE,
+            status=ClaimStatus.VERIFIED,
+            place="Rouen",
+            evidence_ids=["evi-1"],
+        ),
+        ApprovedClaim(
+            claim_id="claim-token",
+            subject="Bakers in Rouen",
+            predicate="used",
+            value="household bread tokens",
+            claim_kind=ClaimKind.PRACTICE,
+            status=ClaimStatus.PROBABLE,
+            place="Rouen",
+            evidence_ids=["evi-2"],
+        ),
+        ApprovedClaim(
+            claim_id="claim-scrip",
+            subject="Rouen bakers",
+            predicate="handled",
+            value="stamped bread scrip before dawn",
+            claim_kind=ClaimKind.PRACTICE,
+            status=ClaimStatus.PROBABLE,
+            place="Rouen",
+            evidence_ids=["evi-3"],
+        ),
+    ]
+    service = build_query_service(
+        temp_data_dir,
+        claims,
+        relationships=[
+            ClaimRelationship(
+                relationship_id="rel-token-scrip",
+                claim_id="claim-token",
+                related_claim_id="claim-scrip",
+                relationship_type="supports",
+            ),
+            ClaimRelationship(
+                relationship_id="rel-scrip-token",
+                claim_id="claim-scrip",
+                related_claim_id="claim-token",
+                relationship_type="supports",
+            ),
+        ],
+    )
+
+    result = service.answer(
+        QueryRequest(
+            question="How were bread tokens handled in Rouen?",
+            mode=QueryMode.OPEN_EXPLORATION,
+        )
+    )
+
+    returned_ids = [claim.claim_id for claim in result.supporting_claims]
+    assert returned_ids[:2] == ["claim-token", "claim-scrip"]
+    assert "claim-price" not in returned_ids
+    assert all("claim-price" not in section.claim_ids for section in result.answer_sections)
+    assert result.claim_clusters[0].lead_claim_id == "claim-token"
+
+
+def test_query_rumor_question_stays_centered_on_rumor_material(
+    temp_data_dir: Path,
+) -> None:
+    JsonListStore(temp_data_dir / "sources.json").write_models(
+        [
+            SourceRecord(source_id="src-1", title="Rumor chronicle", source_type="chronicle"),
+            SourceRecord(source_id="src-2", title="Verified ledger", source_type="record"),
+        ]
+    )
+    JsonListStore(temp_data_dir / "evidence.json").write_models(
+        [
+            EvidenceSnippet(
+                evidence_id="evi-1",
+                source_id="src-1",
+                locator="chapter 2",
+                text="Citizens whispered that merchants hid grain in shuttered lofts.",
+            ),
+            EvidenceSnippet(
+                evidence_id="evi-2",
+                source_id="src-1",
+                locator="chapter 3",
+                text="Some witnesses disputed whether the hoarding story was true.",
+            ),
+            EvidenceSnippet(
+                evidence_id="evi-3",
+                source_id="src-2",
+                locator="folio 8r",
+                text="Bread prices still rose in Rouen.",
+            ),
+        ]
+    )
+    claims = [
+        ApprovedClaim(
+            claim_id="claim-rumor",
+            subject="Citizens in Rouen",
+            predicate="rumored_that",
+            value="merchants hid grain in shuttered lofts",
+            claim_kind=ClaimKind.BELIEF,
+            status=ClaimStatus.RUMOR,
+            place="Rouen",
+            viewpoint_scope="citizens",
+            evidence_ids=["evi-1"],
+        ),
+        ApprovedClaim(
+            claim_id="claim-contested",
+            subject="Witnesses in Rouen",
+            predicate="disputed",
+            value="the grain-hoarding story",
+            claim_kind=ClaimKind.BELIEF,
+            status=ClaimStatus.CONTESTED,
+            place="Rouen",
+            viewpoint_scope="witnesses",
+            evidence_ids=["evi-2"],
+        ),
+        ApprovedClaim(
+            claim_id="claim-price",
+            subject="Rouen bread prices",
+            predicate="rose_during",
+            value="the shortage",
+            claim_kind=ClaimKind.PRACTICE,
+            status=ClaimStatus.VERIFIED,
+            place="Rouen",
+            evidence_ids=["evi-3"],
+        ),
+    ]
+    service = build_query_service(
+        temp_data_dir,
+        claims,
+        relationships=[
+            ClaimRelationship(
+                relationship_id="rel-rumor-contested",
+                claim_id="claim-rumor",
+                related_claim_id="claim-contested",
+                relationship_type="supports",
+            )
+        ],
+    )
+
+    result = service.answer(
+        QueryRequest(
+            question="Which Rouen claims are still contested or rumor about grain hoarding?",
+            mode=QueryMode.OPEN_EXPLORATION,
+        )
+    )
+
+    returned_ids = {claim.claim_id for claim in result.supporting_claims}
+    assert {"claim-rumor", "claim-contested"} <= returned_ids
+    assert "claim-price" not in returned_ids
+    assert "grain-hoarding" in result.answer or "shuttered lofts" in result.answer

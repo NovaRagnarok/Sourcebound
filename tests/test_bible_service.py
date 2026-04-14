@@ -40,7 +40,9 @@ def populate_bible_service_fixtures(data_dir: Path) -> None:
     JsonListStore(data_dir / "sources.json").write_models(
         [
             SourceRecord(source_id="src-1", title="Greyport town register", source_type="record"),
-            SourceRecord(source_id="src-2", title="Dock wardens ledger", source_type="account_book"),
+            SourceRecord(
+                source_id="src-2", title="Dock wardens ledger", source_type="account_book"
+            ),
             SourceRecord(source_id="src-3", title="Moon well rumors", source_type="oral_history"),
         ]
     )
@@ -267,20 +269,56 @@ def test_bible_composition_uses_writer_facing_section_strategies(temp_data_dir: 
         BibleSectionFilters(place="Greyport"),
     )
 
-    assert setting.paragraphs[0].paragraph_kind == "setting_cluster"
-    assert "Scenes in Greyport can safely lean on" in setting.paragraphs[0].text
-    assert "For scene construction" in setting.paragraphs[0].text
-    assert chronology.paragraphs[0].paragraph_kind == "chronology_entry"
-    assert "By 1201, scenes can safely show" in chronology.paragraphs[0].text
-    assert "For scene construction" in chronology.paragraphs[0].text
-    assert people.paragraphs[0].paragraph_kind == "actor_cluster"
-    assert "For Alys, scenes can safely play" in people.paragraphs[0].text
-    assert "Ties, leverage, and faction pull" in people.paragraphs[0].text
+    assert len(setting.paragraphs) == 3
+    assert setting.paragraphs[0].paragraph_kind == "setting_anchor"
+    assert setting.paragraphs[0].paragraph_role == "descriptive_synthesis"
+    assert "Greyport" in setting.paragraphs[0].text
+    assert "Sources:" in setting.paragraphs[0].text
+    assert setting.composition_metrics.target_beats == 3
+    assert setting.composition_metrics.produced_beats == 3
+    assert chronology.paragraphs[0].paragraph_kind == "dated_turn"
+    assert chronology.paragraphs[0].paragraph_role == "descriptive_synthesis"
+    assert "1201" in chronology.paragraphs[0].text
+    assert chronology.paragraphs[0].text.startswith("By 1201,")
+    assert people.paragraphs[0].paragraph_kind == "actor_profile"
+    assert people.paragraphs[0].paragraph_role == "descriptive_synthesis"
+    assert "Alys is anchored by the fact that" in people.paragraphs[0].text
+    assert any(paragraph.paragraph_kind == "power_web" for paragraph in people.paragraphs)
+    assert people.composition_metrics.produced_beats >= 1
+    assert len(daily.paragraphs) == 2
     assert daily.paragraphs[0].paragraph_kind == "routine_cluster"
-    assert "Everyday scenes can safely rest on" in daily.paragraphs[0].text
-    assert "For scene construction" in daily.paragraphs[0].text
+    assert "The clearest daily-life anchor is that" in daily.paragraphs[0].text
+    assert "Stage scenes in Greyport" in daily.paragraphs[0].text
+    assert daily.paragraphs[1].paragraph_kind == "material_cluster"
     assert author.paragraphs[0].paragraph_kind == "author_guidance"
     assert author.paragraphs[0].text.startswith("Author choice: depict Greyport docks")
+    assert setting.retrieval_metadata["ranking_strategy"] == "intent_blended"
+
+
+def test_priority_sections_surface_composition_metrics_and_roles(temp_data_dir: Path) -> None:
+    populate_bible_service_fixtures(temp_data_dir)
+    service = build_service(temp_data_dir)
+
+    rumor = service._compose_section(
+        "project-greyport",
+        BibleSectionType.RUMORS_AND_CONTESTED,
+        BibleSectionFilters(place="Greyport"),
+    )
+
+    assert rumor.composition_metrics.target_beats >= 3
+    assert rumor.composition_metrics.produced_beats >= 3
+    assert rumor.composition_metrics.thin_section is False
+    assert any(paragraph.paragraph_role == "uncertainty_framing" for paragraph in rumor.paragraphs)
+    assert any(paragraph.paragraph_role == "writer_guidance" for paragraph in rumor.paragraphs)
+    assert "claim-rumor-terce" in rumor.references.claim_ids
+    contested = next(
+        paragraph
+        for paragraph in rumor.paragraphs
+        if paragraph.paragraph_kind == "contested_record"
+    )
+    assert "claim-rumor-prime" in contested.claim_ids
+    assert "claim-rumor-terce" in contested.claim_ids
+    assert "contrast only" in contested.text
 
 
 def test_bible_focus_pulls_adjacent_claims_into_richer_notebook_output(temp_data_dir: Path) -> None:
@@ -295,10 +333,106 @@ def test_bible_focus_pulls_adjacent_claims_into_richer_notebook_output(temp_data
 
     assert len(economics.paragraphs) >= 3
     assert economics.paragraphs[-1].paragraph_kind == "economy_notebook"
-    assert "Use the economy as daily pressure rather than abstract background." in economics.paragraphs[-1].text
+    assert (
+        "Use the economy as daily pressure rather than abstract background."
+        in economics.paragraphs[-1].text
+    )
+    assert (
+        "Treat prices, tools, and exchange routines as something characters handle in motion."
+        in economics.paragraphs[-1].text
+    )
     assert "claim-practice" in economics.references.claim_ids
     assert "claim-object" in economics.references.claim_ids
     assert "ration scrip" in economics.generated_markdown.lower()
+
+
+def test_bible_economics_focus_stays_topic_first_and_writer_facing(temp_data_dir: Path) -> None:
+    populate_bible_service_fixtures(temp_data_dir)
+    service = build_service(temp_data_dir)
+
+    economics = service._compose_section(
+        "project-greyport",
+        BibleSectionType.ECONOMICS_AND_MATERIAL_CULTURE,
+        BibleSectionFilters(place="Greyport", focus="ration scrip and gate comparison"),
+    )
+
+    assert economics.paragraphs[0].paragraph_kind == "economy_cluster"
+    assert "Trade pressure is clearest when" in economics.paragraphs[0].text
+    assert "Stage scenes in Greyport" in economics.paragraphs[0].text
+    assert "claim-practice" in economics.paragraphs[0].claim_ids
+    assert "claim-object" in economics.paragraphs[1].claim_ids
+    assert "Sources:" in economics.paragraphs[0].text
+
+
+def test_bible_coverage_uses_section_local_normalized_facets(temp_data_dir: Path) -> None:
+    populate_bible_service_fixtures(temp_data_dir)
+    service = build_service(temp_data_dir)
+    service.save_profile(
+        "project-greyport",
+        BibleProjectProfileUpdateRequest(
+            project_name="Greyport Bible",
+            geography="Greyport",
+            era="1201-1202",
+            time_start="1201",
+            time_end="1202",
+            narrative_focus="market queues, cold mornings, and bell-controlled flow",
+            desired_facets=["economics", "daily life", "institutions", "ritual", "rumor"],
+        ),
+    )
+
+    economics = service._compose_section(
+        "project-greyport",
+        BibleSectionType.ECONOMICS_AND_MATERIAL_CULTURE,
+        BibleSectionFilters(place="Greyport"),
+    )
+
+    assert economics.coverage_analysis.desired_facets == [
+        "economics",
+        "daily life",
+        "institutions",
+        "ritual",
+        "rumor",
+    ]
+    assert economics.coverage_analysis.missing_facets == []
+    assert "economics" in economics.coverage_analysis.diagnostic_summary.lower()
+    assert "daily life" in economics.coverage_analysis.diagnostic_summary.lower()
+    assert "institutions" not in economics.coverage_analysis.diagnostic_summary.lower()
+    assert all("institutions" not in gap.lower() for gap in economics.coverage_gaps)
+    assert all("ritual" not in gap.lower() for gap in economics.coverage_gaps)
+    assert all("rumor" not in gap.lower() for gap in economics.coverage_gaps)
+
+
+def test_bible_coverage_maps_research_facet_ids_into_section_buckets(temp_data_dir: Path) -> None:
+    populate_bible_service_fixtures(temp_data_dir)
+    service = build_service(temp_data_dir)
+    service.save_profile(
+        "project-greyport",
+        BibleProjectProfileUpdateRequest(
+            project_name="Greyport Bible",
+            geography="Greyport",
+            era="1201-1202",
+            time_start="1201",
+            time_end="1202",
+            desired_facets=["economics_commercial", "daily_life", "regional_context"],
+        ),
+    )
+
+    economics = service._compose_section(
+        "project-greyport",
+        BibleSectionType.ECONOMICS_AND_MATERIAL_CULTURE,
+        BibleSectionFilters(place="Greyport"),
+    )
+    setting = service._compose_section(
+        "project-greyport",
+        BibleSectionType.SETTING_OVERVIEW,
+        BibleSectionFilters(place="Greyport"),
+    )
+
+    assert economics.coverage_analysis.missing_facets == []
+    assert setting.coverage_analysis.missing_facets == []
+    assert economics.coverage_analysis.facet_distribution["economics"] >= 1
+    assert economics.coverage_analysis.facet_distribution["daily life"] >= 1
+    assert setting.coverage_analysis.facet_distribution["regional context"] >= 1
 
 
 def test_bible_provenance_is_enriched_for_paragraph_audits(temp_data_dir: Path) -> None:
@@ -324,6 +458,11 @@ def test_bible_provenance_is_enriched_for_paragraph_audits(temp_data_dir: Path) 
     assert paragraph.contradiction_details or paragraph.supersession_details
     assert "source_title" in paragraph.evidence_details[0]
     assert "summary" in paragraph.claim_details[0]
+    assert paragraph.paragraph.claim_ids == [item["claim_id"] for item in paragraph.claim_details]
+    assert paragraph.paragraph.evidence_ids == [
+        item["evidence_id"] for item in paragraph.evidence_details
+    ]
+    assert paragraph.paragraph.source_ids == [item.source_id for item in paragraph.sources]
 
 
 def test_bible_retrieval_metadata_surfaces_qdrant_fallback(temp_data_dir: Path) -> None:
@@ -347,4 +486,5 @@ def test_bible_retrieval_metadata_surfaces_qdrant_fallback(temp_data_dir: Path) 
     assert draft.retrieval_metadata["retrieval_backend"] == "memory"
     assert draft.retrieval_metadata["fallback_used"] is True
     assert draft.retrieval_metadata["fallback_reason"] == "Qdrant collection is not initialized."
-    assert "Retrieval fallback" in (draft.coverage_analysis.diagnostic_summary or "")
+    assert "Retrieval fallback" not in (draft.coverage_analysis.diagnostic_summary or "")
+    assert "Retrieval fallback: Qdrant collection is not initialized." in draft.generated_markdown

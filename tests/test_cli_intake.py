@@ -22,7 +22,9 @@ def test_cli_intake_text_emits_json(monkeypatch) -> None:
                 evidence_count=1,
             )
 
-    monkeypatch.setattr("source_aware_worldbuilding.cli.get_intake_service", lambda: FakeIntakeService())
+    monkeypatch.setattr(
+        "source_aware_worldbuilding.cli.get_intake_service", lambda: FakeIntakeService()
+    )
 
     result = runner.invoke(
         cli_app,

@@ -84,9 +84,7 @@ class FileSourceDocumentStore:
         return documents
 
     def save_source_documents(self, source_documents: list[SourceDocumentRecord]) -> None:
-        existing = {
-            item.document_id: item for item in self.store.read_models(SourceDocumentRecord)
-        }
+        existing = {item.document_id: item for item in self.store.read_models(SourceDocumentRecord)}
         for item in source_documents:
             existing[item.document_id] = item
         self.store.write_models(existing.values())
@@ -201,7 +199,9 @@ class FileResearchRunStore:
         return list(reversed(self.store.read_models(ResearchRun)))
 
     def get_run(self, run_id: str) -> ResearchRun | None:
-        return next((item for item in self.store.read_models(ResearchRun) if item.run_id == run_id), None)
+        return next(
+            (item for item in self.store.read_models(ResearchRun) if item.run_id == run_id), None
+        )
 
     def save_run(self, run: ResearchRun) -> None:
         self.update_run(run)
@@ -241,7 +241,11 @@ class FileResearchProgramStore:
 
     def get_program(self, program_id: str) -> ResearchProgram | None:
         return next(
-            (item for item in self.store.read_models(ResearchProgram) if item.program_id == program_id),
+            (
+                item
+                for item in self.store.read_models(ResearchProgram)
+                if item.program_id == program_id
+            ),
             None,
         )
 
@@ -262,7 +266,9 @@ class FileJobStore:
         return [item for item in jobs if item.status.value == status]
 
     def get_job(self, job_id: str) -> JobRecord | None:
-        return next((item for item in self.store.read_models(JobRecord) if item.job_id == job_id), None)
+        return next(
+            (item for item in self.store.read_models(JobRecord) if item.job_id == job_id), None
+        )
 
     def save_job(self, job: JobRecord) -> None:
         self.update_job(job)
@@ -282,7 +288,11 @@ class FileBibleProjectProfileStore:
 
     def get_profile(self, project_id: str) -> BibleProjectProfile | None:
         return next(
-            (item for item in self.store.read_models(BibleProjectProfile) if item.project_id == project_id),
+            (
+                item
+                for item in self.store.read_models(BibleProjectProfile)
+                if item.project_id == project_id
+            ),
             None,
         )
 
@@ -303,7 +313,14 @@ class FileBibleSectionStore:
         return [item for item in sections if item.project_id == project_id]
 
     def get_section(self, section_id: str) -> BibleSection | None:
-        return next((item for item in self.store.read_models(BibleSection) if item.section_id == section_id), None)
+        return next(
+            (
+                item
+                for item in self.store.read_models(BibleSection)
+                if item.section_id == section_id
+            ),
+            None,
+        )
 
     def save_section(self, section: BibleSection) -> None:
         existing = {item.section_id: item for item in self.store.read_models(BibleSection)}
@@ -344,13 +361,16 @@ class FileTruthStore:
             for item in relationships
         }
         relationship = ClaimRelationship(
-            relationship_id=by_key.get(key, ClaimRelationship(
-                relationship_id=f"rel-{len(by_key) + 1}",
-                claim_id=claim_id,
-                related_claim_id=related_claim_id,
-                relationship_type=relationship_type,
-                source_kind=source_kind,
-            )).relationship_id,
+            relationship_id=by_key.get(
+                key,
+                ClaimRelationship(
+                    relationship_id=f"rel-{len(by_key) + 1}",
+                    claim_id=claim_id,
+                    related_claim_id=related_claim_id,
+                    relationship_type=relationship_type,
+                    source_kind=source_kind,
+                ),
+            ).relationship_id,
             claim_id=claim_id,
             related_claim_id=related_claim_id,
             relationship_type=relationship_type,

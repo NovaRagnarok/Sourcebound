@@ -6,6 +6,7 @@ import httpx
 from psycopg import connect
 
 from source_aware_worldbuilding.adapters.graphrag_adapter import GraphRAGExtractionAdapter
+from source_aware_worldbuilding.adapters.qdrant_adapter import QdrantProjectionAdapter
 from source_aware_worldbuilding.domain.models import RuntimeDependencyStatus, RuntimeStatus
 from source_aware_worldbuilding.settings import settings
 
@@ -22,7 +23,7 @@ def build_runtime_status() -> RuntimeStatus:
         _job_worker_status(),
     ]
     next_steps = _next_steps(services)
-    overall_status = "ready" if all(service.ready for service in services) else "needs_setup"
+    overall_status = _overall_status(services)
 
     return RuntimeStatus(
         app_name=settings.app_name,
@@ -34,6 +35,30 @@ def build_runtime_status() -> RuntimeStatus:
         overall_status=overall_status,
         services=services,
         next_steps=next_steps,
+    )
+
+
+def enforce_runtime_startup_checks(*, strict_runtime_checks: bool | None = None) -> None:
+    strict = (
+        settings.app_strict_startup_checks
+        if strict_runtime_checks is None
+        else strict_runtime_checks
+    )
+    if not strict or not settings.qdrant_enabled:
+        return
+
+    mode, _reachable, ready, detail = QdrantProjectionAdapter().runtime_probe()
+    if ready:
+        return
+
+    next_step = (
+        "Run `saw qdrant-rebuild` to initialize and backfill the projection."
+        if mode == "qdrant:uninitialized"
+        else "Bring Qdrant online or disable strict startup checks for non-retrieval environments."
+    )
+    raise RuntimeError(
+        f"{detail} Strict startup checks are enabled, so Sourcebound refused to start. "
+        f"{next_step}"
     )
 
 
@@ -150,7 +175,10 @@ def _corpus_status() -> RuntimeDependencyStatus:
             configured=False,
             reachable=None,
             ready=False,
-            detail="Zotero is not configured; ingest routes will fall back to stub sources.",
+            detail=(
+                "Zotero is not configured, so source intake falls back to stub material and "
+                "research coverage is degraded."
+            ),
         )
 
     reachable, detail = _probe_http(settings.zotero_base_url, path="/")
@@ -216,9 +244,11 @@ def _bible_export_status() -> RuntimeDependencyStatus:
         reachable=None,
         ready=worker_ready,
         detail=(
-            "Bible export runs as a persisted background job and returns bundles through job results."
+            "Bible export runs as a persisted background job and returns bundles through "
+            "job results."
             if worker_ready
-            else "Bible export can still be requested, but the background worker is disabled so queued export jobs will not auto-run."
+            else "Bible export requests will queue, but they will not complete until "
+            "the background worker is enabled."
         ),
     )
 
@@ -231,7 +261,10 @@ def _extraction_status() -> RuntimeDependencyStatus:
             mode="heuristic",
             reachable=None,
             ready=True,
-            detail="Heuristic sentence-based extractor is active for local MVP work.",
+            detail=(
+                "Heuristic sentence-based extraction is active. Authoring remains available, "
+                "but extraction quality is degraded until a richer extraction path is enabled."
+            ),
         )
 
     probe = GraphRAGExtractionAdapter.runtime_probe()
@@ -247,26 +280,15 @@ def _extraction_status() -> RuntimeDependencyStatus:
 
 
 def _projection_status() -> RuntimeDependencyStatus:
-    if not settings.qdrant_enabled:
-        return RuntimeDependencyStatus(
-            name="projection",
-            role="Semantic retrieval projection",
-            mode="disabled",
-            configured=False,
-            reachable=None,
-            ready=True,
-            detail="Qdrant projection is optional and disabled; query falls back to in-memory ranking.",
-        )
-
-    reachable, detail = _probe_http(settings.qdrant_url, path="/collections")
+    mode, reachable, ready, detail = QdrantProjectionAdapter().runtime_probe()
     return RuntimeDependencyStatus(
         name="projection",
         role="Semantic retrieval projection",
-        mode="qdrant",
-        configured=True,
+        mode=mode,
+        configured=settings.qdrant_enabled,
         reachable=reachable,
-        ready=reachable is True,
-        detail=detail if reachable is not True else "Qdrant appears reachable.",
+        ready=ready,
+        detail=detail,
     )
 
 
@@ -279,11 +301,37 @@ def _job_worker_status() -> RuntimeDependencyStatus:
         reachable=None,
         ready=settings.app_job_worker_enabled,
         detail=(
-            f"In-process worker enabled with {settings.app_job_poll_interval_seconds}s polling."
+            f"In-process worker enabled with "
+            f"{settings.app_job_poll_interval_seconds}s polling."
             if settings.app_job_worker_enabled
-            else "Background job worker is disabled; long-running routes will queue without auto-processing."
+            else "Background job worker is disabled; long-running routes will queue "
+            "without auto-processing."
         ),
     )
+
+
+def _overall_status(services: list[RuntimeDependencyStatus]) -> str:
+    by_name = {service.name: service for service in services}
+    if any(
+        by_name[name].ready is False
+        for name in ("app_state", "truth_store", "bible_workspace", "bible_export", "job_worker")
+    ):
+        return "needs_setup"
+    if _has_quality_degradation(by_name):
+        return "degraded"
+    return "ready"
+
+
+def _has_quality_degradation(by_name: dict[str, RuntimeDependencyStatus]) -> bool:
+    if by_name["corpus"].ready is False:
+        return True
+    projection = by_name["projection"]
+    if projection.mode == "disabled" or projection.ready is False:
+        return True
+    extraction = by_name["extraction"]
+    if extraction.mode == "heuristic" or extraction.ready is False:
+        return True
+    return False
 
 
 def _next_steps(services: list[RuntimeDependencyStatus]) -> list[str]:
@@ -292,43 +340,56 @@ def _next_steps(services: list[RuntimeDependencyStatus]) -> list[str]:
 
     if by_name["corpus"].ready is False:
         steps.append(
-            "Set ZOTERO_LIBRARY_ID to pull a real pilot corpus instead of stub sources."
+            "Recommended for full-source workflows: set ZOTERO_LIBRARY_ID so intake "
+            "can use a real pilot corpus instead of stub sources."
         )
     if by_name["bible_workspace"].ready is False:
         steps.append(
-            "Choose a writable app-state location so Bible profiles, sections, and provenance can persist safely."
+            "Required before reliable authoring: choose a writable app-state location "
+            "so Bible profiles, sections, and provenance can persist safely."
         )
     if by_name["job_worker"].ready is False:
         steps.append(
-            "Enable APP_JOB_WORKER_ENABLED=true so research, Bible regeneration, and export jobs run without manual intervention."
+            "Required before reliable authoring: enable APP_JOB_WORKER_ENABLED=true "
+            "so research, Bible regeneration, and export jobs run without manual intervention."
         )
     if settings.qdrant_enabled and by_name["projection"].ready is False:
-        steps.append(
-            "Run `docker compose up -d qdrant` and set QDRANT_ENABLED=true "
-            "to exercise projection-backed retrieval."
-        )
+        if by_name["projection"].mode == "qdrant:uninitialized":
+            steps.append(
+                "Recommended for retrieval quality: initialize the configured "
+                "Qdrant collection so query and composition stop falling back to "
+                "memory ranking."
+            )
+        else:
+            steps.append(
+                "Recommended for retrieval quality: bring Qdrant online and ensure "
+                "the configured collection is reachable for projection-backed retrieval."
+            )
     elif not settings.qdrant_enabled:
         steps.append(
-            "Set QDRANT_ENABLED=true and run `docker compose up -d qdrant` for recommended local retrieval quality."
+            "Recommended for retrieval quality: set QDRANT_ENABLED=true and run "
+            "`docker compose up -d qdrant`."
         )
     if settings.app_truth_backend == "postgres" and by_name["truth_store"].ready is False:
         steps.append(
-            "Configure APP_POSTGRES_DSN so Postgres can serve as the canonical approved-claim store."
+            "Required before reliable authoring: configure APP_POSTGRES_DSN so "
+            "Postgres can serve as the canonical approved-claim store."
         )
     if settings.app_truth_backend == "wikibase" and by_name["truth_store"].ready is False:
         steps.append(
-            "Configure WIKIBASE_API_URL, WIKIBASE_USERNAME, WIKIBASE_PASSWORD, and "
+            "Required before reliable authoring: configure WIKIBASE_API_URL, "
+            "WIKIBASE_USERNAME, WIKIBASE_PASSWORD, and "
             "WIKIBASE_PROPERTY_MAP to enable canonical approved-claim reads and writes."
         )
     if by_name["extraction"].mode == "heuristic":
         steps.append(
-            "Replace or augment the heuristic extractor with the real GraphRAG "
-            "or LLM-backed extraction path."
+            "Recommended for extraction quality: replace or augment the heuristic "
+            "extractor with the real GraphRAG or another richer extraction path."
         )
     elif by_name["extraction"].ready is False:
         steps.append(
-            "Install/configure GraphRAG and ensure the selected GRAPH_RAG_MODE "
-            "has a runnable workspace or artifact directory."
+            "Recommended for extraction quality: install/configure GraphRAG and "
+            "ensure the selected GRAPH_RAG_MODE has a runnable workspace or artifact directory."
         )
 
     return steps

@@ -7,8 +7,9 @@ from fastapi import FastAPI
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
-from source_aware_worldbuilding.api.routes.candidates import router as candidates_router
+from source_aware_worldbuilding.api.dependencies import get_job_service
 from source_aware_worldbuilding.api.routes.bible import router as bible_router
+from source_aware_worldbuilding.api.routes.candidates import router as candidates_router
 from source_aware_worldbuilding.api.routes.claims import router as claims_router
 from source_aware_worldbuilding.api.routes.exports import router as exports_router
 from source_aware_worldbuilding.api.routes.health import router as health_router
@@ -19,12 +20,13 @@ from source_aware_worldbuilding.api.routes.query import router as query_router
 from source_aware_worldbuilding.api.routes.research import router as research_router
 from source_aware_worldbuilding.api.routes.runs import router as runs_router
 from source_aware_worldbuilding.api.routes.sources import router as sources_router
-from source_aware_worldbuilding.api.dependencies import get_job_service
+from source_aware_worldbuilding.services.status import enforce_runtime_startup_checks
 from source_aware_worldbuilding.settings import settings
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
+    enforce_runtime_startup_checks()
     if settings.app_job_worker_enabled:
         get_job_service().start_worker()
     try:

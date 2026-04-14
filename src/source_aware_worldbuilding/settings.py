@@ -25,6 +25,10 @@ class Settings(BaseSettings):
     )
     app_postgres_schema: str = Field(default="sourcebound", alias="APP_POSTGRES_SCHEMA")
     app_ui_enabled: bool = Field(default=True, alias="APP_UI_ENABLED")
+    app_strict_startup_checks: bool = Field(
+        default=False,
+        alias="APP_STRICT_STARTUP_CHECKS",
+    )
     app_job_worker_enabled: bool = Field(default=True, alias="APP_JOB_WORKER_ENABLED")
     app_job_poll_interval_seconds: float = Field(
         default=0.25,
@@ -59,7 +63,7 @@ class Settings(BaseSettings):
         alias="APP_RESEARCH_RESPECT_ROBOTS",
     )
     app_research_user_agent: str = Field(
-        default="SourceboundResearchScout/0.2 (+https://localhost/sourcebound)",
+        default="SourceboundResearchScout/0.2 (+https://github.com/NovaRagnarok/Sourcebound)",
         alias="APP_RESEARCH_USER_AGENT",
     )
     app_research_search_providers: str = Field(

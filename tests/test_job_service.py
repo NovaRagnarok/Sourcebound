@@ -20,14 +20,17 @@ from source_aware_worldbuilding.adapters.file_backed import (
     FileTruthStore,
 )
 from source_aware_worldbuilding.adapters.qdrant_adapter import QdrantResearchSemanticAdapter
-from source_aware_worldbuilding.adapters.web_research_scout import CuratedInputsResearchScout, ResearchScoutRegistry
+from source_aware_worldbuilding.adapters.web_research_scout import (
+    CuratedInputsResearchScout,
+    ResearchScoutRegistry,
+)
 from source_aware_worldbuilding.domain.enums import BibleSectionType, JobStatus
 from source_aware_worldbuilding.domain.models import (
     ApprovedClaim,
     BibleProjectProfileUpdateRequest,
     BibleSectionCreateRequest,
-    ClaimRelationship,
     ClaimKind,
+    ClaimRelationship,
     ClaimStatus,
     EvidenceSnippet,
     ResearchBrief,
@@ -157,7 +160,10 @@ def build_bible_service(data_dir: Path) -> BibleWorkspaceService:
 
 def build_research_service(data_dir: Path) -> ResearchService:
     return ResearchService(
-        scout_registry=ResearchScoutRegistry([CuratedInputsResearchScout(user_agent="test-agent")], default_adapter_id="curated_inputs"),
+        scout_registry=ResearchScoutRegistry(
+            [CuratedInputsResearchScout(user_agent="test-agent")],
+            default_adapter_id="curated_inputs",
+        ),
         run_store=FileResearchRunStore(data_dir),
         finding_store=FileResearchFindingStore(data_dir),
         program_store=FileResearchProgramStore(data_dir),
@@ -235,7 +241,10 @@ def test_job_service_processes_curated_research_jobs(temp_data_dir: Path) -> Non
                     ResearchCuratedInput(
                         input_type="text",
                         title="Flyer archive note",
-                        text="Weekly residencies, vinyl crates, and venue habits defined the local scene.",
+                        text=(
+                            "Weekly residencies, vinyl crates, and venue habits "
+                            "defined the local scene."
+                        ),
                     )
                 ],
             )

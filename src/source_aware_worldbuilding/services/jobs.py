@@ -49,7 +49,10 @@ class JobService:
 
     def summarize_latest_for_section(self, section_id: str) -> JobSummary | None:
         for job in self.job_store.list_jobs():
-            if job.result_ref.section_id == section_id or job.payload.get("section_id") == section_id:
+            if (
+                job.result_ref.section_id == section_id
+                or job.payload.get("section_id") == section_id
+            ):
                 return self._to_summary(job)
         return None
 
@@ -57,7 +60,10 @@ class JobService:
         for job in self.job_store.list_jobs():
             if job.job_type != "bible_project_export":
                 continue
-            if job.result_ref.project_id != project_id and job.payload.get("project_id") != project_id:
+            if (
+                job.result_ref.project_id != project_id
+                and job.payload.get("project_id") != project_id
+            ):
                 continue
             if job.status not in {JobStatus.COMPLETED, JobStatus.PARTIAL}:
                 continue
@@ -83,7 +89,9 @@ class JobService:
         if job.status in {JobStatus.RUNNING, JobStatus.PENDING}:
             job.cancel_requested_at = now
             job.updated_at = now
-            job.warnings.append("Cancellation requested; the worker will stop at the next safe checkpoint.")
+            job.warnings.append(
+                "Cancellation requested; the worker will stop at the next safe checkpoint."
+            )
             self.job_store.update_job(job)
             return job
         return job
@@ -178,7 +186,9 @@ class JobService:
         if self._thread and self._thread.is_alive():
             return
         self._stop_event.clear()
-        self._thread = threading.Thread(target=self._run_loop, name="sourcebound-job-worker", daemon=True)
+        self._thread = threading.Thread(
+            target=self._run_loop, name="sourcebound-job-worker", daemon=True
+        )
         self._thread.start()
 
     def stop_worker(self) -> None:
@@ -217,7 +227,9 @@ class JobService:
                 run_id = str(job.payload["run_id"])
                 self.research_service.execute_run(
                     run_id,
-                    checkpoint=self._checkpoint(job, "Research run cancelled before the next query batch."),
+                    checkpoint=self._checkpoint(
+                        job, "Research run cancelled before the next query batch."
+                    ),
                 )
                 job.result_ref = JobResultRef(run_id=run_id)
                 run_detail = self.research_service.get_run_detail(run_id)
@@ -233,14 +245,18 @@ class JobService:
                 run_id = str(job.payload["run_id"])
                 self.research_service.stage_run(
                     run_id,
-                    checkpoint=self._checkpoint(job, "Research staging cancelled before the next finding was staged."),
+                    checkpoint=self._checkpoint(
+                        job, "Research staging cancelled before the next finding was staged."
+                    ),
                 )
                 job.result_ref = JobResultRef(run_id=run_id)
             elif job.job_type == "research_run_extract":
                 run_id = str(job.payload["run_id"])
                 self.research_service.extract_run(
                     run_id,
-                    checkpoint=self._checkpoint(job, "Research extraction cancelled before the next extraction phase."),
+                    checkpoint=self._checkpoint(
+                        job, "Research extraction cancelled before the next extraction phase."
+                    ),
                 )
                 job.result_ref = JobResultRef(run_id=run_id)
             elif job.job_type == "bible_section_compose":
@@ -275,7 +291,8 @@ class JobService:
                 raise ValueError(f"Unsupported job type: {job.job_type}")
             if self._cancel_requested(job):
                 job.warnings.append(
-                    "Cancellation was requested while work was already in progress; the current atomic step completed."
+                    "Cancellation was requested while work was already in progress; "
+                    "the current atomic step completed."
                 )
             self._mark_completed(job)
         except _JobCancellationRequested as exc:

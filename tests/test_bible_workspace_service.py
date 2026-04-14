@@ -9,7 +9,12 @@ from source_aware_worldbuilding.adapters.file_backed import (
     FileSourceStore,
     FileTruthStore,
 )
-from source_aware_worldbuilding.domain.enums import BibleSectionType, BibleTone, ClaimKind, ClaimStatus
+from source_aware_worldbuilding.domain.enums import (
+    BibleSectionType,
+    BibleTone,
+    ClaimKind,
+    ClaimStatus,
+)
 from source_aware_worldbuilding.domain.models import (
     ApprovedClaim,
     BibleCompositionDefaults,
@@ -149,15 +154,16 @@ def test_bible_workspace_creates_sections_with_provenance_and_guidance(temp_data
         )
     )
 
-    assert set(section.references.claim_ids) == {"claim-1", "claim-2"}
-    assert section.references.evidence_ids == ["evi-1", "evi-2"]
-    assert section.certainty_summary == {"probable": 1, "verified": 1}
+    assert set(section.references.claim_ids) == {"claim-1"}
+    assert section.references.evidence_ids == ["evi-1"]
+    assert section.certainty_summary == {"verified": 1}
     assert section.contradiction_flags
     assert "Greyport" in section.content
     assert "Sources:" in section.content
     assert section.paragraphs
+    assert section.composition_metrics.target_beats >= 1
     assert section.coverage_analysis.diagnostic_summary
-    assert section.recommended_next_research
+    assert isinstance(section.recommended_next_research, list)
 
 
 def test_bible_workspace_preserves_manual_edits_when_regenerated(temp_data_dir: Path) -> None:

@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-from io import BytesIO
 import re
 from html import unescape
 from html.parser import HTMLParser
-from hashlib import sha1
+from io import BytesIO
 from urllib.parse import parse_qs, urlencode, urljoin, urlparse, urlunparse
 from urllib.robotparser import RobotFileParser
 
@@ -12,9 +11,9 @@ import httpx
 
 from source_aware_worldbuilding.domain.models import (
     ResearchFetchedPage,
-    ResearchSearchProviderResult,
     ResearchScoutCapabilities,
     ResearchSearchHit,
+    ResearchSearchProviderResult,
 )
 
 _PUBLISH_DATE_RE = re.compile(r"\b((?:19|20)\d{2})(?:[-/]\d{2}[-/]\d{2})?\b")
@@ -64,7 +63,8 @@ class _DuckDuckGoSearchParser(HTMLParser):
                         query="",
                         url=self._unwrap_duckduckgo_url(self._current_href),
                         title=" ".join(part for part in self._current_title if part).strip(),
-                        snippet=" ".join(part for part in self._current_snippet if part).strip() or None,
+                        snippet=" ".join(part for part in self._current_snippet if part).strip()
+                        or None,
                         rank=self._rank,
                     )
                 )
@@ -138,10 +138,7 @@ class _PageContentParser(HTMLParser):
 
 class ResearchScoutRegistry:
     def __init__(self, adapters: list[object], *, default_adapter_id: str = "web_open") -> None:
-        self._adapters = {
-            getattr(adapter, "adapter_id"): adapter
-            for adapter in adapters
-        }
+        self._adapters = {adapter.adapter_id: adapter for adapter in adapters}
         self.default_adapter_id = default_adapter_id
 
     def get(self, adapter_id: str | None = None):
@@ -154,10 +151,7 @@ class ResearchScoutRegistry:
 
 class ResearchSearchProviderRegistry:
     def __init__(self, providers: list[object], *, default_order: list[str] | None = None) -> None:
-        self._providers = {
-            getattr(provider, "provider_id"): provider
-            for provider in providers
-        }
+        self._providers = {provider.provider_id: provider for provider in providers}
         self.default_order = default_order or list(self._providers)
 
     def get(self, provider_id: str):
@@ -165,7 +159,9 @@ class ResearchSearchProviderRegistry:
 
     def ordered(self, provider_ids: list[str] | None = None) -> list[object]:
         order = provider_ids or self.default_order
-        return [self._providers[provider_id] for provider_id in order if provider_id in self._providers]
+        return [
+            self._providers[provider_id] for provider_id in order if provider_id in self._providers
+        ]
 
     def list_provider_ids(self) -> list[str]:
         return sorted(self._providers)
@@ -302,7 +298,18 @@ class _BaseHtmlResearchScout:
             )
         ):
             return "news"
-        if any(part in host for part in ("magazine", "rollingstone", "billboard", "vice", "djmag", "5mag", "chicagomag")):
+        if any(
+            part in host
+            for part in (
+                "magazine",
+                "rollingstone",
+                "billboard",
+                "vice",
+                "djmag",
+                "5mag",
+                "chicagomag",
+            )
+        ):
             return "magazine"
         if any(part in host for part in ("forum", "board")):
             return "forum"
@@ -336,11 +343,7 @@ class DuckDuckGoHtmlSearchProvider:
         response.raise_for_status()
         parser = _DuckDuckGoSearchParser()
         parser.feed(response.text)
-        hits = [
-            item
-            for item in parser.results
-            if _is_organic_search_hit(item.url)
-        ][:limit]
+        hits = [item for item in parser.results if _is_organic_search_hit(item.url)][:limit]
         for item in hits:
             item.query = query
             item.search_provider_id = self.provider_id
@@ -420,7 +423,9 @@ class WebOpenResearchScout(_BaseHtmlResearchScout):
             [DuckDuckGoHtmlSearchProvider(user_agent=user_agent)],
             default_order=["duckduckgo_html"],
         )
-        self._search_provider_ids = search_provider_ids or self._search_provider_registry.default_order
+        self._search_provider_ids = (
+            search_provider_ids or self._search_provider_registry.default_order
+        )
 
     def search(self, query: str, *, limit: int = 5) -> list[ResearchSearchHit]:
         provider_results: list[ResearchSearchProviderResult] = []
@@ -439,8 +444,7 @@ class WebOpenResearchScout(_BaseHtmlResearchScout):
             "providers_used": providers_used,
             "queries_by_provider": {provider_id: 1 for provider_id in providers_used},
             "hits_by_provider": {
-                result.provider_id: len(result.hits)
-                for result in provider_results
+                result.provider_id: len(result.hits) for result in provider_results
             },
             "fallback_used": bool(fallback_reasons),
             "fallback_reason": "; ".join(fallback_reasons) if fallback_reasons else None,
@@ -473,7 +477,7 @@ class WebOpenResearchScout(_BaseHtmlResearchScout):
                 bucket["providers"].append(result.provider_id)
                 bucket["best_rank"] = min(bucket["best_rank"], hit.provider_rank or hit.rank)
                 current = bucket["hit"]
-                if len((hit.snippet or "")) > len((current.snippet or "")):
+                if len(hit.snippet or "") > len(current.snippet or ""):
                     bucket["hit"] = current.model_copy(
                         update={
                             "title": hit.title or current.title,
@@ -485,9 +489,13 @@ class WebOpenResearchScout(_BaseHtmlResearchScout):
         fused_hits: list[ResearchSearchHit] = []
         for canonical_url, payload in merged.items():
             hit: ResearchSearchHit = payload["hit"]
-            matched_providers = sorted(set(payload["providers"]), key=lambda item: provider_order.index(item))
+            matched_providers = sorted(
+                set(payload["providers"]), key=lambda item: provider_order.index(item)
+            )
             primary_provider = matched_providers[0] if matched_providers else hit.search_provider_id
-            fusion_score = self._fusion_score(hit, query, len(matched_providers), payload["best_rank"])
+            fusion_score = self._fusion_score(
+                hit, query, len(matched_providers), payload["best_rank"]
+            )
             fused_hits.append(
                 hit.model_copy(
                     update={

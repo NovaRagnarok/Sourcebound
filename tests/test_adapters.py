@@ -172,7 +172,9 @@ def test_zotero_adapter_can_create_text_source_and_pull_by_item_key(monkeypatch)
     requests: list[tuple[str, str, object]] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
-        requests.append((request.method, request.url.path, request.content.decode() if request.content else ""))
+        requests.append(
+            (request.method, request.url.path, request.content.decode() if request.content else "")
+        )
         if request.method == "POST" and request.url.path.endswith("/users/12345/items"):
             payload = json.loads(request.content.decode())
             item = payload[0]
@@ -231,7 +233,10 @@ def test_web_search_filters_duckduckgo_ad_redirects(monkeypatch) -> None:
     <html><body>
       <a class="result__a" href="https://duckduckgo.com/y.js?ad_domain=ebay.com">Ad Result</a>
       <a class="result__snippet">sponsored</a>
-      <a class="result__a" href="/l/?uddg=https%3A%2F%2Farchive.example.org%2F2003-scene-report">Archive Result</a>
+      <a
+        class="result__a"
+        href="/l/?uddg=https%3A%2F%2Farchive.example.org%2F2003-scene-report"
+      >Archive Result</a>
       <a class="result__snippet">2003 scene report</a>
     </body></html>
     """
@@ -243,7 +248,9 @@ def test_web_search_filters_duckduckgo_ad_redirects(monkeypatch) -> None:
     monkeypatch.setattr(provider, "_client", httpx.Client(transport=httpx.MockTransport(handler)))
     scout = WebOpenResearchScout(
         user_agent="SourceboundResearchScout/Test",
-        search_provider_registry=ResearchSearchProviderRegistry([provider], default_order=["duckduckgo_html"]),
+        search_provider_registry=ResearchSearchProviderRegistry(
+            [provider], default_order=["duckduckgo_html"]
+        ),
         search_provider_ids=["duckduckgo_html"],
     )
 
@@ -404,7 +411,7 @@ def test_extraction_adapter_skips_fragments_and_generic_subjects() -> None:
                 "People were very intentional about protecting those spaces. "
                 "Listen to our documentary about the scene. "
                 "The city required all-ages juice bars to obtain zoning permits. "
-                "And as Powell says, \"It is"
+                'And as Powell says, "It is'
             ),
             ordinal=1,
             checksum="seed",
@@ -415,7 +422,9 @@ def test_extraction_adapter_skips_fragments_and_generic_subjects() -> None:
 
     assert output.candidates
     assert all(candidate.subject != "People" for candidate in output.candidates)
-    assert all("Listen to our documentary" not in candidate.value for candidate in output.candidates)
+    assert all(
+        "Listen to our documentary" not in candidate.value for candidate in output.candidates
+    )
     assert all("And as Powell says" not in candidate.value for candidate in output.candidates)
     assert any(candidate.predicate == "required" for candidate in output.candidates)
 
@@ -803,6 +812,33 @@ def test_qdrant_projection_upserts_idempotently_without_recreating(monkeypatch) 
     assert client.upserts[0][0].payload["claim_id"] == "claim-1"
 
 
+def test_qdrant_projection_initialize_collection_reports_when_created(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "qdrant_enabled", True)
+    monkeypatch.setattr(settings, "qdrant_collection", "approved_claims")
+
+    class FakeClient:
+        def __init__(self) -> None:
+            self.exists = False
+            self.created = 0
+
+        def collection_exists(self, collection_name: str) -> bool:
+            _ = collection_name
+            return self.exists
+
+        def create_collection(self, collection_name: str, vectors_config) -> None:
+            _ = collection_name, vectors_config
+            self.exists = True
+            self.created += 1
+
+    adapter = QdrantProjectionAdapter()
+    client = FakeClient()
+    monkeypatch.setattr(adapter, "_client", lambda: client)
+
+    assert adapter.initialize_collection() is True
+    assert adapter.initialize_collection() is False
+    assert client.created == 1
+
+
 def test_qdrant_research_semantic_uses_separate_collection(monkeypatch) -> None:
     monkeypatch.setattr(settings, "research_semantic_enabled", True)
     monkeypatch.setattr(settings, "research_qdrant_collection", "research_findings")
@@ -839,8 +875,14 @@ def test_qdrant_research_semantic_uses_separate_collection(monkeypatch) -> None:
         title="Scene Participants Oral History",
         publisher="City Archive",
         published_at="2003-05-12",
-        snippet_text="Participants described the scene, named venues, and documented the local habits.",
-        page_excerpt="Participants described the scene, named venues, and documented the local habits.",
+        snippet_text=(
+            "Participants described the scene, named venues, and documented the "
+            "local habits."
+        ),
+        page_excerpt=(
+            "Participants described the scene, named venues, and documented the "
+            "local habits."
+        ),
         source_type="archive",
         score=0.72,
         relevance_score=0.5,
@@ -940,8 +982,14 @@ def test_qdrant_research_semantic_embedding_prefers_related_findings() -> None:
         title="Medieval grain tax ledger",
         publisher="Archive",
         published_at="1403-01-01",
-        snippet_text="Ledger entries recorded wheat tax obligations, harvest dues, and market tolls.",
-        page_excerpt="Ledger entries recorded wheat tax obligations, harvest dues, and market tolls.",
+        snippet_text=(
+            "Ledger entries recorded wheat tax obligations, harvest dues, and "
+            "market tolls."
+        ),
+        page_excerpt=(
+            "Ledger entries recorded wheat tax obligations, harvest dues, and "
+            "market tolls."
+        ),
         source_type="archive",
         score=0.65,
         relevance_score=0.58,
@@ -959,9 +1007,11 @@ def test_qdrant_research_semantic_embedding_prefers_related_findings() -> None:
     )
 
     def cosine(left: list[float], right: list[float]) -> float:
-        return sum(a * b for a, b in zip(left, right))
+        return sum(a * b for a, b in zip(left, right, strict=False))
 
-    related_similarity = cosine(adapter._embed_finding(related_a), adapter._embed_finding(related_b))
+    related_similarity = cosine(
+        adapter._embed_finding(related_a), adapter._embed_finding(related_b)
+    )
     distant_similarity = cosine(adapter._embed_finding(related_a), adapter._embed_finding(distant))
 
     assert related_similarity > distant_similarity

@@ -252,7 +252,9 @@ class PostgresResearchFindingStore(_PostgresAdapterBase):
 
 class PostgresResearchProgramStore(_PostgresAdapterBase):
     def list_programs(self) -> list[ResearchProgram]:
-        return self.store.list_models("research_programs", ResearchProgram, order_by="updated_at DESC")
+        return self.store.list_models(
+            "research_programs", ResearchProgram, order_by="updated_at DESC"
+        )
 
     def get_program(self, program_id: str) -> ResearchProgram | None:
         return self.store.get_model("research_programs", "program_id", program_id, ResearchProgram)
@@ -674,7 +676,8 @@ class PostgresTruthStore(_PostgresAdapterBase):
                 SQL(
                     """
                     INSERT INTO {}.source_documents (
-                        id, source_id, project_id, title, source_type, created_at, updated_at, metadata_json
+                        id, source_id, project_id, title, source_type, created_at,
+                        updated_at, metadata_json
                     ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                     ON CONFLICT (source_id) DO UPDATE SET
                         updated_at = EXCLUDED.updated_at
@@ -896,7 +899,9 @@ class PostgresTruthStore(_PostgresAdapterBase):
                 current_source_ids=current_source_ids,
                 other_source_ids=list(row["source_ids"] or []),
             )
-            self._insert_relationship(connection, claim_row_id, str(row["id"]), relationship_type, notes)
+            self._insert_relationship(
+                connection, claim_row_id, str(row["id"]), relationship_type, notes
+            )
             reverse_type = self._reverse_relationship_type(relationship_type)
             self._insert_relationship(
                 connection,
@@ -966,7 +971,9 @@ class PostgresTruthStore(_PostgresAdapterBase):
                     notes,
                     created_at
                 ) VALUES (%s, %s, %s, %s, %s, %s, %s)
-                ON CONFLICT (claim_id, related_claim_id, relationship_type, source_kind) DO UPDATE SET
+                ON CONFLICT (
+                    claim_id, related_claim_id, relationship_type, source_kind
+                ) DO UPDATE SET
                     notes = EXCLUDED.notes
                 """
             ).format(Identifier(self.store.schema)),
@@ -1029,7 +1036,9 @@ class PostgresTruthStore(_PostgresAdapterBase):
 
     def _claim_id_for_row(self, connection, row_id: str) -> str:
         row = connection.execute(
-            SQL("SELECT claim_id FROM {}.claims WHERE id = %s").format(Identifier(self.store.schema)),
+            SQL("SELECT claim_id FROM {}.claims WHERE id = %s").format(
+                Identifier(self.store.schema)
+            ),
             (row_id,),
         ).fetchone()
         return row["claim_id"]

@@ -14,9 +14,9 @@ from source_aware_worldbuilding.domain.enums import (
     JobStatus,
     QueryMode,
     ResearchCoverageStatus,
+    ResearchFetchOutcome,
     ResearchFindingDecision,
     ResearchFindingReason,
-    ResearchFetchOutcome,
     ResearchRunStatus,
     ReviewDecision,
     ReviewState,
@@ -66,9 +66,7 @@ class SourceDocumentRecord(BaseModel):
         "extraction_failed",
     ] = "imported"
     raw_text_status: Literal["missing", "queued", "ready", "failed"] = "missing"
-    claim_extraction_status: Literal["queued", "ready", "running", "completed", "failed"] = (
-        "queued"
-    )
+    claim_extraction_status: Literal["queued", "ready", "running", "completed", "failed"] = "queued"
     locator: str | None = None
     raw_text: str | None = None
     raw_metadata_json: dict | None = None
@@ -210,23 +208,22 @@ class QueryFilter(BaseModel):
     source_types: list[str] = Field(default_factory=list)
     time_start: str | None = None
     time_end: str | None = None
-    relationship_types: list[
-        Literal["supports", "contradicts", "supersedes", "superseded_by"]
-    ] = Field(default_factory=list)
+    relationship_types: list[Literal["supports", "contradicts", "supersedes", "superseded_by"]] = (
+        Field(default_factory=list)
+    )
 
 
 class QueryRequest(BaseModel):
     question: str
     mode: QueryMode = QueryMode.STRICT_FACTS
+    project_id: str | None = None
     filters: QueryFilter | None = None
 
 
 class LorePacketRequest(BaseModel):
     project_name: str
     focus: str | None = None
-    files: list[
-        Literal["basic-lore.md", "characters.md", "timeline.md", "notes.md"]
-    ] | None = None
+    files: list[Literal["basic-lore.md", "characters.md", "timeline.md", "notes.md"]] | None = None
     filters: QueryFilter | None = None
     include_statuses: list[ClaimStatus] | None = None
     include_evidence_footnotes: bool = True
@@ -259,7 +256,7 @@ class QueryResultMetadata(BaseModel):
     retrieval_backend: Literal["memory", "qdrant"] = "memory"
     fallback_used: bool = False
     fallback_reason: str | None = None
-    ranking_strategy: Literal["lexical", "blended", "projection_only"] = "lexical"
+    ranking_strategy: Literal["lexical", "blended", "projection_only", "intent_blended"] = "lexical"
 
 
 class ProjectionSearchResult(BaseModel):
@@ -365,9 +362,7 @@ class BibleProjectProfile(BaseModel):
     taboo_topics: list[str] = Field(default_factory=list)
     desired_facets: list[str] = Field(default_factory=list)
     tone: BibleTone = BibleTone.GROUNDED_LITERARY
-    composition_defaults: BibleCompositionDefaults = Field(
-        default_factory=BibleCompositionDefaults
-    )
+    composition_defaults: BibleCompositionDefaults = Field(default_factory=BibleCompositionDefaults)
     created_at: str = Field(default_factory=utc_now)
     updated_at: str = Field(default_factory=utc_now)
 
@@ -383,9 +378,7 @@ class BibleProjectProfileUpdateRequest(BaseModel):
     taboo_topics: list[str] = Field(default_factory=list)
     desired_facets: list[str] = Field(default_factory=list)
     tone: BibleTone = BibleTone.GROUNDED_LITERARY
-    composition_defaults: BibleCompositionDefaults = Field(
-        default_factory=BibleCompositionDefaults
-    )
+    composition_defaults: BibleCompositionDefaults = Field(default_factory=BibleCompositionDefaults)
 
 
 class BibleSectionReference(BaseModel):
@@ -418,11 +411,31 @@ class BibleSectionParagraph(BaseModel):
     heading: str | None = None
     text: str
     paragraph_kind: str = "summary"
+    paragraph_role: (
+        Literal[
+            "descriptive_synthesis",
+            "interpretive_synthesis",
+            "uncertainty_framing",
+            "writer_guidance",
+        ]
+        | None
+    ) = None
     claim_ids: list[str] = Field(default_factory=list)
     evidence_ids: list[str] = Field(default_factory=list)
     source_ids: list[str] = Field(default_factory=list)
     contradiction_flags: list[str] = Field(default_factory=list)
     supersession_flags: list[str] = Field(default_factory=list)
+
+
+class BibleSectionCompositionMetrics(BaseModel):
+    thin_section: bool = False
+    target_beats: int = 0
+    produced_beats: int = 0
+    skipped_beat_ids: list[str] = Field(default_factory=list)
+    skipped_reasons: list[str] = Field(default_factory=list)
+    claim_density: float = 0.0
+    evidence_density: float = 0.0
+    contradiction_presence: bool = False
 
 
 class BibleParagraphProvenance(BaseModel):
@@ -460,9 +473,9 @@ class BibleSectionFilters(BaseModel):
     claim_kind: ClaimKind | None = None
     time_start: str | None = None
     time_end: str | None = None
-    relationship_types: list[
-        Literal["supports", "contradicts", "supersedes", "superseded_by"]
-    ] = Field(default_factory=list)
+    relationship_types: list[Literal["supports", "contradicts", "supersedes", "superseded_by"]] = (
+        Field(default_factory=list)
+    )
 
 
 class BibleSectionDraft(BaseModel):
@@ -477,6 +490,9 @@ class BibleSectionDraft(BaseModel):
     recommended_next_research: list[str] = Field(default_factory=list)
     coverage_analysis: BibleCoverageAnalysis = Field(default_factory=BibleCoverageAnalysis)
     retrieval_metadata: dict[str, object] = Field(default_factory=dict)
+    composition_metrics: BibleSectionCompositionMetrics = Field(
+        default_factory=BibleSectionCompositionMetrics
+    )
 
 
 class BibleSection(BaseModel):
@@ -496,6 +512,9 @@ class BibleSection(BaseModel):
     recommended_next_research: list[str] = Field(default_factory=list)
     coverage_analysis: BibleCoverageAnalysis = Field(default_factory=BibleCoverageAnalysis)
     retrieval_metadata: dict[str, object] = Field(default_factory=dict)
+    composition_metrics: BibleSectionCompositionMetrics = Field(
+        default_factory=BibleSectionCompositionMetrics
+    )
     has_manual_edits: bool = False
     latest_job: JobSummary | None = None
     created_at: str = Field(default_factory=utc_now)
@@ -567,7 +586,7 @@ class JobRecord(BaseModel):
     updated_at: str = Field(default_factory=utc_now)
 
     @model_validator(mode="after")
-    def populate_status_label(self) -> "JobRecord":
+    def populate_status_label(self) -> JobRecord:
         if not self.status_label:
             if self.completion_state == "partial":
                 self.status_label = "partial"
@@ -596,7 +615,7 @@ class JobSummary(BaseModel):
     warnings: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")
-    def populate_status_label(self) -> "JobSummary":
+    def populate_status_label(self) -> JobSummary:
         if not self.status_label:
             if self.completion_state == "partial":
                 self.status_label = "partial"
@@ -644,7 +663,7 @@ class ResearchCuratedInput(BaseModel):
     notes: str | None = None
 
     @model_validator(mode="after")
-    def validate_shape(self) -> "ResearchCuratedInput":
+    def validate_shape(self) -> ResearchCuratedInput:
         if self.input_type == "url" and not self.url:
             raise ValueError("Curated URL inputs require a url.")
         if self.input_type == "text":
@@ -918,7 +937,7 @@ class ResearchRunDetail(BaseModel):
     run: ResearchRun
     findings: list[ResearchFinding] = Field(default_factory=list)
     program: ResearchProgram
-    facet_coverage: list["ResearchFacetCoverage"] = Field(default_factory=list)
+    facet_coverage: list[ResearchFacetCoverage] = Field(default_factory=list)
 
 
 class ResearchFacetCoverage(BaseModel):
