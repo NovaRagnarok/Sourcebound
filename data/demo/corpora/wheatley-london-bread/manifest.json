@@ -1,0 +1,92 @@
+{
+  "corpus_id": "wheatley-london-bread",
+  "corpus_name": "Henry B. Wheatley bread-market excerpt",
+  "source": {
+    "source_id": "src-demo-wheatley-bread",
+    "external_source": "demo",
+    "title": "The Story of London: bread-market excerpt",
+    "author": "Henry B. Wheatley",
+    "year": "1896",
+    "source_type": "record",
+    "locator_hint": "bread-market excerpt",
+    "url": "https://www.gutenberg.org/ebooks/46618",
+    "abstract": "Public-domain excerpt on London bread-market practice, baker payments, and house bread rules."
+  },
+  "documents": [
+    {
+      "document_id": "zdoc-demo-wheatley-note",
+      "document_kind": "note",
+      "path": "note.txt",
+      "locator": "curator note",
+      "filename": "note.txt"
+    },
+    {
+      "document_id": "zdoc-demo-wheatley-excerpt",
+      "document_kind": "attachment",
+      "path": "excerpt.txt",
+      "locator": "bread-market excerpt",
+      "filename": "excerpt.txt"
+    }
+  ],
+  "approvals": [
+    {
+      "predicate": "described_as",
+      "value_contains": "thirteen batches for twelve",
+      "claim_patch": {
+        "subject": "London bread regratresses",
+        "predicate": "received",
+        "value": "thirteen batches for every twelve purchased"
+      },
+      "override_status": "probable",
+      "notes": "Approved from the public-domain bread-market excerpt after tightening the subject wording."
+    },
+    {
+      "predicate": "described_as",
+      "value_contains": "forbidden by public ordinance",
+      "claim_patch": {
+        "subject": "London bakers",
+        "predicate": "redirected",
+        "value": "customary gratuity payments into larger loaves by public ordinance"
+      },
+      "override_status": "probable",
+      "notes": "Kept as probable canon because the demo corpus is a small secondary excerpt."
+    },
+    {
+      "predicate": "described_as",
+      "value_contains": "House bread was prepared",
+      "claim_patch": {
+        "subject": "House bread",
+        "predicate": "was_prepared_by",
+        "value": "the bakers of household bread"
+      },
+      "override_status": "probable",
+      "notes": "Approved as material-culture canon for the demo section."
+    }
+  ],
+  "project_id": "project-demo-wheatley-bread",
+  "profile": {
+    "project_name": "London Bread Demo Bible",
+    "era": "Late medieval London as summarized by Wheatley",
+    "geography": "London",
+    "narrative_focus": "Bread-market routine, baker practice, and household provisioning",
+    "desired_facets": [
+      "economics",
+      "practices",
+      "material_culture"
+    ],
+    "tone": "grounded_literary",
+    "composition_defaults": {
+      "include_statuses": [
+        "verified",
+        "probable"
+      ]
+    }
+  },
+  "section_type": "economics_and_material_culture",
+  "section_filters": {
+    "statuses": [
+      "verified",
+      "probable"
+    ]
+  }
+}

@@ -213,13 +213,13 @@ def test_runtime_health_route_reports_degraded_when_quality_layers_are_missing(m
 
     assert response.status_code == 200
     body = response.json()
-    assert body["overall_status"] == "degraded"
+    assert body["overall_status"] == "ready"
     assert any(
         service["name"] == "projection" and service["mode"] == "disabled"
         for service in body["services"]
     )
     assert any(
-        "required for the default newcomer path" in step.lower()
+        "optional after first run" in step.lower()
         for step in body["next_steps"]
     )
 

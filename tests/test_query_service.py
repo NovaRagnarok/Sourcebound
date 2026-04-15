@@ -342,7 +342,10 @@ def test_query_gap_first_mode_does_not_substitute_adjacent_canon_for_narrow_ques
         "claim-verified-1",
         "claim-probable-1",
     ]
-    assert all(claim.status in {ClaimStatus.VERIFIED, ClaimStatus.PROBABLE} for claim in result.nearby_claims)
+    assert all(
+        claim.status in {ClaimStatus.VERIFIED, ClaimStatus.PROBABLE}
+        for claim in result.nearby_claims
+    )
     assert result.recommended_next_research == [
         "Find directly documented evidence for: How were bread tokens handled in "
         "Rouen during the winter shortage?"

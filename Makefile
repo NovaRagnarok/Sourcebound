@@ -1,9 +1,12 @@
-.PHONY: bootstrap install lint test dev seed status newcomer-smoke
+.PHONY: bootstrap bootstrap-graphrag install lint test dev seed status newcomer-smoke
 
 bootstrap:
 	python3 -m venv .venv
 	.venv/bin/python -m pip install -U pip
-	.venv/bin/python -m pip install -e .[dev,graphrag]
+	.venv/bin/python -m pip install -e .[dev]
+
+bootstrap-graphrag: bootstrap
+	.venv/bin/python -m pip install -e .[graphrag]
 
 install: bootstrap
 

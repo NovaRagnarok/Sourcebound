@@ -15,36 +15,37 @@ Sourcebound already includes:
 - a browser UI at `/workspace/`, with `/operator/` available as the advanced
   utilities alias
 - persisted background jobs with an in-process worker enabled by default
-- Postgres-backed app state and Postgres-backed canon as the default stack
+- Postgres-backed app state and Postgres-backed canon as the default local stack
 - optional Zotero, GraphRAG, Qdrant, and Wikibase integrations behind explicit
-  ports
+  flags or backend selection
 
 ## What To Try First
 
-If you want the fastest newcomer path against the default local stack:
+For the default fresh-clone local path:
 
 ```bash
+cp .env.example .env
 make bootstrap
-docker compose up -d postgres qdrant
+docker compose up -d postgres
 .venv/bin/saw status
 .venv/bin/saw seed-dev-data
 .venv/bin/saw serve --reload
 ```
 
-Expected result: Postgres is ready, Qdrant is ready, and the seeded sample
-project is visible in the operator UI.
+Expected result: Postgres is ready, optional integrations stay disabled, and
+the seeded sample project is visible in the UI.
 
 Then open:
 
-- operator view: `http://localhost:8000/operator/` (advanced alias)
-- writer workspace: `http://localhost:8000/workspace/` (writer-first alias)
+- writer workspace: `http://localhost:8000/workspace/`
+- operator view: `http://localhost:8000/operator/`
 - API docs: `http://localhost:8000/docs`
 
-Required for the default path: Python with a local `.venv`, Postgres, and
-Qdrant.
+Required for the default path: Python 3.11 or 3.12, a local `.venv`, and
+Postgres from `docker compose`.
 
-Optional for first run: Zotero, Wikibase, and GraphRAG or other
-LLM-backed extraction.
+Optional and disabled by default: Zotero, GraphRAG, Qdrant projection and
+research semantics, and Wikibase.
 
 ## How It Works
 
@@ -80,7 +81,8 @@ Important current behavior:
 - `APP_TRUTH_BACKEND` defaults to `postgres`
 - `APP_JOB_WORKER_ENABLED` defaults to `true`
 - `APP_UI_ENABLED` defaults to `true`
-- extraction uses GraphRAG when enabled, otherwise the heuristic adapter
+- extraction defaults to the heuristic adapter until GraphRAG is explicitly enabled
+- Qdrant projection and research semantics are disabled by default
 - Qdrant is a projection and retrieval layer, not the source of truth
 - long-running research, Bible composition, regeneration, and export work run
   as persisted background jobs
@@ -88,28 +90,35 @@ Important current behavior:
 
 ## Quick Start
 
-For the default local setup, `.env.example` is already aligned with the main
-Postgres-first path.
+1. Create your local env file:
 
-1. Bootstrap the environment:
+```bash
+cp .env.example .env
+```
+
+2. Bootstrap the environment:
 
 ```bash
 make bootstrap
 ```
 
-2. Start the local services:
+3. Start the default local dependency:
 
 ```bash
-docker compose up -d postgres qdrant
+docker compose up -d postgres
 ```
 
-3. Check runtime readiness:
+4. Check runtime readiness:
 
 ```bash
 .venv/bin/saw status
 ```
 
-4. Seed the sample project and serve the app:
+You should see Postgres-backed app state and truth storage as ready. Qdrant,
+Zotero, GraphRAG, and Wikibase should show up as optional or disabled, not as
+startup blockers.
+
+5. Seed the sample project and serve the app:
 
 ```bash
 .venv/bin/saw seed-dev-data
@@ -122,17 +131,19 @@ the UI is useful immediately. After seeding, both `/workspace/` and
 
 ## Local Modes
 
-### Postgres-first local stack
+### Default local stack
 
-This is the default and recommended path. It gives you Postgres-backed review
-state, Postgres-backed canon, the browser UI, the background worker, and Qdrant
-for better retrieval relevance.
+This is the recommended newcomer path. It gives you:
 
-See [Author Stack](docs/AUTHOR_STACK.md) for the recommended full local config.
+- Postgres-backed workflow state
+- Postgres-backed canon
+- the browser UI
+- the in-process job worker
+- heuristic extraction with no GraphRAG setup required
 
 ### Zero-infra local mode
 
-Use this when you want to work without Postgres, Qdrant, or Zotero:
+Use this when you want to work without Postgres, Qdrant, Zotero, or Wikibase:
 
 ```bash
 APP_STATE_BACKEND=file
@@ -161,6 +172,25 @@ APP_STATE_BACKEND=sqlite
 APP_SQLITE_PATH=runtime/sourcebound.db
 ```
 
+### Optional integrations
+
+Enable these only when you want them:
+
+- GraphRAG:
+  Run `make bootstrap-graphrag`, set `GRAPH_RAG_ENABLED=true`, and finish the
+  GraphRAG workspace or artifact setup.
+- Qdrant projection:
+  Set `QDRANT_ENABLED=true`, start Qdrant with `docker compose up -d qdrant`,
+  then run `.venv/bin/saw seed-dev-data` or `.venv/bin/saw qdrant-rebuild`.
+- Research semantics:
+  Set `RESEARCH_SEMANTIC_ENABLED=true` and point it at the same Qdrant instance.
+- Zotero:
+  Fill in the Zotero variables in `.env` when you want live library pulls or
+  write-back.
+- Wikibase:
+  Set `APP_TRUTH_BACKEND=wikibase` and fill in the Wikibase variables before
+  starting the app.
+
 ## Common Commands
 
 The CLI is mainly for runtime checks, setup, seed data, and ingestion:
@@ -183,6 +213,25 @@ Useful examples:
 .venv/bin/saw zotero-check --json-output
 .venv/bin/saw intake-text "Field Notes" "Observed three shrine rituals at dusk."
 ```
+
+## First-Run Troubleshooting
+
+- `make bootstrap` fails while installing GraphRAG:
+  The default path no longer installs GraphRAG. Run `make bootstrap` for the
+  base setup, then `make bootstrap-graphrag` only if you plan to enable it.
+- `saw status` says Postgres is not reachable:
+  Run `docker compose up -d postgres` and confirm `APP_POSTGRES_DSN` still
+  matches `.env.example`.
+- `saw serve` exits immediately with a configuration error:
+  Read the listed env var names closely. Startup now only fails for the backend
+  or integration you explicitly selected, and the error message includes the
+  exact fix.
+- `saw seed-dev-data` fails before seeding:
+  This usually means the active backend is not reachable yet. For the default
+  path, start Postgres first.
+- `health/runtime` looks unfamiliar:
+  Optional services such as Zotero, Qdrant, and GraphRAG can show as disabled or
+  optional while the app is still fully ready for the default local path.
 
 ## API And UI
 
@@ -238,45 +287,4 @@ docs/
   ROADMAP.md
   adrs/
   ontology/
-  research/
-  schemas/
 ```
-
-## Tests And Contributing
-
-Normal test run:
-
-```bash
-make test
-```
-
-Live integrations are opt-in:
-
-```bash
-.venv/bin/pytest -m live_zotero tests/test_live_integrations.py
-.venv/bin/pytest -m live_qdrant tests/test_live_integrations.py
-.venv/bin/pytest -m live_wikibase tests/test_live_integrations.py
-```
-
-Before opening a PR, run:
-
-```bash
-.venv/bin/ruff check src tests
-make test
-```
-
-If you change runtime behavior or setup expectations, update `README.md` and
-the most relevant doc in `docs/` in the same change.
-
-## Related Docs
-
-- [Architecture](docs/ARCHITECTURE.md)
-- [Author Stack](docs/AUTHOR_STACK.md)
-- [Roadmap](docs/ROADMAP.md)
-- [Default Research Program](docs/research/default_program.md)
-- [ADR 0001: Modular Monolith](docs/adrs/0001-modular-monolith.md)
-
-## License
-
-Sourcebound is licensed under the Apache License, Version 2.0. See
-[LICENSE](LICENSE).

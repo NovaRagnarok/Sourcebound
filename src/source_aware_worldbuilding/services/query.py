@@ -165,11 +165,13 @@ class QueryService:
         elif request.mode == QueryMode.CHARACTER_KNOWLEDGE:
             if self._has_viewpoint_grounding(matched, request, profile):
                 warnings.append(
-                    "Character knowledge mode preferred canon that matches the requested or inferred viewpoint."
+                    "Character knowledge mode preferred canon that matches "
+                    "the requested or inferred viewpoint."
                 )
             else:
                 warnings.append(
-                    "Character knowledge mode found only limited viewpoint grounding; treat the answer as adjacent occupational canon."
+                    "Character knowledge mode found only limited viewpoint "
+                    "grounding; treat the answer as adjacent occupational canon."
                 )
         else:
             warnings.append("Open exploration mode may include mixed-certainty material.")
@@ -356,7 +358,8 @@ class QueryService:
                 ]
                 return matched, direct_ids, adjacent_ids, warnings
             warnings.append(
-                "Approved canon does not directly answer this narrow question yet; adjacent canon was not substituted."
+                "Approved canon does not directly answer this narrow question "
+                "yet; adjacent canon was not substituted."
             )
             return [], [], [], warnings
 
@@ -391,7 +394,8 @@ class QueryService:
                 return matched, direct_ids, adjacent_ids, warnings
             if contested_matches:
                 warnings.append(
-                    "Approved canon offers contested context here, but not a direct disputed answer."
+                    "Approved canon offers contested context here, but not a "
+                    "direct disputed answer."
                 )
                 nearby = contested_matches[:4]
                 return nearby, [], [claim.claim_id for claim in nearby], warnings
@@ -416,9 +420,15 @@ class QueryService:
                 return matched, direct_ids, adjacent_ids, warnings
             if low_certainty:
                 warnings.append(
-                    "Approved canon did not contain a direct rumor/legend hit, so nearby low-certainty canon was surfaced explicitly."
+                    "Approved canon did not contain a direct rumor/legend hit, "
+                    "so nearby low-certainty canon was surfaced explicitly."
                 )
-                return low_certainty[:4], [], [claim.claim_id for claim in low_certainty[:4]], warnings
+                return (
+                    low_certainty[:4],
+                    [],
+                    [claim.claim_id for claim in low_certainty[:4]],
+                    warnings,
+                )
             return [], [], [], warnings
 
         if direct_matches:
@@ -433,7 +443,8 @@ class QueryService:
             return matched, direct_ids, adjacent_ids, warnings
         if ranked_matches:
             warnings.append(
-                "Approved canon did not contain a direct answer, so nearby canon was surfaced explicitly."
+                "Approved canon did not contain a direct answer, so nearby "
+                "canon was surfaced explicitly."
             )
             nearby = ranked_matches[:4]
             return nearby, [], [claim.claim_id for claim in nearby], warnings
@@ -447,14 +458,26 @@ class QueryService:
     ) -> bool:
         if not claims:
             return False
-        requested_scope = self._normalize_text(request.filters.viewpoint_scope) if request.filters and request.filters.viewpoint_scope else ""
-        inferred_scope = self._normalize_text(profile.social_lens) if profile and profile.social_lens else ""
+        requested_scope = (
+            self._normalize_text(request.filters.viewpoint_scope)
+            if request.filters and request.filters.viewpoint_scope
+            else ""
+        )
+        inferred_scope = (
+            self._normalize_text(profile.social_lens)
+            if profile and profile.social_lens
+            else ""
+        )
         scope_hints = {hint for hint in [requested_scope, inferred_scope] if hint}
         if not scope_hints:
             return any(claim.viewpoint_scope for claim in claims)
         for claim in claims:
             claim_scope = self._normalize_text(claim.viewpoint_scope or "")
-            if any(hint in claim_scope or claim_scope in hint for hint in scope_hints if claim_scope):
+            if any(
+                hint in claim_scope or claim_scope in hint
+                for hint in scope_hints
+                if claim_scope
+            ):
                 return True
         return False
 
@@ -576,17 +599,29 @@ class QueryService:
         if nearby_claims:
             lead = nearby_claims[0]
             if lead.place:
-                suggestions.append(f"What approved canon do we have for {lead.place} that is directly tied to this scene?")
-            suggestions.append(f"What directly documented detail would confirm or reject {lead.subject.lower()}?")
+                suggestions.append(
+                    f"What approved canon do we have for {lead.place} "
+                    "that is directly tied to this scene?"
+                )
+            suggestions.append(
+                "What directly documented detail would confirm or reject "
+                f"{lead.subject.lower()}?"
+            )
             if lead.time_start or lead.time_end:
                 anchor = lead.time_start or lead.time_end
                 suggestions.append(f"What else is firmly dated around {anchor}?")
         for gap in coverage_gaps:
             lower = gap.lower()
             if "does not directly answer" in lower:
-                suggestions.append("What specific detail is missing enough that it should trigger research before drafting?")
+                suggestions.append(
+                    "What specific detail is missing enough that it should "
+                    "trigger research before drafting?"
+                )
             elif "verified" in lower:
-                suggestions.append("Which part of this answer still rests on probable rather than verified canon?")
+                suggestions.append(
+                    "Which part of this answer still rests on probable rather "
+                    "than verified canon?"
+                )
         seen: set[str] = set()
         deduped: list[str] = []
         for item in suggestions:
@@ -893,7 +928,8 @@ class QueryService:
         place = self._normalize_text(claim.place or "")
         score = 0
         phrase = " ".join(core_tokens)
-        if phrase and phrase in " ".join(part for part in [subject, value, notes, evidence] if part):
+        haystack = " ".join(part for part in [subject, value, notes, evidence] if part)
+        if phrase and phrase in haystack:
             score += 10
         for bigram in core_bigrams:
             if bigram in " ".join(part for part in [subject, value, evidence] if part):

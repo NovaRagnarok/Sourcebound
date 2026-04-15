@@ -33,7 +33,7 @@ def test_runtime_health_reports_local_mvp_mode(monkeypatch) -> None:
 
     assert response.status_code == 200
     body = response.json()
-    assert body["overall_status"] == "degraded"
+    assert body["overall_status"] == "ready"
     assert body["state_backend"] == "file"
     assert body["truth_backend"] == "file"
     assert body["extraction_backend"] == "heuristic"
@@ -45,11 +45,15 @@ def test_runtime_health_reports_local_mvp_mode(monkeypatch) -> None:
         for service in body["services"]
     )
     assert any(
+        service["name"] == "research_semantics" and service["mode"] == "disabled"
+        for service in body["services"]
+    )
+    assert any(
         service["name"] == "bible_export" and service["mode"] == "job_backed"
         for service in body["services"]
     )
-    assert any("ZOTERO_LIBRARY_ID" in step for step in body["next_steps"])
-    assert any("QDRANT_ENABLED=true" in step for step in body["next_steps"])
+    assert any("Zotero" in step for step in body["next_steps"])
+    assert any("Qdrant projection" in step for step in body["next_steps"])
     assert not any("WIKIBASE_API_URL" in step for step in body["next_steps"])
 
 
@@ -67,7 +71,7 @@ def test_cli_status_json_reports_runtime_state(monkeypatch) -> None:
     result = runner.invoke(cli_app, ["status", "--json-output"])
 
     assert result.exit_code == 0
-    assert '"overall_status": "degraded"' in result.stdout
+    assert '"overall_status": "ready"' in result.stdout
     assert '"extraction_backend": "heuristic"' in result.stdout
     assert '"truth_backend": "file"' in result.stdout
 
@@ -169,7 +173,7 @@ def test_runtime_health_reports_needs_setup_when_worker_is_disabled(monkeypatch)
     worker = next(service for service in body["services"] if service["name"] == "job_worker")
     assert worker["ready"] is False
     assert any(
-        "required for the default newcomer path" in step.lower()
+        "required for local startup" in step.lower()
         for step in body["next_steps"]
     )
 
@@ -246,3 +250,29 @@ def test_runtime_health_reports_missing_postgres_dsn_with_fix(monkeypatch) -> No
     assert "cp .env.example .env" in app_state["detail"]
     assert "APP_POSTGRES_DSN" in truth_store["detail"]
     assert any("docker compose up -d postgres" in step for step in body["next_steps"])
+
+
+def test_cli_serve_fails_fast_for_enabled_but_unconfigured_wikibase(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "app_truth_backend", "wikibase")
+    monkeypatch.setattr(settings, "wikibase_api_url", None)
+    monkeypatch.setattr(settings, "wikibase_username", None)
+    monkeypatch.setattr(settings, "wikibase_password", None)
+    monkeypatch.setattr(settings, "wikibase_property_map", None)
+
+    result = runner.invoke(cli_app, ["serve"])
+
+    assert result.exit_code == 1
+    assert "APP_TRUTH_BACKEND=wikibase" in result.output
+    assert "WIKIBASE_API_URL" in result.output
+
+
+def test_cli_serve_fails_fast_for_enabled_but_unready_graphrag(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(settings, "graph_rag_enabled", True)
+    monkeypatch.setattr(settings, "graph_rag_mode", "in_process")
+    monkeypatch.setattr(settings, "graph_rag_root", tmp_path / "missing-graphrag")
+
+    result = runner.invoke(cli_app, ["serve"])
+
+    assert result.exit_code == 1
+    assert "GRAPH_RAG_ENABLED=true" in result.output
+    assert "bootstrap-graphrag" in result.output

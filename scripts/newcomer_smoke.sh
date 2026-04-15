@@ -17,11 +17,18 @@ fi
 TMP_DIR=$(mktemp -d)
 SERVER_LOG="$TMP_DIR/newcomer-smoke-server.log"
 SERVER_PID=""
+ORIGINAL_ENV="$TMP_DIR/original.env"
+RESTORE_ENV=0
 
 cleanup() {
   if [[ -n "${SERVER_PID}" ]]; then
     kill -- -"${SERVER_PID}" >/dev/null 2>&1 || true
     wait "${SERVER_PID}" >/dev/null 2>&1 || true
+  fi
+  if [[ "${RESTORE_ENV}" -eq 1 ]]; then
+    mv "$ORIGINAL_ENV" .env
+  else
+    rm -f .env
   fi
   rm -rf "$TMP_DIR"
 }
@@ -29,10 +36,27 @@ cleanup() {
 trap cleanup EXIT
 
 echo "[newcomer-smoke] bootstrapping services"
-docker compose up -d postgres qdrant
+if [[ -f .env ]]; then
+  cp .env "$ORIGINAL_ENV"
+  RESTORE_ENV=1
+fi
+
+cp .env.example .env
+
+docker compose up -d postgres
 
 echo "[newcomer-smoke] checking pre-seed runtime status"
-.venv/bin/saw status --json-output >/dev/null
+PRE_SEED_STATUS=$(.venv/bin/saw status --json-output)
+printf '%s' "$PRE_SEED_STATUS" | .venv/bin/python -c '
+import json
+import sys
+
+status = json.load(sys.stdin)
+assert status["overall_status"] == "ready", status
+projection = next(service for service in status["services"] if service["name"] == "projection")
+assert projection["mode"] == "disabled", projection
+assert projection["ready"] is True, projection
+'
 
 echo "[newcomer-smoke] seeding default local data"
 .venv/bin/saw seed-dev-data
@@ -46,7 +70,13 @@ import sys
 status = json.load(sys.stdin)
 assert status["overall_status"] == "ready", status
 projection = next(service for service in status["services"] if service["name"] == "projection")
+assert projection["mode"] == "disabled", projection
 assert projection["ready"] is True, projection
+research = next(
+    service for service in status["services"] if service["name"] == "research_semantics"
+)
+assert research["mode"] == "disabled", research
+assert research["ready"] is True, research
 '
 
 echo "[newcomer-smoke] starting reload server"
@@ -98,6 +128,8 @@ assert "<!doctype html>" in operator_html.lower()
 
 runtime = json.loads(fetch_text("http://127.0.0.1:8000/health/runtime"))
 assert runtime["overall_status"] == "ready", runtime
+projection = next(service for service in runtime["services"] if service["name"] == "projection")
+assert projection["mode"] == "disabled", projection
 
 workspace = json.loads(fetch_text("http://127.0.0.1:8000/v1/workspace/summary"))
 assert workspace["project"]["project_id"] == "project-rouen-winter", workspace

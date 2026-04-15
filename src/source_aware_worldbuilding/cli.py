@@ -79,6 +79,10 @@ from source_aware_worldbuilding.api.dependencies import (
     get_research_semantic,
     get_truth_store,
 )
+from source_aware_worldbuilding.demo_corpus import (
+    available_demo_corpora,
+    run_demo_corpus,
+)
 from source_aware_worldbuilding.domain.enums import (
     BibleSectionType,
     BibleTone,
@@ -1782,13 +1786,13 @@ def _rebuild_qdrant_projection() -> dict[str, object]:
 
 
 def _ensure_seed_prerequisites() -> dict[str, object] | None:
-    if settings.app_state_backend == "postgres" or settings.app_truth_backend == "postgres":
-        if not settings.app_postgres_dsn:
-            raise RuntimeError(
-                "APP_POSTGRES_DSN is required for the default Postgres newcomer path. "
-                "Run `cp .env.example .env` or set "
-                "`APP_POSTGRES_DSN=postgresql://saw:saw@localhost:5432/saw`."
-            )
+    startup_issues = settings.startup_validation_issues()
+    if startup_issues:
+        issue_lines = ["Sourcebound cannot seed with the current configuration:"]
+        issue_lines.extend(f"- {issue.summary} {issue.fix}" for issue in startup_issues)
+        raise RuntimeError("\n".join(issue_lines))
+
+    if settings.postgres_enabled:
         try:
             with connect(
                 settings.app_postgres_dsn,
@@ -2362,6 +2366,54 @@ def intake_file(
     )
     for warning in result.warnings:
         print(f"[yellow]{warning}[/yellow]")
+
+
+@app.command("demo-corpus-list")
+def demo_corpus_list(json_output: bool = False) -> None:
+    corpora = available_demo_corpora()
+    if json_output:
+        typer.echo(json.dumps({"corpora": corpora}, indent=2))
+        return
+    if not corpora:
+        print("[yellow]No demo corpora are checked in.[/yellow]")
+        return
+    for corpus_id in corpora:
+        print(corpus_id)
+
+
+@app.command("demo-corpus-run")
+def demo_corpus_run(
+    corpus_id: str = typer.Argument(..., help="Checked-in demo corpus id."),
+    data_dir: Path | None = typer.Option(
+        None,
+        "--data-dir",
+        help="Output directory for the demo run. Defaults to runtime/demo/<corpus-id>.",
+    ),
+    json_output: bool = False,
+) -> None:
+    target_dir = data_dir or Path("runtime") / "demo" / corpus_id
+    result = run_demo_corpus(corpus_id, data_dir=target_dir)
+    if json_output:
+        typer.echo(json.dumps(result.model_dump(mode="json"), indent=2))
+        return
+    print(
+        f"[green]Ran demo corpus {corpus_id}[/green] | "
+        f"Documents: {result.source_document_count} | "
+        f"Text units: {result.text_unit_count} | "
+        f"Candidates: {result.candidate_count} | "
+        f"Approved claims: {result.approved_claim_count}"
+    )
+    print(
+        f"Section: {result.section_title} ({result.section_generation_status.value}) | "
+        f"Markdown: {result.markdown_path}"
+    )
+    if result.review_preview_locator:
+        print(
+            "Review evidence preview: "
+            f"{result.review_preview_locator} "
+            f"[{result.review_preview_span_start}, {result.review_preview_span_end}]"
+        )
+    print(f"Summary: {result.summary_path}")
 
 
 @app.command("zotero-pull")

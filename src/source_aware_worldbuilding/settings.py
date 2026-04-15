@@ -1,8 +1,15 @@
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+@dataclass(frozen=True, slots=True)
+class StartupValidationIssue:
+    summary: str
+    fix: str
 
 
 class Settings(BaseSettings):
@@ -12,7 +19,10 @@ class Settings(BaseSettings):
     app_env: str = Field(default="dev", alias="APP_ENV")
     app_host: str = Field(default="0.0.0.0", alias="APP_HOST")
     app_port: int = Field(default=8000, alias="APP_PORT")
-    app_state_backend: str = Field(default="postgres", alias="APP_STATE_BACKEND")
+    app_state_backend: Literal["file", "sqlite", "postgres"] = Field(
+        default="postgres",
+        alias="APP_STATE_BACKEND",
+    )
     app_truth_backend: Literal["file", "postgres", "wikibase"] = Field(
         default="postgres",
         alias="APP_TRUTH_BACKEND",
@@ -87,14 +97,17 @@ class Settings(BaseSettings):
         alias="BRAVE_SEARCH_BASE_URL",
     )
 
-    zotero_library_type: str = Field(default="user", alias="ZOTERO_LIBRARY_TYPE")
+    zotero_library_type: Literal["user", "group"] = Field(
+        default="user",
+        alias="ZOTERO_LIBRARY_TYPE",
+    )
     zotero_library_id: str | None = Field(default=None, alias="ZOTERO_LIBRARY_ID")
     zotero_collection_key: str | None = Field(default=None, alias="ZOTERO_COLLECTION_KEY")
     zotero_api_key: str | None = Field(default=None, alias="ZOTERO_API_KEY")
     zotero_base_url: str = Field(default="https://api.zotero.org", alias="ZOTERO_BASE_URL")
 
     graph_rag_root: Path = Field(default=Path("runtime/graphrag"), alias="GRAPH_RAG_ROOT")
-    graph_rag_enabled: bool = Field(default=True, alias="GRAPH_RAG_ENABLED")
+    graph_rag_enabled: bool = Field(default=False, alias="GRAPH_RAG_ENABLED")
     graph_rag_mode: Literal["in_process", "artifact_import"] = Field(
         default="in_process",
         alias="GRAPH_RAG_MODE",
@@ -113,9 +126,9 @@ class Settings(BaseSettings):
 
     qdrant_url: str = Field(default="http://localhost:6333", alias="QDRANT_URL")
     qdrant_collection: str = Field(default="approved_claims", alias="QDRANT_COLLECTION")
-    qdrant_enabled: bool = Field(default=True, alias="QDRANT_ENABLED")
+    qdrant_enabled: bool = Field(default=False, alias="QDRANT_ENABLED")
     research_semantic_enabled: bool = Field(
-        default=True,
+        default=False,
         alias="RESEARCH_SEMANTIC_ENABLED",
     )
     research_qdrant_collection: str = Field(
@@ -134,6 +147,73 @@ class Settings(BaseSettings):
         default=0.05,
         alias="RESEARCH_SEMANTIC_RERANK_WEIGHT",
     )
+
+    @property
+    def postgres_enabled(self) -> bool:
+        return self.app_state_backend == "postgres" or self.app_truth_backend == "postgres"
+
+    @property
+    def qdrant_features_enabled(self) -> bool:
+        return self.qdrant_enabled or self.research_semantic_enabled
+
+    def startup_validation_issues(self) -> list[StartupValidationIssue]:
+        issues: list[StartupValidationIssue] = []
+
+        if self.postgres_enabled and not self.app_postgres_dsn.strip():
+            issues.append(
+                StartupValidationIssue(
+                    summary=(
+                        "Postgres is selected for app state or the truth store, "
+                        "but APP_POSTGRES_DSN is empty."
+                    ),
+                    fix=(
+                        "Run `cp .env.example .env`, or set "
+                        "`APP_POSTGRES_DSN=postgresql://saw:saw@localhost:5432/saw`."
+                    ),
+                )
+            )
+
+        if self.app_truth_backend == "wikibase":
+            missing = [
+                name
+                for name, value in (
+                    ("WIKIBASE_API_URL", self.wikibase_api_url),
+                    ("WIKIBASE_USERNAME", self.wikibase_username),
+                    ("WIKIBASE_PASSWORD", self.wikibase_password),
+                    ("WIKIBASE_PROPERTY_MAP", self.wikibase_property_map),
+                )
+                if not value
+            ]
+            if missing:
+                issues.append(
+                    StartupValidationIssue(
+                        summary=(
+                            "APP_TRUTH_BACKEND=wikibase is enabled, but required Wikibase "
+                            f"settings are missing: {', '.join(missing)}."
+                        ),
+                        fix=(
+                            "Set those variables, or switch back to "
+                            "`APP_TRUTH_BACKEND=postgres` or `APP_TRUTH_BACKEND=file` "
+                            "for local startup."
+                        ),
+                    )
+                )
+
+        if self.qdrant_features_enabled and not self.qdrant_url.strip():
+            issues.append(
+                StartupValidationIssue(
+                    summary=(
+                        "Qdrant-backed features are enabled, but QDRANT_URL is empty."
+                    ),
+                    fix=(
+                        "Set `QDRANT_URL=http://localhost:6333`, or disable "
+                        "`QDRANT_ENABLED` and `RESEARCH_SEMANTIC_ENABLED` for the default "
+                        "local path."
+                    ),
+                )
+            )
+
+        return issues
 
 
 settings = Settings()

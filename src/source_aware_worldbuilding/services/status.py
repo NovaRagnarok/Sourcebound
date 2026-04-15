@@ -6,7 +6,10 @@ import httpx
 from psycopg import connect
 
 from source_aware_worldbuilding.adapters.graphrag_adapter import GraphRAGExtractionAdapter
-from source_aware_worldbuilding.adapters.qdrant_adapter import QdrantProjectionAdapter
+from source_aware_worldbuilding.adapters.qdrant_adapter import (
+    QdrantProjectionAdapter,
+    QdrantResearchSemanticAdapter,
+)
 from source_aware_worldbuilding.domain.models import RuntimeDependencyStatus, RuntimeStatus
 from source_aware_worldbuilding.settings import settings
 
@@ -20,6 +23,7 @@ def build_runtime_status() -> RuntimeStatus:
         _corpus_status(),
         _extraction_status(),
         _projection_status(),
+        _research_semantics_status(),
         _job_worker_status(),
     ]
     next_steps = _next_steps(services)
@@ -39,6 +43,10 @@ def build_runtime_status() -> RuntimeStatus:
 
 
 def enforce_runtime_startup_checks(*, strict_runtime_checks: bool | None = None) -> None:
+    issues = _startup_validation_errors()
+    if issues:
+        raise RuntimeError(_format_startup_validation_errors(issues))
+
     strict = (
         settings.app_strict_startup_checks
         if strict_runtime_checks is None
@@ -63,6 +71,31 @@ def enforce_runtime_startup_checks(*, strict_runtime_checks: bool | None = None)
     )
 
 
+def _startup_validation_errors() -> list[str]:
+    issues = [
+        f"{issue.summary} {issue.fix}"
+        for issue in settings.startup_validation_issues()
+    ]
+
+    if settings.graph_rag_enabled:
+        probe = GraphRAGExtractionAdapter.runtime_probe()
+        if not probe.ready:
+            issues.append(
+                "GRAPH_RAG_ENABLED=true, but GraphRAG is not ready. "
+                f"{probe.detail} Set `GRAPH_RAG_ENABLED=false` for the default local path, "
+                "or finish the GraphRAG setup and install the optional dependency with "
+                "`make bootstrap-graphrag` or `.venv/bin/python -m pip install -e .[graphrag]`."
+            )
+
+    return issues
+
+
+def _format_startup_validation_errors(issues: list[str]) -> str:
+    lines = ["Sourcebound cannot start with the current configuration:"]
+    lines.extend(f"- {issue}" for issue in issues)
+    return "\n".join(lines)
+
+
 def _state_store_status() -> RuntimeDependencyStatus:
     backend = settings.app_state_backend
     if backend == "postgres":
@@ -72,7 +105,7 @@ def _state_store_status() -> RuntimeDependencyStatus:
             if configured
             else (
                 None,
-                "APP_POSTGRES_DSN is required for the default Postgres newcomer path. "
+                "APP_POSTGRES_DSN is required when Postgres is selected for app state. "
                 "Run `cp .env.example .env` or set "
                 "`APP_POSTGRES_DSN=postgresql://saw:saw@localhost:5432/saw`.",
             )
@@ -128,7 +161,7 @@ def _truth_store_status() -> RuntimeDependencyStatus:
             if configured
             else (
                 None,
-                "APP_POSTGRES_DSN is required for the default Postgres newcomer path. "
+                "APP_POSTGRES_DSN is required when Postgres is selected for the truth store. "
                 "Run `cp .env.example .env` or set "
                 "`APP_POSTGRES_DSN=postgresql://saw:saw@localhost:5432/saw`.",
             )
@@ -179,10 +212,10 @@ def _corpus_status() -> RuntimeDependencyStatus:
             mode="stub",
             configured=False,
             reachable=None,
-            ready=False,
+            ready=True,
             detail=(
-                "Zotero is not configured, so source intake falls back to stub material and "
-                "research coverage is degraded."
+                "Zotero is optional for first run. Intake routes still work, but they stay on "
+                "manual and stub flows until you configure a live library."
             ),
         )
 
@@ -267,8 +300,8 @@ def _extraction_status() -> RuntimeDependencyStatus:
             reachable=None,
             ready=True,
             detail=(
-                "Heuristic sentence-based extraction is active. Authoring remains available, "
-                "but extraction quality is degraded until a richer extraction path is enabled."
+                "Heuristic extraction is active for local startup. This is the default path "
+                "and keeps first run dependency-light."
             ),
         )
 
@@ -291,6 +324,19 @@ def _projection_status() -> RuntimeDependencyStatus:
         role="Semantic retrieval projection",
         mode=mode,
         configured=settings.qdrant_enabled,
+        reachable=reachable,
+        ready=ready,
+        detail=detail,
+    )
+
+
+def _research_semantics_status() -> RuntimeDependencyStatus:
+    mode, reachable, ready, detail = QdrantResearchSemanticAdapter().runtime_probe()
+    return RuntimeDependencyStatus(
+        name="research_semantics",
+        role="Research dedupe and reranking",
+        mode=mode,
+        configured=settings.research_semantic_enabled,
         reachable=reachable,
         ready=ready,
         detail=detail,
@@ -329,10 +375,13 @@ def _overall_status(services: list[RuntimeDependencyStatus]) -> str:
 
 def _has_quality_degradation(by_name: dict[str, RuntimeDependencyStatus]) -> bool:
     projection = by_name["projection"]
-    if projection.mode == "disabled" or projection.ready is False:
+    if settings.qdrant_enabled and projection.ready is False:
+        return True
+    research_semantics = by_name["research_semantics"]
+    if settings.research_semantic_enabled and research_semantics.ready is False:
         return True
     extraction = by_name["extraction"]
-    if extraction.ready is False:
+    if settings.graph_rag_enabled and extraction.ready is False:
         return True
     return False
 
@@ -343,48 +392,71 @@ def _next_steps(services: list[RuntimeDependencyStatus]) -> list[str]:
 
     if by_name["corpus"].ready is False:
         steps.append(
-            "Optional after first run: set ZOTERO_LIBRARY_ID so intake can use a real "
-            "pilot corpus instead of stub sources."
+            "Optional after first run: verify ZOTERO_BASE_URL, ZOTERO_LIBRARY_ID, and "
+            "network access so live Zotero pulls can succeed."
+        )
+    elif not settings.zotero_library_id:
+        steps.append(
+            "Optional after first run: configure Zotero if you want live library pulls "
+            "instead of manual or seeded local sources."
         )
     if by_name["bible_workspace"].ready is False:
         steps.append(
-            "Required for the default newcomer path: choose a writable app-state "
-            "location so Bible profiles, sections, and provenance can persist safely."
+            "Required for the current app-state backend: choose a writable location so "
+            "Bible profiles, sections, and provenance can persist safely."
         )
     if by_name["job_worker"].ready is False:
         steps.append(
-            "Required for the default newcomer path: set APP_JOB_WORKER_ENABLED=true "
+            "Required for local startup: set APP_JOB_WORKER_ENABLED=true "
             "so research, Bible regeneration, and export jobs run without manual intervention."
         )
     if settings.qdrant_enabled and by_name["projection"].ready is False:
         if by_name["projection"].mode == "qdrant:uninitialized":
             steps.append(
-                "Required for the default newcomer path: run `saw seed-dev-data` to "
+                "Required because QDRANT_ENABLED=true: run `saw seed-dev-data` to "
                 "initialize and backfill Qdrant, or run `saw qdrant-rebuild` if you "
                 "need to repair the projection manually."
             )
         else:
             steps.append(
-                "Required for the default newcomer path: run "
+                "Required because QDRANT_ENABLED=true: run "
                 "`docker compose up -d qdrant` and verify QDRANT_URL so projection-backed "
                 "retrieval is available."
             )
     elif not settings.qdrant_enabled:
         steps.append(
-            "Required for the default newcomer path: set QDRANT_ENABLED=true and run "
-            "`docker compose up -d qdrant`. If you intentionally want a degraded local "
-            "mode, you can leave it disabled."
+            "Optional after first run: enable Qdrant projection with "
+            "`QDRANT_ENABLED=true` and `docker compose up -d qdrant` if you want "
+            "semantic retrieval instead of in-memory ranking."
+        )
+    if settings.research_semantic_enabled and by_name["research_semantics"].ready is False:
+        if by_name["research_semantics"].mode == "qdrant:uninitialized":
+            steps.append(
+                "Required because RESEARCH_SEMANTIC_ENABLED=true: run `saw seed-dev-data` "
+                "or `saw qdrant-init` to create the research semantic collection."
+            )
+        else:
+            steps.append(
+                "Required because RESEARCH_SEMANTIC_ENABLED=true: run "
+                "`docker compose up -d qdrant` and verify QDRANT_URL."
+            )
+    elif not settings.research_semantic_enabled:
+        steps.append(
+            "Optional after first run: enable RESEARCH_SEMANTIC_ENABLED if you want "
+            "Qdrant-backed duplicate detection and reranking for research findings."
         )
     if settings.app_truth_backend == "postgres" and by_name["truth_store"].ready is False:
         steps.append(
-            "Required for the default newcomer path: run `docker compose up -d postgres` "
+            "Required because the Postgres truth store is enabled: run "
+            "`docker compose up -d postgres` "
             "and ensure APP_POSTGRES_DSN points at that database."
         )
     if settings.app_truth_backend == "wikibase" and by_name["truth_store"].ready is False:
         steps.append(
-            "Optional after first run: configure WIKIBASE_API_URL, "
+            "Required because APP_TRUTH_BACKEND=wikibase: configure WIKIBASE_API_URL, "
             "WIKIBASE_USERNAME, WIKIBASE_PASSWORD, and "
-            "WIKIBASE_PROPERTY_MAP to enable canonical approved-claim reads and writes."
+            "WIKIBASE_PROPERTY_MAP, or switch back to Postgres or file-backed truth for "
+            "local startup."
         )
     if by_name["extraction"].mode == "heuristic":
         steps.append(

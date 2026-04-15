@@ -5,8 +5,8 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from uuid import uuid4
 
-from source_aware_worldbuilding.domain.errors import WorkerUnavailableError
 from source_aware_worldbuilding.domain.enums import JobStatus
+from source_aware_worldbuilding.domain.errors import WorkerUnavailableError
 from source_aware_worldbuilding.domain.models import (
     BibleSectionCreateRequest,
     BibleSectionRegenerateRequest,
@@ -234,7 +234,8 @@ class JobService:
             job.status_label = "stalled"
             job.worker_state = "stalled"
             job.stalled_reason = (
-                "The worker stopped heartbeating before the job finished. Review the job and retry if needed."
+                "The worker stopped heartbeating before the job finished. "
+                "Review the job and retry if needed."
             )
             job.progress_message = (
                 job.progress_message
@@ -464,7 +465,9 @@ class JobService:
         job.progress_stage = job.status_label
         job.progress_current = job.progress_total
         if job.status == JobStatus.PARTIAL:
-            job.progress_message = job.degraded_reason or "Completed with explicit degradation or warnings."
+            job.progress_message = (
+                job.degraded_reason or "Completed with explicit degradation or warnings."
+            )
         else:
             job.progress_message = "Completed successfully."
         job.completed_at = utc_now()
@@ -566,7 +569,8 @@ class JobService:
         if settings.app_job_worker_enabled or settings.app_allow_queued_jobs_without_worker:
             return
         raise WorkerUnavailableError(
-            "Background worker is disabled, so long-running work is blocked until APP_JOB_WORKER_ENABLED=true."
+            "Background worker is disabled, so long-running work is blocked "
+            "until APP_JOB_WORKER_ENABLED=true."
         )
 
     def _is_stale(self, timestamp: str | None) -> bool:

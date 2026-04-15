@@ -56,8 +56,8 @@ class HeuristicExtractionAdapter:
             if source is None:
                 continue
 
-            sentences = self._split_sentences(text_unit.text)
-            for sentence_index, sentence in enumerate(sentences, start=1):
+            sentences = self._sentence_spans(text_unit.text)
+            for sentence_index, (sentence, span_start, span_end) in enumerate(sentences, start=1):
                 if not self._is_usable_sentence(sentence):
                     continue
                 evidence_id = f"evi-{run.run_id}-{text_unit.text_unit_id}-{sentence_index}"
@@ -67,6 +67,9 @@ class HeuristicExtractionAdapter:
                         source_id=text_unit.source_id,
                         locator=f"{text_unit.locator}#s{sentence_index}",
                         text=sentence,
+                        text_unit_id=text_unit.text_unit_id,
+                        span_start=span_start,
+                        span_end=span_end,
                         notes=f"Generated during extraction run {run.run_id}.",
                         checksum=sha1(sentence.encode()).hexdigest(),
                     )
@@ -111,13 +114,43 @@ class HeuristicExtractionAdapter:
         run.source_count = len(sources)
         return ExtractionOutput(run=run, candidates=candidates, evidence=evidence)
 
-    def _split_sentences(self, text: str) -> list[str]:
-        sentences = [
-            fragment.strip(" -") for fragment in SENTENCE_SPLIT_RE.split(text) if fragment.strip()
-        ]
-        if not sentences:
-            return [text.strip()]
-        return sentences
+    def _sentence_spans(self, text: str) -> list[tuple[str, int, int]]:
+        if not text.strip():
+            return []
+
+        spans: list[tuple[str, int, int]] = []
+        last_end = 0
+        for match in SENTENCE_SPLIT_RE.finditer(text):
+            chunk = text[last_end : match.start()]
+            if chunk.strip():
+                start_offset = len(chunk) - len(chunk.lstrip(" -"))
+                end_offset = len(chunk.rstrip(" -"))
+                sentence = chunk[start_offset:end_offset]
+                if sentence:
+                    spans.append(
+                        (
+                            sentence,
+                            last_end + start_offset,
+                            last_end + end_offset,
+                        )
+                    )
+            last_end = match.end()
+
+        tail = text[last_end:]
+        if tail.strip():
+            start_offset = len(tail) - len(tail.lstrip(" -"))
+            end_offset = len(tail.rstrip(" -"))
+            sentence = tail[start_offset:end_offset]
+            if sentence:
+                spans.append(
+                    (
+                        sentence,
+                        last_end + start_offset,
+                        last_end + end_offset,
+                    )
+                )
+
+        return spans
 
     def _is_usable_sentence(self, sentence: str) -> bool:
         normalized = " ".join(sentence.split()).strip()

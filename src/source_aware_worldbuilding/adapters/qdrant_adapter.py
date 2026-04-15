@@ -191,9 +191,8 @@ class QdrantProjectionAdapter:
                 None,
                 True,
                 (
-                    "Qdrant projection is disabled. For the default newcomer path, set "
-                    "QDRANT_ENABLED=true and run `docker compose up -d qdrant`; otherwise "
-                    "query and composition fall back to memory ranking."
+                    "Qdrant projection is disabled by default for local startup. Query and "
+                    "composition fall back to in-memory ranking until you explicitly enable it."
                 ),
             )
         try:
@@ -226,8 +225,8 @@ class QdrantProjectionAdapter:
                 False,
                 (
                     f"Qdrant is reachable, but collection '{self.collection}' is not "
-                    "initialized. Run `saw seed-dev-data` for the default newcomer path "
-                    "or `saw qdrant-rebuild` to repair the projection manually."
+                    "initialized. Run `saw seed-dev-data` to initialize it, or "
+                    "`saw qdrant-rebuild` to repair the projection manually."
                 ),
             )
         return (
@@ -461,6 +460,58 @@ class QdrantResearchSemanticAdapter:
         from qdrant_client import QdrantClient
 
         return QdrantClient(url=self.url)
+
+    def runtime_probe(self) -> tuple[str, bool | None, bool, str]:
+        if not self.enabled:
+            return (
+                "disabled",
+                None,
+                True,
+                (
+                    "Research semantic matching is disabled by default for local startup. "
+                    "Research still works without it, but duplicate detection and reranking "
+                    "stay lexical until you enable it."
+                ),
+            )
+        try:
+            client = self._client()
+        except Exception:
+            return (
+                "qdrant:degraded",
+                None,
+                False,
+                (
+                    "Qdrant client is unavailable. Install the qdrant client dependency "
+                    "and start Qdrant with `docker compose up -d qdrant` so research "
+                    "semantic matching can run."
+                ),
+            )
+        try:
+            collection_ready = client.collection_exists(self.collection)
+        except Exception as exc:
+            return (
+                "qdrant:degraded",
+                False,
+                False,
+                f"Research semantics are configured but Qdrant is not queryable: {exc}. "
+                "Start it with `docker compose up -d qdrant` and verify QDRANT_URL.",
+            )
+        if not collection_ready:
+            return (
+                "qdrant:uninitialized",
+                True,
+                False,
+                (
+                    f"Qdrant is reachable, but research collection '{self.collection}' is not "
+                    "initialized. Run `saw seed-dev-data` or `saw qdrant-init` to create it."
+                ),
+            )
+        return (
+            "qdrant:ready",
+            True,
+            True,
+            f"Research Qdrant collection '{self.collection}' is queryable.",
+        )
 
     def initialize_collection(self) -> bool:
         if not settings.research_semantic_enabled:
