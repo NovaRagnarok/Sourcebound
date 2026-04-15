@@ -6,6 +6,7 @@ from uuid import uuid4
 from source_aware_worldbuilding.domain.enums import ExtractionRunStatus
 from source_aware_worldbuilding.domain.errors import ZoteroConfigError
 from source_aware_worldbuilding.domain.models import (
+    ClaimExtractionStatus,
     ExtractionOutput,
     ExtractionRun,
     SourceDetailResponse,
@@ -136,9 +137,8 @@ class IngestionService:
         for document in source_documents:
             if document.document_id not in existing_document_payloads:
                 inserted_document_count += 1
-            elif (
-                existing_document_payloads[document.document_id]
-                == self._stable_document_payload(document)
+            elif existing_document_payloads[document.document_id] == self._stable_document_payload(
+                document
             ):
                 unchanged_document_count += 1
             else:
@@ -155,10 +155,7 @@ class IngestionService:
 
         warnings = list(
             dict.fromkeys(
-                error
-                for document in source_documents
-                for error in document.stage_errors
-                if error
+                error for document in source_documents for error in document.stage_errors if error
             )
         )
         return ZoteroPullResult(
@@ -249,7 +246,11 @@ class IngestionService:
             self._mark_document_extraction_status(text_units, "failed")
             raise
 
-    def _mark_document_extraction_status(self, text_units: list[TextUnit], status: str) -> None:
+    def _mark_document_extraction_status(
+        self,
+        text_units: list[TextUnit],
+        status: ClaimExtractionStatus,
+    ) -> None:
         if self.source_document_store is None:
             return
         document_ids: set[str] = set()

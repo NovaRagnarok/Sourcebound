@@ -1129,12 +1129,10 @@ def test_qdrant_research_semantic_uses_separate_collection(monkeypatch) -> None:
         publisher="City Archive",
         published_at="2003-05-12",
         snippet_text=(
-            "Participants described the scene, named venues, and documented the "
-            "local habits."
+            "Participants described the scene, named venues, and documented the local habits."
         ),
         page_excerpt=(
-            "Participants described the scene, named venues, and documented the "
-            "local habits."
+            "Participants described the scene, named venues, and documented the local habits."
         ),
         source_type="archive",
         score=0.72,
@@ -1236,12 +1234,10 @@ def test_qdrant_research_semantic_embedding_prefers_related_findings() -> None:
         publisher="Archive",
         published_at="1403-01-01",
         snippet_text=(
-            "Ledger entries recorded wheat tax obligations, harvest dues, and "
-            "market tolls."
+            "Ledger entries recorded wheat tax obligations, harvest dues, and market tolls."
         ),
         page_excerpt=(
-            "Ledger entries recorded wheat tax obligations, harvest dues, and "
-            "market tolls."
+            "Ledger entries recorded wheat tax obligations, harvest dues, and market tolls."
         ),
         source_type="archive",
         score=0.65,

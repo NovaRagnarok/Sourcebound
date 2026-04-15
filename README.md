@@ -1,5 +1,7 @@
 # Sourcebound
 
+[![CI](https://github.com/NovaRagnarok/Sourcebound/actions/workflows/ci.yml/badge.svg)](https://github.com/NovaRagnarok/Sourcebound/actions/workflows/ci.yml)
+
 Sourcebound is a source-aware worldbuilding workbench. It ingests source
 material, normalizes it into text units, extracts candidate claims, routes
 those claims through human review, stores approved canon behind a truth-store
@@ -229,6 +231,22 @@ For one reproducible end-to-end real-corpus walkthrough, see
 [Demo Corpus Workflow](docs/DEMO_CORPUS_WORKFLOW.md). For the extraction
 quality benchmark and current baseline targets, see
 [Extraction Evaluation](docs/EXTRACTION_EVAL.md).
+
+## Quality Checks
+
+Run the same fast checks locally that the default GitHub Actions workflow uses:
+
+```bash
+make check
+```
+
+Or run each command individually:
+
+```bash
+.venv/bin/ruff check src tests
+.venv/bin/python -m mypy src
+.venv/bin/pytest -q
+```
 
 ## First-Run Troubleshooting
 

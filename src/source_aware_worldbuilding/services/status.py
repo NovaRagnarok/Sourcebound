@@ -66,16 +66,12 @@ def enforce_runtime_startup_checks(*, strict_runtime_checks: bool | None = None)
         else "Bring Qdrant online or disable strict startup checks for non-retrieval environments."
     )
     raise RuntimeError(
-        f"{detail} Strict startup checks are enabled, so Sourcebound refused to start. "
-        f"{next_step}"
+        f"{detail} Strict startup checks are enabled, so Sourcebound refused to start. {next_step}"
     )
 
 
 def _startup_validation_errors() -> list[str]:
-    issues = [
-        f"{issue.summary} {issue.fix}"
-        for issue in settings.startup_validation_issues()
-    ]
+    issues = [f"{issue.summary} {issue.fix}" for issue in settings.startup_validation_issues()]
 
     if settings.graph_rag_enabled:
         probe = GraphRAGExtractionAdapter.runtime_probe()
@@ -352,8 +348,7 @@ def _job_worker_status() -> RuntimeDependencyStatus:
         reachable=None,
         ready=settings.app_job_worker_enabled,
         detail=(
-            f"In-process worker enabled with "
-            f"{settings.app_job_poll_interval_seconds}s polling."
+            f"In-process worker enabled with {settings.app_job_poll_interval_seconds}s polling."
             if settings.app_job_worker_enabled
             else "Background job worker is disabled; long-running routes will queue "
             "without auto-processing."

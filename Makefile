@@ -1,4 +1,4 @@
-.PHONY: bootstrap bootstrap-graphrag install lint test dev seed status newcomer-smoke
+.PHONY: bootstrap bootstrap-graphrag install lint typecheck test check format dev seed status newcomer-smoke
 
 bootstrap:
 	python3 -m venv .venv
@@ -13,11 +13,16 @@ install: bootstrap
 lint:
 	.venv/bin/ruff check src tests
 
+typecheck:
+	.venv/bin/python -m mypy src
+
 format:
 	.venv/bin/ruff format src tests
 
 test:
 	.venv/bin/pytest
+
+check: lint typecheck test
 
 seed:
 	.venv/bin/saw seed-dev-data

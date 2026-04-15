@@ -6,6 +6,7 @@ import time
 from collections.abc import Callable
 from difflib import SequenceMatcher
 from hashlib import sha1
+from typing import cast
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 from uuid import uuid4
 
@@ -916,9 +917,7 @@ class ResearchService:
                     continue
                 if not hits:
                     run.telemetry.search.zero_hit_queries_by_profile[query_plan.profile] = (
-                        run.telemetry.search.zero_hit_queries_by_profile.get(
-                            query_plan.profile, 0
-                        )
+                        run.telemetry.search.zero_hit_queries_by_profile.get(query_plan.profile, 0)
                         + 1
                     )
                 facet.hits_seen += len(hits)
@@ -1041,7 +1040,7 @@ class ResearchService:
             )
             facet = self._best_facet_for_text(facets, brief, hit.title, hit.snippet or "")
             facet.hits_seen += 1
-            finding = self._prepare_finding_from_hit(
+            prepared_finding = self._prepare_finding_from_hit(
                 adapter_id=adapter_id,
                 adapter=adapter,
                 brief=brief,
@@ -1060,8 +1059,8 @@ class ResearchService:
                 findings=findings,
                 started_monotonic=started_monotonic,
             )
-            if finding is not None:
-                pending_by_facet[facet.facet_id].append(finding)
+            if prepared_finding is not None:
+                pending_by_facet[facet.facet_id].append(prepared_finding)
         for facet in facets:
             self._checkpoint(checkpoint)
             self._finalize_facet_candidates(
@@ -1148,7 +1147,8 @@ class ResearchService:
                 fetch_outcome=ResearchFetchOutcome.FETCHED,
                 fetch_status="cached",
             )
-            finding.provenance.fetch_status = "cached"
+            if finding.provenance is not None:
+                finding.provenance.fetch_status = "cached"
             return finding
         if canonical_url in failed_fetch_cache:
             _, message = failed_fetch_cache[canonical_url]
@@ -1307,22 +1307,26 @@ class ResearchService:
                 run.telemetry.search.zero_hit_queries_by_profile.get(query_profile, 0) + 1
             )
             return
-        providers_used = metadata.get("providers_used") or []
+        providers_used = cast(list[str], metadata.get("providers_used") or [])
         for provider_id in providers_used:
             if provider_id not in run.telemetry.search.providers_used:
                 run.telemetry.search.providers_used.append(provider_id)
-        for provider_id, count in (metadata.get("queries_by_provider") or {}).items():
+        queries_by_provider = cast(dict[str, object], metadata.get("queries_by_provider") or {})
+        for provider_id, count in queries_by_provider.items():
             run.telemetry.search.queries_by_provider[provider_id] = (
-                run.telemetry.search.queries_by_provider.get(provider_id, 0) + int(count)
+                run.telemetry.search.queries_by_provider.get(provider_id, 0)
+                + int(cast(int | str, count))
             )
-        for provider_id, count in (metadata.get("hits_by_provider") or {}).items():
+        hits_by_provider = cast(dict[str, object], metadata.get("hits_by_provider") or {})
+        for provider_id, count in hits_by_provider.items():
             run.telemetry.search.hits_by_provider[provider_id] = (
-                run.telemetry.search.hits_by_provider.get(provider_id, 0) + int(count)
+                run.telemetry.search.hits_by_provider.get(provider_id, 0)
+                + int(cast(int | str, count))
             )
         if metadata.get("fallback_used"):
             run.telemetry.search.fallback_used = True
             run.telemetry.search.fallback_reason = (
-                metadata.get("fallback_reason") or "provider fallback used"
+                cast(str | None, metadata.get("fallback_reason")) or "provider fallback used"
             )
 
     def _should_skip_hit_before_fetch(

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 from collections import Counter, defaultdict
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from dataclasses import dataclass, field
 from hashlib import sha1
 from uuid import uuid4
@@ -18,6 +18,8 @@ from source_aware_worldbuilding.domain.models import (
     BibleCoverageAnalysis,
     BibleCoverageBucket,
     BibleParagraphProvenance,
+    BibleParagraphProvenanceScope,
+    BibleParagraphRole,
     BibleProjectExportResponse,
     BibleProjectProfile,
     BibleProjectProfileUpdateRequest,
@@ -49,7 +51,7 @@ from source_aware_worldbuilding.ports import (
 @dataclass(frozen=True)
 class BeatSpec:
     beat_id: str
-    paragraph_role: str
+    paragraph_role: BibleParagraphRole
     selection_strategy: str
     min_distinct_claims: int = 2
     min_distinct_evidence: int = 1
@@ -761,7 +763,8 @@ class BibleWorkspaceService:
         if not skip_source_filter and (
             filters.source_types or (profile and profile.composition_defaults.source_types)
         ):
-            source_types = set(filters.source_types or profile.composition_defaults.source_types)
+            profile_source_types = profile.composition_defaults.source_types if profile else []
+            source_types = set(filters.source_types or profile_source_types)
             evidence_by_id = self._evidence_index(claims)
             source_by_id = self._source_index(evidence_by_id.values())
             claims = [
@@ -1272,9 +1275,9 @@ class BibleWorkspaceService:
                 )
             return blueprint
         if section_type == BibleSectionType.RUMORS_AND_CONTESTED:
-            grouped: dict[str, list[ApprovedClaim]] = defaultdict(list)
+            contested_grouped: dict[str, list[ApprovedClaim]] = defaultdict(list)
             for claim in claims:
-                grouped[claim.subject].append(claim)
+                contested_grouped[claim.subject].append(claim)
             blueprint = [
                 (
                     f"contested_record:{subject}",
@@ -1298,7 +1301,8 @@ class BibleWorkspaceService:
                     group,
                 )
                 for subject, group in sorted(
-                    grouped.items(), key=lambda item: (-len(item[1]), item[0].lower())
+                    contested_grouped.items(),
+                    key=lambda item: (-len(item[1]), item[0].lower()),
                 )[:3]
             ]
             if claims:
@@ -1740,7 +1744,7 @@ class BibleWorkspaceService:
         *,
         heading: str,
         kind: str,
-        paragraph_role: str,
+        paragraph_role: BibleParagraphRole,
         pack: ClaimPack,
         evidence_by_id: dict[str, EvidenceSnippet],
         source_by_id: dict[str, SourceRecord],
@@ -2084,9 +2088,7 @@ class BibleWorkspaceService:
                 text = self._compose_notebook_paragraph(
                     lead=(
                         "Keep these pressures in the background even when the exact "
-                        "date stays unsettled: "
-                        + self._join_claim_notes(group, limit=5)
-                        + "."
+                        "date stays unsettled: " + self._join_claim_notes(group, limit=5) + "."
                     ),
                     uncertainty=self._bounded_uncertainty_sentence(group, relationships),
                 )
@@ -2407,9 +2409,7 @@ class BibleWorkspaceService:
                 or "different witnesses"
             )
             lead = self._rumor_lead_sentence(topic, group, believers)
-            development = (
-                "Use this as suspicion, gossip, or motive, not as settled exposition."
-            )
+            development = "Use this as suspicion, gossip, or motive, not as settled exposition."
             paragraphs.append(
                 self._paragraph_from_claim_group(
                     heading=topic,
@@ -2441,9 +2441,7 @@ class BibleWorkspaceService:
                     relationships=relationships,
                     text=self._compose_notebook_paragraph(
                         lead=f"Drafting default: depict {claim.subject} as {claim.value}.",
-                        development=(
-                            f"Rationale: {claim.notes}." if claim.notes else ""
-                        ),
+                        development=(f"Rationale: {claim.notes}." if claim.notes else ""),
                         anchor=self._author_decision_context_sentence(claim),
                         uncertainty=(
                             "Keep this in the author-decisions lane rather than presenting it "
@@ -2465,10 +2463,10 @@ class BibleWorkspaceService:
                 or claim.subject == decision.subject
                 or self._normalize_text(decision.value)
                 and any(
-                    token in self._normalize_text(
+                    token
+                    in self._normalize_text(
                         " ".join(
-                            fragment or ""
-                            for fragment in [claim.subject, claim.value, claim.notes]
+                            fragment or "" for fragment in [claim.subject, claim.value, claim.notes]
                         )
                     )
                     for token in self._focus_tokens(decision.value)
@@ -2675,7 +2673,7 @@ class BibleWorkspaceService:
         if profile and profile.social_lens:
             parts.append(profile.social_lens)
         if filters.place or (profile and profile.geography):
-            parts.append(filters.place or profile.geography or "")
+            parts.append(filters.place or (profile.geography if profile else "") or "")
         if profile and (profile.era or profile.time_start or profile.time_end):
             parts.append(
                 profile.era
@@ -2778,9 +2776,7 @@ class BibleWorkspaceService:
     def _claim_focus_score(self, claim: ApprovedClaim, seed_query: str) -> int:
         normalized_query = self._normalize_text(seed_query)
         tokens = self._focus_tokens(seed_query)
-        bigrams = [
-            f"{left} {right}" for left, right in zip(tokens, tokens[1:], strict=False)
-        ]
+        bigrams = [f"{left} {right}" for left, right in zip(tokens, tokens[1:], strict=False)]
         haystack = " ".join(
             fragment or ""
             for fragment in [
@@ -3180,12 +3176,8 @@ class BibleWorkspaceService:
         if not claims:
             return [f"No approved canon supports {self._SECTION_TITLES[section_type].lower()} yet."]
         gaps: list[str] = []
-        if (
-            section_type != BibleSectionType.AUTHOR_DECISIONS
-            and not any(
-                claim.status in {ClaimStatus.VERIFIED, ClaimStatus.PROBABLE}
-                for claim in claims
-            )
+        if section_type != BibleSectionType.AUTHOR_DECISIONS and not any(
+            claim.status in {ClaimStatus.VERIFIED, ClaimStatus.PROBABLE} for claim in claims
         ):
             gaps.append("Section lacks high-certainty claims.")
         if coverage_analysis.missing_facets:
@@ -3262,7 +3254,7 @@ class BibleWorkspaceService:
         self,
         section_type: BibleSectionType,
         claims: list[ApprovedClaim],
-    ) -> str:
+    ) -> BibleParagraphProvenanceScope:
         if not claims:
             return "canon_support"
         if section_type == BibleSectionType.AUTHOR_DECISIONS or any(
@@ -3354,7 +3346,7 @@ class BibleWorkspaceService:
             if relationship.claim_id not in claim_id_set:
                 continue
             related = self.truth_store.get_claim(relationship.related_claim_id)
-            detail = {
+            detail: dict[str, object] = {
                 "relationship_id": relationship.relationship_id,
                 "relationship_type": relationship.relationship_type,
                 "related_claim_id": relationship.related_claim_id,
@@ -3443,7 +3435,7 @@ class BibleWorkspaceService:
                     index[evidence_id] = snippet
         return index
 
-    def _source_index(self, evidence: list[EvidenceSnippet]) -> dict[str, SourceRecord]:
+    def _source_index(self, evidence: Collection[EvidenceSnippet]) -> dict[str, SourceRecord]:
         index: dict[str, SourceRecord] = {}
         for item in evidence:
             source = self.source_store.get_source(item.source_id)

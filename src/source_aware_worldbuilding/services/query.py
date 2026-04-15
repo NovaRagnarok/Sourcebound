@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from collections import Counter, defaultdict
 from hashlib import sha1
+from typing import TypedDict
 
 from source_aware_worldbuilding.domain.enums import QueryMode
 from source_aware_worldbuilding.domain.models import (
@@ -10,9 +11,13 @@ from source_aware_worldbuilding.domain.models import (
     ApprovedClaim,
     BibleProjectProfile,
     ClaimCluster,
+    ClaimClusterKind,
     ClaimKind,
     ClaimRelationship,
+    ClaimRelationshipType,
     ProjectionSearchResult,
+    QueryAnswerBoundary,
+    QueryRankingStrategy,
     QueryRequest,
     QueryResult,
     QueryResultMetadata,
@@ -24,6 +29,17 @@ from source_aware_worldbuilding.ports import (
     SourceStorePort,
     TruthStorePort,
 )
+
+
+class QuestionProfile(TypedDict):
+    tokens: list[str]
+    is_disagreement: bool
+    wants_current: bool
+    rumor_focus: bool
+    broad: bool
+    narrow_topic: bool
+    topic_first: bool
+    hard_cap: bool
 
 
 class QueryService:
@@ -104,7 +120,9 @@ class QueryService:
         )
 
         warnings: list[str] = []
-        ranking_strategy = "intent_blended" if profile is not None else "lexical"
+        ranking_strategy: QueryRankingStrategy = (
+            "intent_blended" if profile is not None else "lexical"
+        )
         metadata = QueryResultMetadata(
             retrieval_backend="memory",
             ranking_strategy=ranking_strategy,
@@ -336,16 +354,14 @@ class QueryService:
         ranked_matches: list[ApprovedClaim],
         direct_matches: list[ApprovedClaim],
         *,
-        question_profile: dict[str, bool | list[str]],
+        question_profile: QuestionProfile,
     ) -> tuple[list[ApprovedClaim], list[str], list[str], list[str]]:
         warnings: list[str] = []
         direct_ids = [claim.claim_id for claim in direct_matches]
         direct_id_set = set(direct_ids)
         if request.mode == QueryMode.STRICT_FACTS:
             fact_direct = [
-                claim
-                for claim in direct_matches
-                if claim.status.value in {"verified", "probable"}
+                claim for claim in direct_matches if claim.status.value in {"verified", "probable"}
             ]
             if fact_direct:
                 matched = self._augment_direct_matches_with_linked_claims(
@@ -368,12 +384,14 @@ class QueryService:
                 claim
                 for claim in ranked_matches
                 if claim.status.value == "contested"
-                or claim.claim_id in {
+                or claim.claim_id
+                in {
                     relationship.claim_id
                     for relationship in self.truth_store.list_relationships()
                     if relationship.relationship_type == "contradicts"
                 }
-                or claim.claim_id in {
+                or claim.claim_id
+                in {
                     relationship.related_claim_id
                     for relationship in self.truth_store.list_relationships()
                     if relationship.relationship_type == "contradicts"
@@ -464,9 +482,7 @@ class QueryService:
             else ""
         )
         inferred_scope = (
-            self._normalize_text(profile.social_lens)
-            if profile and profile.social_lens
-            else ""
+            self._normalize_text(profile.social_lens) if profile and profile.social_lens else ""
         )
         scope_hints = {hint for hint in [requested_scope, inferred_scope] if hint}
         if not scope_hints:
@@ -474,9 +490,7 @@ class QueryService:
         for claim in claims:
             claim_scope = self._normalize_text(claim.viewpoint_scope or "")
             if any(
-                hint in claim_scope or claim_scope in hint
-                for hint in scope_hints
-                if claim_scope
+                hint in claim_scope or claim_scope in hint for hint in scope_hints if claim_scope
             ):
                 return True
         return False
@@ -486,7 +500,7 @@ class QueryService:
         matched: list[ApprovedClaim],
         direct_match_ids: list[str],
         adjacent_context_ids: list[str],
-    ) -> str:
+    ) -> QueryAnswerBoundary:
         if not matched:
             return "research_gap"
         if direct_match_ids:
@@ -604,8 +618,7 @@ class QueryService:
                     "that is directly tied to this scene?"
                 )
             suggestions.append(
-                "What directly documented detail would confirm or reject "
-                f"{lead.subject.lower()}?"
+                f"What directly documented detail would confirm or reject {lead.subject.lower()}?"
             )
             if lead.time_start or lead.time_end:
                 anchor = lead.time_start or lead.time_end
@@ -619,8 +632,7 @@ class QueryService:
                 )
             elif "verified" in lower:
                 suggestions.append(
-                    "Which part of this answer still rests on probable rather "
-                    "than verified canon?"
+                    "Which part of this answer still rests on probable rather than verified canon?"
                 )
         seen: set[str] = set()
         deduped: list[str] = []
@@ -654,7 +666,7 @@ class QueryService:
         projection_result=None,
         *,
         profile: BibleProjectProfile | None = None,
-        question_profile: dict[str, bool] | None = None,
+        question_profile: QuestionProfile | None = None,
     ):
         profile_data = question_profile or self._question_profile(request)
         question_lower = self._normalize_text(request.question)
@@ -686,8 +698,8 @@ class QueryService:
                 reverse=True,
             )
 
-        topic_scores = defaultdict(int)
-        intent_scores = defaultdict(int)
+        topic_scores: defaultdict[str, int] = defaultdict(int)
+        intent_scores: defaultdict[str, int] = defaultdict(int)
         for claim in claims:
             haystack_normalized = self._claim_haystack(claim)
             topic_scores[claim.claim_id] += self._topic_match_score(
@@ -712,8 +724,8 @@ class QueryService:
                 relationship_index,
                 profile_data,
             )
-        affinity_scores = defaultdict(int)
-        overlap_counts = defaultdict(int)
+        affinity_scores: defaultdict[str, int] = defaultdict(int)
+        overlap_counts: defaultdict[str, int] = defaultdict(int)
         ranked = sorted(
             claims,
             key=lambda claim: (
@@ -854,7 +866,7 @@ class QueryService:
         claims: list[ApprovedClaim],
         request: QueryRequest,
         *,
-        question_profile: dict[str, bool | list[str]],
+        question_profile: QuestionProfile,
     ) -> list[ApprovedClaim]:
         direct_matches = [
             claim
@@ -879,7 +891,7 @@ class QueryService:
         claim: ApprovedClaim,
         request: QueryRequest,
         *,
-        question_profile: dict[str, bool | list[str]],
+        question_profile: QuestionProfile,
     ) -> bool:
         core_tokens, core_bigrams = self._direct_topic_terms(
             request, question_profile=question_profile
@@ -906,7 +918,7 @@ class QueryService:
         claim: ApprovedClaim,
         request: QueryRequest,
         *,
-        question_profile: dict[str, bool | list[str]],
+        question_profile: QuestionProfile,
     ) -> int:
         core_tokens, core_bigrams = self._direct_topic_terms(
             request,
@@ -953,7 +965,7 @@ class QueryService:
         self,
         request: QueryRequest,
         *,
-        question_profile: dict[str, bool | list[str]],
+        question_profile: QuestionProfile,
     ) -> tuple[list[str], list[str]]:
         question_lower = self._normalize_text(request.question)
         mentioned_places = {
@@ -1075,7 +1087,7 @@ class QueryService:
         bigrams: list[str],
         haystack_normalized: str,
         mentioned_places: set[str],
-        question_profile: dict[str, bool],
+        question_profile: QuestionProfile,
     ) -> int:
         score = 0
         subject_normalized = self._normalize_text(claim.subject)
@@ -1162,7 +1174,7 @@ class QueryService:
             + (1 if claim.author_choice else 0)
         )
 
-    def _question_profile(self, request: QueryRequest) -> dict[str, bool | list[str]]:
+    def _question_profile(self, request: QueryRequest) -> QuestionProfile:
         normalized = self._normalize_text(request.question)
         tokens = self._question_tokens(request.question)
         is_disagreement = request.mode == QueryMode.CONTESTED_VIEWS or any(
@@ -1209,7 +1221,7 @@ class QueryService:
         self,
         claim: ApprovedClaim,
         relationship_index: dict[str, list[ClaimRelationship]],
-        question_profile: dict[str, bool],
+        question_profile: QuestionProfile,
     ) -> int:
         score = 0
         relationships = relationship_index.get(claim.claim_id, [])
@@ -1433,7 +1445,7 @@ class QueryService:
         relationship_index: dict[str, list[ClaimRelationship]],
         *,
         profile: BibleProjectProfile | None = None,
-        question_profile: dict[str, bool | list[str]] | None = None,
+        question_profile: QuestionProfile | None = None,
     ) -> tuple[list[ClaimCluster], list[AnswerSection]]:
         if not matched_claims:
             return [], []
@@ -1499,7 +1511,9 @@ class QueryService:
                 cluster_claims,
                 relationships,
             )
-            relationship_types = sorted({item.relationship_type for item in relationships})
+            relationship_types: list[ClaimRelationshipType] = sorted(
+                {item.relationship_type for item in relationships}
+            )
             cluster_id = self._cluster_id(
                 [claim.claim_id for claim in cluster_claims],
                 relationship_types,
@@ -1541,7 +1555,11 @@ class QueryService:
         ordered_clusters, ordered_sections = zip(*ordered_pairs, strict=False)
         return list(ordered_clusters), list(ordered_sections)
 
-    def _cluster_id(self, claim_ids: list[str], relationship_types: list[str]) -> str:
+    def _cluster_id(
+        self,
+        claim_ids: list[str],
+        relationship_types: list[ClaimRelationshipType],
+    ) -> str:
         material = "|".join(sorted(claim_ids)) + "::" + "|".join(sorted(relationship_types))
         return f"cluster-{sha1(material.encode('utf-8')).hexdigest()[:12]}"
 
@@ -1607,7 +1625,7 @@ class QueryService:
                 relationships.append(relationship)
         return relationships
 
-    def _cluster_kind(self, relationships: list[ClaimRelationship]) -> str:
+    def _cluster_kind(self, relationships: list[ClaimRelationship]) -> ClaimClusterKind:
         relationship_types = {item.relationship_type for item in relationships}
         if "contradicts" in relationship_types:
             return "contested"
@@ -1622,7 +1640,7 @@ class QueryService:
         mode: QueryMode,
         relationship_index: dict[str, list[ClaimRelationship]],
         relationships: list[ClaimRelationship],
-        question_profile: dict[str, bool | list[str]],
+        question_profile: QuestionProfile,
     ) -> ApprovedClaim:
         component_ids = {claim.claim_id for claim in cluster_claims}
         superseded_claim_ids = {
@@ -1767,7 +1785,7 @@ class QueryService:
             return f"evidence {claim.evidence_ids[0]}"
         return f"evidence {', '.join(claim.evidence_ids[:2])}"
 
-    def _cluster_heading(self, cluster_kind: str) -> str:
+    def _cluster_heading(self, cluster_kind: ClaimClusterKind) -> str:
         if cluster_kind == "reinforcing":
             return "Reinforced Canon"
         if cluster_kind == "contested":
@@ -1782,7 +1800,7 @@ class QueryService:
         request: QueryRequest,
         *,
         profile: BibleProjectProfile | None = None,
-        question_profile: dict[str, bool | list[str]] | None = None,
+        question_profile: QuestionProfile | None = None,
     ) -> tuple[int, int, int, int, str]:
         lead_claim = claim_by_id[cluster.lead_claim_id]
         profile_data = question_profile or self._question_profile(request)
@@ -1817,10 +1835,10 @@ class QueryService:
 
     def _cluster_kind_priority(
         self,
-        cluster_kind: str,
+        cluster_kind: ClaimClusterKind,
         question: str,
         mode: QueryMode,
-        question_profile: dict[str, bool | list[str]] | None = None,
+        question_profile: QuestionProfile | None = None,
     ) -> int:
         profile_data = question_profile or self._question_profile(
             QueryRequest(question=question, mode=mode)
@@ -1862,7 +1880,7 @@ class QueryService:
         request: QueryRequest,
         *,
         profile: BibleProjectProfile | None = None,
-        question_profile: dict[str, bool | list[str]] | None = None,
+        question_profile: QuestionProfile | None = None,
     ) -> int:
         profile_data = question_profile or self._question_profile(request)
         projection_tokens = self._question_tokens(self._projection_query_text(request, profile))
@@ -1906,7 +1924,7 @@ class QueryService:
         answer_sections: list[AnswerSection],
         related_claims: list[ClaimRelationship],
         request: QueryRequest,
-        question_profile: dict[str, bool | list[str]],
+        question_profile: QuestionProfile,
     ) -> tuple[list[ClaimCluster], list[AnswerSection], list[ClaimRelationship], bool]:
         if not claim_clusters or not question_profile["hard_cap"]:
             return claim_clusters, answer_sections, related_claims, False

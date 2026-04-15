@@ -8,6 +8,8 @@ from source_aware_worldbuilding.domain.models import (
     BibleSection,
     CandidateClaim,
     ClaimRelationship,
+    ClaimRelationshipSourceKind,
+    ClaimRelationshipType,
     EvidenceSnippet,
     ExtractionRun,
     JobRecord,
@@ -359,14 +361,17 @@ class FileTruthStore:
         self,
         claim_id: str,
         related_claim_id: str,
-        relationship_type: str,
+        relationship_type: ClaimRelationshipType,
         *,
         notes: str | None = None,
-        source_kind: str = "manual",
+        source_kind: ClaimRelationshipSourceKind = "manual",
     ) -> ClaimRelationship:
         relationships = self.relationship_store.read_models(ClaimRelationship)
         key = (claim_id, related_claim_id, relationship_type, source_kind)
-        by_key = {
+        by_key: dict[
+            tuple[str, str, ClaimRelationshipType, ClaimRelationshipSourceKind],
+            ClaimRelationship,
+        ] = {
             (item.claim_id, item.related_claim_id, item.relationship_type, item.source_kind): item
             for item in relationships
         }

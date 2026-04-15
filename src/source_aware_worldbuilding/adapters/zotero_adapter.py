@@ -20,10 +20,13 @@ from source_aware_worldbuilding.domain.errors import (
     ZoteroWriteError,
 )
 from source_aware_worldbuilding.domain.models import (
+    AttachmentFetchStatus,
     IntakeTextRequest,
     IntakeUrlRequest,
+    SourceDocumentKind,
     SourceDocumentRecord,
     SourceRecord,
+    TextExtractionStatus,
     TextUnit,
     ZoteroCreatedItem,
     utc_now,
@@ -294,9 +297,10 @@ class ZoteroCorpusAdapter:
         if not item_key:
             return None
         creators = data.get("creators") or []
-        author = ", ".join(
-            filter(None, [self._creator_name(creator) for creator in creators[:2]])
-        ) or None
+        author = (
+            ", ".join(filter(None, [self._creator_name(creator) for creator in creators[:2]]))
+            or None
+        )
         date_value = data.get("date") or ""
         year = date_value[:4] if isinstance(date_value, str) and date_value else None
         checksum = sha1(json.dumps(data, sort_keys=True).encode("utf-8")).hexdigest()
@@ -374,7 +378,7 @@ class ZoteroCorpusAdapter:
     ) -> SourceDocumentRecord:
         content_type = data.get("contentType")
         filename = data.get("filename") or data.get("title") or f"{child_key}.bin"
-        document_kind = (
+        document_kind: SourceDocumentKind = (
             "snapshot"
             if isinstance(content_type, str) and content_type.startswith("text/html")
             else "attachment"
@@ -382,7 +386,7 @@ class ZoteroCorpusAdapter:
         downloaded_bytes: bytes | None = None
         storage_path: str | None = None
         stage_errors: list[str] = []
-        fetch_status = "pending"
+        fetch_status: AttachmentFetchStatus = "pending"
         try:
             downloaded_bytes, storage_path = self._fetch_attachment_bytes(
                 client=client,
@@ -396,7 +400,7 @@ class ZoteroCorpusAdapter:
             fetch_status = "failed"
 
         raw_text = None
-        extraction_status = "pending"
+        extraction_status: TextExtractionStatus = "pending"
         if downloaded_bytes is not None:
             try:
                 raw_text = self._extract_attachment_text(
@@ -411,9 +415,11 @@ class ZoteroCorpusAdapter:
         else:
             extraction_status = "failed" if fetch_status == "failed" else "pending"
 
-        checksum_seed = downloaded_bytes if downloaded_bytes is not None else json.dumps(
-            data, sort_keys=True
-        ).encode("utf-8")
+        checksum_seed = (
+            downloaded_bytes
+            if downloaded_bytes is not None
+            else json.dumps(data, sort_keys=True).encode("utf-8")
+        )
         document = SourceDocumentRecord(
             document_id=f"zdoc-{child_key}",
             source_id=source.source_id,
@@ -528,8 +534,11 @@ class ZoteroCorpusAdapter:
         if not payload:
             raise ZoteroFetchError(f"Attachment {child_key} did not return any file content.")
         safe_name = re.sub(r"[^A-Za-z0-9._-]+", "-", filename).strip("-") or f"{child_key}.bin"
-        target_dir = Path(settings.app_data_dir) / "source_attachments" / "zotero" / (
-            source.zotero_item_key or source.source_id
+        target_dir = (
+            Path(settings.app_data_dir)
+            / "source_attachments"
+            / "zotero"
+            / (source.zotero_item_key or source.source_id)
         )
         target_dir.mkdir(parents=True, exist_ok=True)
         target_path = target_dir / f"{child_key}-{safe_name}"

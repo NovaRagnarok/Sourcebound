@@ -8,6 +8,8 @@ from source_aware_worldbuilding.domain.models import (
     BibleSection,
     CandidateClaim,
     ClaimRelationship,
+    ClaimRelationshipSourceKind,
+    ClaimRelationshipType,
     EvidenceSnippet,
     ExtractionOutput,
     ExtractionRun,
@@ -115,10 +117,10 @@ class TruthStorePort(Protocol):
         self,
         claim_id: str,
         related_claim_id: str,
-        relationship_type: str,
+        relationship_type: ClaimRelationshipType,
         *,
         notes: str | None = None,
-        source_kind: str = "manual",
+        source_kind: ClaimRelationshipSourceKind = "manual",
     ) -> ClaimRelationship: ...
     def save_claim(
         self,

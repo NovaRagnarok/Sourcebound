@@ -5,6 +5,7 @@ import re
 import statistics
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any, cast
 from urllib.parse import urlparse
 
 import typer
@@ -128,11 +129,21 @@ from source_aware_worldbuilding.domain.models import (
     SourceDocumentRecord,
     SourceRecord,
     TextUnit,
+    ZoteroCreatedItem,
     ZoteroPullRequest,
 )
 from source_aware_worldbuilding.extraction_eval import (
     available_extraction_eval_datasets,
     evaluate_extraction_dataset,
+)
+from source_aware_worldbuilding.ports import (
+    CorpusPort,
+    ExtractionRunStorePort,
+    JobStorePort,
+    ResearchProgramStorePort,
+    ResearchRunStorePort,
+    ResearchSearchProviderPort,
+    ReviewStorePort,
 )
 from source_aware_worldbuilding.services.bible import BibleWorkspaceService
 from source_aware_worldbuilding.services.ingestion import IngestionService
@@ -162,7 +173,7 @@ class _BenchmarkCorpus:
         *,
         existing_documents: list[SourceDocumentRecord] | None = None,
         force_refresh: bool = False,
-    ):
+    ) -> list[SourceDocumentRecord]:
         _ = sources
         _ = existing_documents
         _ = force_refresh
@@ -175,6 +186,28 @@ class _BenchmarkCorpus:
     def pull_sources_by_item_keys(self, item_keys: list[str]) -> list[SourceRecord]:
         _ = item_keys
         return []
+
+    def create_text_source(self, request: IntakeTextRequest) -> ZoteroCreatedItem:
+        _ = request
+        raise NotImplementedError("Benchmark corpus does not support source creation.")
+
+    def create_url_source(self, request: IntakeUrlRequest) -> ZoteroCreatedItem:
+        _ = request
+        raise NotImplementedError("Benchmark corpus does not support source creation.")
+
+    def create_file_source(
+        self,
+        *,
+        filename: str,
+        content_type: str | None,
+        content: bytes,
+        title: str | None = None,
+        source_type: str = "document",
+        notes: str | None = None,
+        collection_key: str | None = None,
+    ) -> tuple[ZoteroCreatedItem, list[str]]:
+        _ = filename, content_type, content, title, source_type, notes, collection_key
+        raise NotImplementedError("Benchmark corpus does not support source creation.")
 
 
 _SEED_PROJECT_ID = "project-rouen-winter"
@@ -208,8 +241,7 @@ def _seed_sources() -> list[SourceRecord]:
             source_type="petition",
             locator_hint="petition 3",
             abstract=(
-                "Bakers described household bread tokens and ration loaves "
-                "during the shortage."
+                "Bakers described household bread tokens and ration loaves during the shortage."
             ),
             sync_status="ready_for_extraction",
         ),
@@ -1318,8 +1350,7 @@ def _seed_research_findings() -> list[ResearchFinding]:
                 "anchors or operational detail."
             ),
             page_excerpt=(
-                "The overview was broad, undated for Rouen, and too generic for "
-                "scene construction."
+                "The overview was broad, undated for Rouen, and too generic for scene construction."
             ),
             source_type="reference",
             score=0.32,
@@ -1995,32 +2026,35 @@ def _seed_dev_data_impl() -> tuple[dict[str, object] | None, Path]:
             settings.app_postgres_dsn,
             settings.app_postgres_schema,
         ).save_candidates(candidates)
-        extraction_run_store = PostgresExtractionRunStore(
+        extraction_run_store: ExtractionRunStorePort = PostgresExtractionRunStore(
             settings.app_postgres_dsn,
             settings.app_postgres_schema,
         )
         for run in extraction_runs:
             extraction_run_store.save_run(run)
-        review_store = PostgresReviewStore(settings.app_postgres_dsn, settings.app_postgres_schema)
-        for review in review_events:
-            review_store.save_review(review)
-        research_run_store = PostgresResearchRunStore(
+        review_store: ReviewStorePort = PostgresReviewStore(
             settings.app_postgres_dsn,
             settings.app_postgres_schema,
         )
-        for run in research_runs:
-            research_run_store.save_run(run)
+        for review in review_events:
+            review_store.save_review(review)
+        research_run_store: ResearchRunStorePort = PostgresResearchRunStore(
+            settings.app_postgres_dsn,
+            settings.app_postgres_schema,
+        )
+        for research_run in research_runs:
+            research_run_store.save_run(research_run)
         PostgresResearchFindingStore(
             settings.app_postgres_dsn,
             settings.app_postgres_schema,
         ).save_findings(research_findings)
-        research_program_store = PostgresResearchProgramStore(
+        research_program_store: ResearchProgramStorePort = PostgresResearchProgramStore(
             settings.app_postgres_dsn,
             settings.app_postgres_schema,
         )
         for program in _seed_research_programs():
             research_program_store.save_program(ResearchProgram.model_validate(program))
-        job_store = PostgresJobStore(
+        job_store: JobStorePort = PostgresJobStore(
             settings.app_postgres_dsn,
             settings.app_postgres_schema,
         )
@@ -2053,24 +2087,36 @@ def _seed_dev_data_impl() -> tuple[dict[str, object] | None, Path]:
         SqliteTextUnitStore(settings.app_sqlite_path).save_text_units(text_units)
         SqliteEvidenceStore(settings.app_sqlite_path).save_evidence(evidence)
         SqliteCandidateStore(settings.app_sqlite_path).save_candidates(candidates)
-        extraction_run_store = SqliteExtractionRunStore(settings.app_sqlite_path)
+        extraction_run_store = cast(
+            ExtractionRunStorePort,
+            SqliteExtractionRunStore(settings.app_sqlite_path),
+        )
         for run in extraction_runs:
             extraction_run_store.save_run(run)
-        review_store = SqliteReviewStore(settings.app_sqlite_path)
+        review_store = cast(ReviewStorePort, SqliteReviewStore(settings.app_sqlite_path))
         for review in review_events:
             review_store.save_review(review)
-        research_run_store = SqliteResearchRunStore(settings.app_sqlite_path)
-        for run in research_runs:
-            research_run_store.save_run(run)
+        research_run_store = cast(
+            ResearchRunStorePort,
+            SqliteResearchRunStore(settings.app_sqlite_path),
+        )
+        for research_run in research_runs:
+            research_run_store.save_run(research_run)
         SqliteResearchFindingStore(settings.app_sqlite_path).save_findings(research_findings)
-        research_program_store = SqliteResearchProgramStore(settings.app_sqlite_path)
+        research_program_store = cast(
+            ResearchProgramStorePort,
+            SqliteResearchProgramStore(settings.app_sqlite_path),
+        )
         for program in _seed_research_programs():
             research_program_store.save_program(ResearchProgram.model_validate(program))
-        job_store = SqliteJobStore(settings.app_sqlite_path)
+        job_store = cast(JobStorePort, SqliteJobStore(settings.app_sqlite_path))
         for job in jobs:
             job_store.save_job(job)
         SqliteBibleProjectProfileStore(settings.app_sqlite_path).save_profile(profile)
-        section_store = SqliteBibleSectionStore(settings.app_sqlite_path)
+        section_store = cast(
+            Any,
+            SqliteBibleSectionStore(settings.app_sqlite_path),
+        )
         for section in sections:
             section_store.save_section(section)
 
@@ -2491,7 +2537,7 @@ def normalize_documents(
         f"Documents touched: {result['document_count']} | "
         f"Text units created: {result['text_unit_count']}"
     )
-    for warning in result["warnings"]:
+    for warning in cast(list[str], result["warnings"]):
         print(f"[yellow]{warning}[/yellow]")
 
 
@@ -2545,7 +2591,7 @@ def _build_benchmark_research_service(state_dir: Path) -> ResearchService:
         text_unit_store=text_unit_store,
     )
     ingestion_service = IngestionService(
-        corpus=_BenchmarkCorpus(),
+        corpus=cast(CorpusPort, _BenchmarkCorpus()),
         extractor=HeuristicExtractionAdapter(),
         source_store=source_store,
         text_unit_store=text_unit_store,
@@ -2608,8 +2654,8 @@ def _benchmark_search_provider_ids() -> list[str]:
     return ["duckduckgo_html"]
 
 
-def _benchmark_search_providers() -> list[object]:
-    providers: list[object] = [
+def _benchmark_search_providers() -> list[ResearchSearchProviderPort]:
+    providers: list[ResearchSearchProviderPort] = [
         DuckDuckGoHtmlSearchProvider(user_agent=settings.app_research_user_agent)
     ]
     if settings.brave_search_api_key:
@@ -2895,7 +2941,7 @@ def _build_benchmark_report(
         "late_retrospective": 0,
         "weak_anchor": 0,
     }
-    accepted_by_source: dict[str, dict[str, object]] = {}
+    accepted_by_source: dict[str, dict[str, Any]] = {}
     brief = run_detail.run.brief
     for finding in run_detail.findings:
         if finding.decision != ResearchFindingDecision.ACCEPTED:
@@ -2919,7 +2965,7 @@ def _build_benchmark_report(
         else:
             accepted_anchor_class["weak_anchor"] += 1
         source_key = finding.canonical_url or finding.url
-        group = accepted_by_source.setdefault(
+        group: dict[str, Any] = accepted_by_source.setdefault(
             source_key,
             {
                 "url": source_key,
@@ -3227,7 +3273,7 @@ def evaluate_extraction(
     print("[bold]Extraction Evaluation[/bold]")
     print(f"Dataset: {report['evaluation_id']}")
     print(f"Artifacts: {output_root / dataset}")
-    for path_report in report["paths"]:
+    for path_report in cast(list[dict[str, Any]], report["paths"]):
         print(
             f"{path_report['path']}: "
             f"kind={path_report['path_kind']}, "
@@ -3235,7 +3281,8 @@ def evaluate_extraction(
             f"factual_support_precision={path_report['metrics']['factual_support_precision']:.4f}, "
             f"recall={path_report['metrics']['important_fact_recall']:.4f}, "
             f"anchor_focus={path_report['evidence_span_quality']['avg_anchor_focus']:.4f}, "
-            f"reviewer_actions={path_report['reviewer_edit_burden']['avg_actions_per_matched_candidate']:.4f}, "
+            "reviewer_actions="
+            f"{path_report['reviewer_edit_burden']['avg_actions_per_matched_candidate']:.4f}, "
             f"stability={path_report['stability']['exact_match_rate']:.4f}"
         )
 

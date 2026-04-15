@@ -13,6 +13,8 @@ from source_aware_worldbuilding.domain.models import (
     JobRecord,
     JobResultRef,
     JobSummary,
+    JobType,
+    JobWorkerState,
     ResearchRunRequest,
     utc_now,
 )
@@ -182,7 +184,7 @@ class JobService:
         if self.bible_service.get_section(section_id) is None:
             raise ValueError("Bible section not found.")
         self.bible_service.mark_section_queued(section_id)
-        payload = {"section_id": section_id}
+        payload: dict[str, object] = {"section_id": section_id}
         if request is not None:
             payload["request"] = request.model_dump(mode="json")
         job = self._new_job(
@@ -238,8 +240,7 @@ class JobService:
                 "Review the job and retry if needed."
             )
             job.progress_message = (
-                job.progress_message
-                or "Worker heartbeat expired before the job completed."
+                job.progress_message or "Worker heartbeat expired before the job completed."
             )
             job.updated_at = now
             job.last_heartbeat_at = now
@@ -400,7 +401,7 @@ class JobService:
 
     def _new_job(
         self,
-        job_type: str,
+        job_type: JobType,
         payload: dict[str, object],
         *,
         result_ref: JobResultRef,
@@ -523,7 +524,7 @@ class JobService:
         message: str | None = None,
         current: int | None = None,
         checkpoint: bool = False,
-        worker_state: str | None = None,
+        worker_state: JobWorkerState | None = None,
         status: JobStatus | None = None,
         status_label: str | None = None,
     ) -> None:

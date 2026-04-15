@@ -140,7 +140,7 @@ class HeuristicExtractionAdapter:
     def _is_usable_sentence(self, sentence: str) -> bool:
         normalized = " ".join(sentence.split()).strip()
         lower = normalized.lower()
-        boundary_safe = normalized.rstrip('"”’\'')
+        boundary_safe = normalized.rstrip("\"”’'")
         if len(normalized) < 35 or len(normalized.split()) < 6:
             return False
         if len(normalized) > 320:
@@ -225,7 +225,7 @@ class HeuristicExtractionAdapter:
     def _is_usable_claim_value(self, value: str) -> bool:
         cleaned = " ".join(value.split()).strip(" .,:;")
         lower = cleaned.lower()
-        boundary_safe = cleaned.rstrip('"”’\'')
+        boundary_safe = cleaned.rstrip("\"”’'")
         if len(cleaned) < 24 or len(cleaned.split()) < 4:
             return False
         if boundary_safe.endswith((":", "—", "-", "“")):

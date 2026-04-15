@@ -42,6 +42,42 @@ AttachmentDiscoveryStatus = Literal["not_applicable", "discovered", "missing"]
 AttachmentFetchStatus = Literal["not_applicable", "pending", "fetched", "failed"]
 TextExtractionStatus = Literal["not_applicable", "pending", "extracted", "failed"]
 NormalizationStatus = Literal["not_applicable", "queued", "completed", "failed"]
+SourceDocumentKind = Literal["attachment", "note", "snapshot", "manual_text"]
+ClaimExtractionStatus = Literal["queued", "ready", "running", "completed", "failed"]
+QueryRankingStrategy = Literal["lexical", "blended", "projection_only", "intent_blended"]
+QueryAnswerBoundary = Literal["direct_answer", "adjacent_context", "research_gap"]
+ClaimRelationshipType = Literal["supports", "contradicts", "supersedes", "superseded_by"]
+ClaimRelationshipSourceKind = Literal["derived", "manual"]
+ClaimClusterKind = Literal["reinforcing", "contested", "supersession"]
+BibleParagraphRole = Literal[
+    "descriptive_synthesis",
+    "interpretive_synthesis",
+    "uncertainty_framing",
+    "writer_guidance",
+]
+BibleParagraphProvenanceScope = Literal[
+    "canon_support",
+    "contested_context",
+    "author_guidance",
+]
+JobType = Literal[
+    "research_run_create",
+    "research_run_stage",
+    "research_run_extract",
+    "bible_section_compose",
+    "bible_section_regenerate",
+    "bible_project_export",
+]
+JobWorkerState = Literal[
+    "queued",
+    "running",
+    "cancel_requested",
+    "stalled",
+    "completed",
+    "failed",
+    "cancelled",
+    "partial",
+]
 
 
 def _legacy_source_workflow_stage(sync_status: str) -> SourceWorkflowStage:
@@ -161,7 +197,7 @@ class SourceRecord(BaseModel):
 class SourceDocumentRecord(BaseModel):
     document_id: str
     source_id: str
-    document_kind: Literal["attachment", "note", "snapshot", "manual_text"]
+    document_kind: SourceDocumentKind
     external_id: str | None = None
     filename: str | None = None
     mime_type: str | None = None
@@ -174,7 +210,7 @@ class SourceDocumentRecord(BaseModel):
         "extraction_failed",
     ] = "imported"
     raw_text_status: Literal["missing", "queued", "ready", "failed"] = "missing"
-    claim_extraction_status: Literal["queued", "ready", "running", "completed", "failed"] = "queued"
+    claim_extraction_status: ClaimExtractionStatus = "queued"
     metadata_import_status: MetadataImportStatus = "imported"
     attachment_discovery_status: AttachmentDiscoveryStatus = "not_applicable"
     attachment_fetch_status: AttachmentFetchStatus = "not_applicable"
@@ -279,10 +315,7 @@ def summarize_source_documents(source_documents: list[SourceDocumentRecord]) -> 
     for document in source_documents:
         if document.present_in_latest_pull:
             summary["present"] += 1
-        if (
-            not document.present_in_latest_pull
-            or document.attachment_discovery_status == "missing"
-        ):
+        if not document.present_in_latest_pull or document.attachment_discovery_status == "missing":
             summary["missing"] += 1
         if document.attachment_fetch_status == "fetched":
             summary["fetched"] += 1
@@ -634,8 +667,8 @@ class QueryResultMetadata(BaseModel):
     retrieval_backend: Literal["memory", "qdrant"] = "memory"
     fallback_used: bool = False
     fallback_reason: str | None = None
-    ranking_strategy: Literal["lexical", "blended", "projection_only", "intent_blended"] = "lexical"
-    answer_boundary: Literal["direct_answer", "adjacent_context", "research_gap"] = "research_gap"
+    ranking_strategy: QueryRankingStrategy = "lexical"
+    answer_boundary: QueryAnswerBoundary = "research_gap"
     retrieval_quality_tier: Literal["projection", "memory_ranked"] = "memory_ranked"
     used_nearby_context: bool = False
 
@@ -675,14 +708,14 @@ class ClaimRelationship(BaseModel):
     relationship_id: str
     claim_id: str
     related_claim_id: str
-    relationship_type: Literal["supports", "contradicts", "supersedes", "superseded_by"]
-    source_kind: Literal["derived", "manual"] = "derived"
+    relationship_type: ClaimRelationshipType
+    source_kind: ClaimRelationshipSourceKind = "derived"
     notes: str | None = None
 
 
 class ClaimRelationshipRequest(BaseModel):
     related_claim_id: str
-    relationship_type: Literal["supports", "contradicts", "supersedes", "superseded_by"]
+    relationship_type: ClaimRelationshipType
     notes: str | None = None
 
 
@@ -690,10 +723,8 @@ class ClaimCluster(BaseModel):
     cluster_id: str
     lead_claim_id: str
     claim_ids: list[str] = Field(default_factory=list)
-    relationship_types: list[Literal["supports", "contradicts", "supersedes", "superseded_by"]] = (
-        Field(default_factory=list)
-    )
-    cluster_kind: Literal["reinforcing", "contested", "supersession"]
+    relationship_types: list[ClaimRelationshipType] = Field(default_factory=list)
+    cluster_kind: ClaimClusterKind
     summary: str
 
 
@@ -702,7 +733,7 @@ class AnswerSection(BaseModel):
     heading: str
     text: str
     claim_ids: list[str] = Field(default_factory=list)
-    cluster_kind: Literal["reinforcing", "contested", "supersession"]
+    cluster_kind: ClaimClusterKind
 
 
 class QueryResult(BaseModel):
@@ -842,15 +873,7 @@ class BibleSectionParagraph(BaseModel):
     heading: str | None = None
     text: str
     paragraph_kind: str = "summary"
-    paragraph_role: (
-        Literal[
-            "descriptive_synthesis",
-            "interpretive_synthesis",
-            "uncertainty_framing",
-            "writer_guidance",
-        ]
-        | None
-    ) = None
+    paragraph_role: BibleParagraphRole | None = None
     claim_ids: list[str] = Field(default_factory=list)
     evidence_ids: list[str] = Field(default_factory=list)
     source_ids: list[str] = Field(default_factory=list)
@@ -876,9 +899,7 @@ class BibleParagraphProvenance(BaseModel):
     sources: list[SourceRecord] = Field(default_factory=list)
     contradiction_context: list[str] = Field(default_factory=list)
     supersession_context: list[str] = Field(default_factory=list)
-    provenance_scope: Literal["canon_support", "contested_context", "author_guidance"] = (
-        "canon_support"
-    )
+    provenance_scope: BibleParagraphProvenanceScope = "canon_support"
     why_this_paragraph_exists: str | None = None
     claim_details: list[dict[str, object]] = Field(default_factory=list)
     evidence_details: list[dict[str, object]] = Field(default_factory=list)
@@ -990,14 +1011,7 @@ class JobResultRef(BaseModel):
 
 class JobRecord(BaseModel):
     job_id: str
-    job_type: Literal[
-        "research_run_create",
-        "research_run_stage",
-        "research_run_extract",
-        "bible_section_compose",
-        "bible_section_regenerate",
-        "bible_project_export",
-    ]
+    job_type: JobType
     status: JobStatus = JobStatus.PENDING
     status_label: str | None = None
     completion_state: Literal["completed", "partial"] | None = None
@@ -1012,19 +1026,7 @@ class JobRecord(BaseModel):
     error_code: str | None = None
     error_detail: str | None = None
     warnings: list[str] = Field(default_factory=list)
-    worker_state: (
-        Literal[
-            "queued",
-            "running",
-            "cancel_requested",
-            "stalled",
-            "completed",
-            "failed",
-            "cancelled",
-            "partial",
-        ]
-        | None
-    ) = None
+    worker_state: JobWorkerState | None = None
     stalled_reason: str | None = None
     degraded_reason: str | None = None
     retryable: bool = False

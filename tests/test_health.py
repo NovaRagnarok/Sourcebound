@@ -150,10 +150,7 @@ def test_runtime_health_marks_qdrant_uninitialized_when_collection_is_missing(mo
     assert projection["mode"] == "qdrant:uninitialized"
     assert projection["ready"] is False
     assert body["overall_status"] == "degraded"
-    assert any(
-        "saw seed-dev-data" in step.lower()
-        for step in body["next_steps"]
-    )
+    assert any("saw seed-dev-data" in step.lower() for step in body["next_steps"])
 
 
 def test_runtime_health_reports_needs_setup_when_worker_is_disabled(monkeypatch) -> None:
@@ -172,10 +169,7 @@ def test_runtime_health_reports_needs_setup_when_worker_is_disabled(monkeypatch)
     assert body["overall_status"] == "needs_setup"
     worker = next(service for service in body["services"] if service["name"] == "job_worker")
     assert worker["ready"] is False
-    assert any(
-        "required for local startup" in step.lower()
-        for step in body["next_steps"]
-    )
+    assert any("required for local startup" in step.lower() for step in body["next_steps"])
 
 
 def test_strict_startup_checks_fail_fast_when_qdrant_is_uninitialized(monkeypatch) -> None:

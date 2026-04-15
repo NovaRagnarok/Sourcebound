@@ -225,7 +225,7 @@ class GraphRAGExtractionAdapter:
         if importlib.util.find_spec("pandas") is None:
             raise GraphRAGExtractionError("GraphRAG in-process mode requires `pandas`.")
 
-        import pandas as pd
+        import pandas as pd  # type: ignore[import-untyped]
         from graphrag.api.index import build_index
 
         try:

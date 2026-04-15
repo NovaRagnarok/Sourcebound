@@ -171,7 +171,10 @@ def test_intake_service_falls_back_to_local_text_intake_when_zotero_is_unconfigu
     assert result.pulled_sources[0].zotero_item_key is None
     assert result.pulled_sources[0].title == "Local source"
     assert result.source_documents[0].document_kind == "manual_text"
-    assert result.source_documents[0].raw_text == "Bread prices rose sharply during the winter shortage."
+    assert (
+        result.source_documents[0].raw_text
+        == "Bread prices rose sharply during the winter shortage."
+    )
     assert result.source_documents[0].normalization_status == "queued"
     assert any("local workspace" in warning for warning in result.warnings)
 

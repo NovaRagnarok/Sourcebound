@@ -15,6 +15,7 @@ from source_aware_worldbuilding.domain.models import (
     ResearchSearchHit,
     ResearchSearchProviderResult,
 )
+from source_aware_worldbuilding.ports import ResearchScoutAdapterPort, ResearchSearchProviderPort
 
 _PUBLISH_DATE_RE = re.compile(r"\b((?:19|20)\d{2})(?:[-/]\d{2}[-/]\d{2})?\b")
 _GUIDE_TERMS = ("guide", "history", "top ", "best ", "timeline", "origins")
@@ -137,11 +138,16 @@ class _PageContentParser(HTMLParser):
 
 
 class ResearchScoutRegistry:
-    def __init__(self, adapters: list[object], *, default_adapter_id: str = "web_open") -> None:
+    def __init__(
+        self,
+        adapters: list[ResearchScoutAdapterPort],
+        *,
+        default_adapter_id: str = "web_open",
+    ) -> None:
         self._adapters = {adapter.adapter_id: adapter for adapter in adapters}
         self.default_adapter_id = default_adapter_id
 
-    def get(self, adapter_id: str | None = None):
+    def get(self, adapter_id: str | None = None) -> ResearchScoutAdapterPort | None:
         resolved = adapter_id or self.default_adapter_id
         return self._adapters.get(resolved)
 
@@ -150,14 +156,19 @@ class ResearchScoutRegistry:
 
 
 class ResearchSearchProviderRegistry:
-    def __init__(self, providers: list[object], *, default_order: list[str] | None = None) -> None:
+    def __init__(
+        self,
+        providers: list[ResearchSearchProviderPort],
+        *,
+        default_order: list[str] | None = None,
+    ) -> None:
         self._providers = {provider.provider_id: provider for provider in providers}
         self.default_order = default_order or list(self._providers)
 
-    def get(self, provider_id: str):
+    def get(self, provider_id: str) -> ResearchSearchProviderPort | None:
         return self._providers.get(provider_id)
 
-    def ordered(self, provider_ids: list[str] | None = None) -> list[object]:
+    def ordered(self, provider_ids: list[str] | None = None) -> list[ResearchSearchProviderPort]:
         order = provider_ids or self.default_order
         return [
             self._providers[provider_id] for provider_id in order if provider_id in self._providers
@@ -459,7 +470,7 @@ class WebOpenResearchScout(_BaseHtmlResearchScout):
         *,
         limit: int,
     ) -> list[ResearchSearchHit]:
-        merged: dict[str, dict[str, object]] = {}
+        merged: dict[str, dict[str, ResearchSearchHit | list[str] | int]] = {}
         provider_order = [result.provider_id for result in provider_results]
         for result in provider_results:
             for hit in result.hits:
@@ -474,9 +485,15 @@ class WebOpenResearchScout(_BaseHtmlResearchScout):
                         "best_rank": hit.provider_rank or hit.rank,
                     },
                 )
-                bucket["providers"].append(result.provider_id)
-                bucket["best_rank"] = min(bucket["best_rank"], hit.provider_rank or hit.rank)
+                providers = bucket["providers"]
+                best_rank = bucket["best_rank"]
                 current = bucket["hit"]
+                if not isinstance(providers, list) or not isinstance(best_rank, int):
+                    continue
+                if not isinstance(current, ResearchSearchHit):
+                    continue
+                providers.append(result.provider_id)
+                bucket["best_rank"] = min(best_rank, hit.provider_rank or hit.rank)
                 if len(hit.snippet or "") > len(current.snippet or ""):
                     bucket["hit"] = current.model_copy(
                         update={
@@ -488,20 +505,32 @@ class WebOpenResearchScout(_BaseHtmlResearchScout):
                     )
         fused_hits: list[ResearchSearchHit] = []
         for canonical_url, payload in merged.items():
-            hit: ResearchSearchHit = payload["hit"]
+            fused_hit = payload["hit"]
+            providers = payload["providers"]
+            best_rank = payload["best_rank"]
+            if not isinstance(fused_hit, ResearchSearchHit):
+                continue
+            if not isinstance(providers, list) or not isinstance(best_rank, int):
+                continue
             matched_providers = sorted(
-                set(payload["providers"]), key=lambda item: provider_order.index(item)
+                set(providers),
+                key=lambda item: provider_order.index(item),
             )
-            primary_provider = matched_providers[0] if matched_providers else hit.search_provider_id
+            primary_provider = (
+                matched_providers[0] if matched_providers else fused_hit.search_provider_id
+            )
             fusion_score = self._fusion_score(
-                hit, query, len(matched_providers), payload["best_rank"]
+                fused_hit,
+                query,
+                len(matched_providers),
+                best_rank,
             )
             fused_hits.append(
-                hit.model_copy(
+                fused_hit.model_copy(
                     update={
                         "url": canonical_url,
                         "search_provider_id": primary_provider,
-                        "provider_rank": payload["best_rank"],
+                        "provider_rank": best_rank,
                         "provider_hit_count": len(matched_providers),
                         "matched_providers": matched_providers,
                         "fusion_score": round(fusion_score, 4),
@@ -571,9 +600,9 @@ def _canonicalize_search_url(url: str) -> str:
     scheme = (parsed.scheme or "https").lower()
     netloc = parsed.netloc.lower().removeprefix("www.")
     query_items = [
-        (key, value)
-        for key, value in parse_qs(parsed.query, keep_blank_values=False).items()
-        for value in value
+        (key, item)
+        for key, values in parse_qs(parsed.query, keep_blank_values=False).items()
+        for item in values
         if key.lower() not in _TRACKING_PARAMS and not key.lower().startswith("utm_")
     ]
     query_items.sort()

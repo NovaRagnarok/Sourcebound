@@ -349,8 +349,7 @@ def test_source_saturation_prefers_alternative_when_reused_source_is_only_slight
                         url="https://archive.example.org/shared-source",
                         title="2003 Chicago DJs and residencies",
                         snippet=(
-                            "In 2003, Chicago DJs shaped the local scene through "
-                            "club residencies."
+                            "In 2003, Chicago DJs shaped the local scene through club residencies."
                         ),
                         rank=1,
                     ),
@@ -359,8 +358,7 @@ def test_source_saturation_prefers_alternative_when_reused_source_is_only_slight
                         url="https://news.example.com/radio-feature",
                         title="2003 Chicago radio coverage feature",
                         snippet=(
-                            "A 2003 radio feature covered venues, DJs, and local "
-                            "club reporting."
+                            "A 2003 radio feature covered venues, DJs, and local club reporting."
                         ),
                         rank=2,
                     ),
@@ -1630,8 +1628,7 @@ def test_specific_date_artifact_url_can_outrank_retrospective_timeline(temp_data
             published_at="2003",
             source_type="web",
             text=(
-                "2003-02-07 DJ set listing for a Chicago venue with resident DJs "
-                "and flyer support."
+                "2003-02-07 DJ set listing for a Chicago venue with resident DJs and flyer support."
             ),
         ),
         fetch_outcome=ResearchFetchOutcome.FETCHED,
@@ -2163,8 +2160,7 @@ def test_future_soft_gate_rejects_weak_future_retrospective_but_allows_strong_an
             published_at="2021-06-01",
             source_type="archive",
             text=(
-                "Venue notes mention resident DJs, equipment lists, and "
-                "neighborhood club routines."
+                "Venue notes mention resident DJs, equipment lists, and neighborhood club routines."
             ),
         ),
         fetch_outcome=ResearchFetchOutcome.FETCHED,
@@ -2286,8 +2282,7 @@ def test_source_shape_penalty_demotes_abstract_intro_pages(temp_data_dir: Path) 
             url="https://archive.example.org/flyer-scan",
             title="2003 flyer scan for South Side residency",
             snippet=(
-                "A 2003 listing for a South Side residency with DJs, venue, and "
-                "radio support."
+                "A 2003 listing for a South Side residency with DJs, venue, and radio support."
             ),
             rank=1,
         ),

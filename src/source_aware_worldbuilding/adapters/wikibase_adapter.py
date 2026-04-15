@@ -12,6 +12,8 @@ from source_aware_worldbuilding.domain.errors import CanonUnavailableError, Wiki
 from source_aware_worldbuilding.domain.models import (
     ApprovedClaim,
     ClaimRelationship,
+    ClaimRelationshipSourceKind,
+    ClaimRelationshipType,
     EvidenceSnippet,
     utc_now,
 )
@@ -43,7 +45,11 @@ class WikibaseTruthStore:
     def list_claims(self) -> list[ApprovedClaim]:
         self._ensure_canon_available()
         entity_map = self._entity_map()
-        entity_ids = [entry["entity_id"] for entry in entity_map.values() if entry.get("entity_id")]
+        entity_ids = [
+            entity_id
+            for entry in entity_map.values()
+            if isinstance((entity_id := entry.get("entity_id")), str) and entity_id
+        ]
         if not entity_ids:
             return []
 
@@ -64,7 +70,7 @@ class WikibaseTruthStore:
             return None
 
         try:
-            remote_claim = self._fetch_remote_claim(entity_entry["entity_id"], cached)
+            remote_claim = self._fetch_remote_claim(str(entity_entry["entity_id"]), cached)
         except Exception as exc:
             raise WikibaseSyncError(f"Wikibase read failed: {exc}") from exc
         if remote_claim is not None:
@@ -79,10 +85,10 @@ class WikibaseTruthStore:
         self,
         claim_id: str,
         related_claim_id: str,
-        relationship_type: str,
+        relationship_type: ClaimRelationshipType,
         *,
         notes: str | None = None,
-        source_kind: str = "manual",
+        source_kind: ClaimRelationshipSourceKind = "manual",
     ) -> ClaimRelationship:
         _ = claim_id, related_claim_id, relationship_type, notes, source_kind
         raise CanonUnavailableError(
@@ -316,7 +322,7 @@ class WikibaseTruthStore:
         if not main_property:
             return []
 
-        statement = {
+        statement: dict[str, Any] = {
             "mainsnak": self._string_snak(main_property, claim.value),
             "type": "statement",
             "rank": "normal",
@@ -421,8 +427,10 @@ class WikibaseTruthStore:
         if auth_required and self.username and self.password and not self._csrf_token:
             self._login()
         if method == "GET":
+            assert self.api_url is not None
             response = client.get(self.api_url, params=params)
         else:
+            assert self.api_url is not None
             response = client.post(self.api_url, data=params)
         response.raise_for_status()
         return response.json()

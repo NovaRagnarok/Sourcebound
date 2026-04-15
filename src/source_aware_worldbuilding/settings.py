@@ -202,9 +202,7 @@ class Settings(BaseSettings):
         if self.qdrant_features_enabled and not self.qdrant_url.strip():
             issues.append(
                 StartupValidationIssue(
-                    summary=(
-                        "Qdrant-backed features are enabled, but QDRANT_URL is empty."
-                    ),
+                    summary=("Qdrant-backed features are enabled, but QDRANT_URL is empty."),
                     fix=(
                         "Set `QDRANT_URL=http://localhost:6333`, or disable "
                         "`QDRANT_ENABLED` and `RESEARCH_SEMANTIC_ENABLED` only if you "

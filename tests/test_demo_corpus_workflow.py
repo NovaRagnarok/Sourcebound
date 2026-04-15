@@ -17,8 +17,18 @@ from source_aware_worldbuilding.demo_corpus import (
     _find_candidate_for_approval,
     run_demo_corpus,
 )
-from source_aware_worldbuilding.domain.enums import ClaimKind, ClaimStatus, ExtractionRunStatus, ReviewState
-from source_aware_worldbuilding.domain.models import CandidateClaim, ExtractionRun, SourceRecord, TextUnit
+from source_aware_worldbuilding.domain.enums import (
+    ClaimKind,
+    ClaimStatus,
+    ExtractionRunStatus,
+    ReviewState,
+)
+from source_aware_worldbuilding.domain.models import (
+    CandidateClaim,
+    ExtractionRun,
+    SourceRecord,
+    TextUnit,
+)
 
 runner = CliRunner()
 
@@ -26,7 +36,7 @@ runner = CliRunner()
 def test_heuristic_extractor_records_text_unit_spans() -> None:
     adapter = HeuristicExtractionAdapter()
     sentence = (
-        'These dealers were privileged by law to receive thirteen batches for twelve, '
+        "These dealers were privileged by law to receive thirteen batches for twelve, "
         'hence the expression "a baker\'s dozen."'
     )
     text = f"Intro. {sentence} Tail."

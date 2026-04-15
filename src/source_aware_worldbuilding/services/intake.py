@@ -117,10 +117,7 @@ class IntakeService:
                 "No source documents were discovered; nothing has been queued for normalization."
             )
         warnings.extend(
-            error
-            for document in source_documents
-            for error in document.stage_errors
-            if error
+            error for document in source_documents for error in document.stage_errors if error
         )
         return IntakeResult(
             created_item=created_item,
@@ -170,9 +167,7 @@ class IntakeService:
                 item_type=request.source_type,
                 collection_key=request.collection_key,
             ),
-            warnings=[
-                "Saved in the local workspace because Zotero is not configured yet."
-            ],
+            warnings=["Saved in the local workspace because Zotero is not configured yet."],
         )
 
     def _create_local_url_source(self, request: IntakeUrlRequest) -> IntakeResult:
@@ -230,7 +225,8 @@ class IntakeService:
             ),
             warnings=[
                 "Saved in the local workspace because Zotero is not configured yet.",
-                "URL intake stored the link and your notes locally; it did not fetch the page body.",
+                "URL intake stored the link and your notes locally; "
+                "it did not fetch the page body.",
             ],
         )
 
@@ -260,9 +256,7 @@ class IntakeService:
                 "Local file intake could not extract text from this file type yet. "
                 "Upload a text-like file or configure Zotero for attachment workflows."
             )
-            stage_errors.append(
-                "Local file intake could not extract text from this file type yet."
-            )
+            stage_errors.append("Local file intake could not extract text from this file type yet.")
 
         final_title = title or filename
         source = SourceRecord(
@@ -333,10 +327,7 @@ class IntakeService:
         self.source_document_store.save_source_documents(source_documents)
         warnings = list(warnings or [])
         warnings.extend(
-            error
-            for document in source_documents
-            for error in document.stage_errors
-            if error
+            error for document in source_documents for error in document.stage_errors if error
         )
         return IntakeResult(
             created_item=created_item,

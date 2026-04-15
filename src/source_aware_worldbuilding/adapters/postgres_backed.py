@@ -14,6 +14,8 @@ from source_aware_worldbuilding.domain.models import (
     BibleSection,
     CandidateClaim,
     ClaimRelationship,
+    ClaimRelationshipSourceKind,
+    ClaimRelationshipType,
     EvidenceSnippet,
     ExtractionRun,
     JobRecord,
@@ -487,10 +489,10 @@ class PostgresTruthStore(_PostgresAdapterBase):
         self,
         claim_id: str,
         related_claim_id: str,
-        relationship_type: str,
+        relationship_type: ClaimRelationshipType,
         *,
         notes: str | None = None,
-        source_kind: str = "manual",
+        source_kind: ClaimRelationshipSourceKind = "manual",
     ) -> ClaimRelationship:
         with self._connect() as connection:
             claim_row = self._require_claim_row(connection, claim_id)
@@ -920,7 +922,11 @@ class PostgresTruthStore(_PostgresAdapterBase):
                 source_kind="derived",
             )
 
-    def _classify_relationship(self, existing_row, claim: ApprovedClaim) -> str | None:
+    def _classify_relationship(
+        self,
+        existing_row,
+        claim: ApprovedClaim,
+    ) -> ClaimRelationshipType | None:
         if existing_row["subject"] != claim.subject or existing_row["predicate"] != claim.predicate:
             return None
         same_signature = all(
@@ -961,10 +967,10 @@ class PostgresTruthStore(_PostgresAdapterBase):
         connection,
         claim_row_id: str,
         related_claim_row_id: str,
-        relationship_type: str,
+        relationship_type: ClaimRelationshipType,
         notes: str,
         *,
-        source_kind: str = "derived",
+        source_kind: ClaimRelationshipSourceKind = "derived",
     ) -> ClaimRelationship:
         relationship_id = str(uuid4())
         connection.execute(
@@ -1004,7 +1010,10 @@ class PostgresTruthStore(_PostgresAdapterBase):
             notes=notes,
         )
 
-    def _reverse_relationship_type(self, relationship_type: str) -> str:
+    def _reverse_relationship_type(
+        self,
+        relationship_type: ClaimRelationshipType,
+    ) -> ClaimRelationshipType:
         if relationship_type == "supersedes":
             return "superseded_by"
         if relationship_type == "superseded_by":

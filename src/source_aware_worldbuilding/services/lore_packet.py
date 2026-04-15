@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from collections import defaultdict
+from collections.abc import Collection
 
 from source_aware_worldbuilding.domain.enums import ClaimKind, ClaimStatus
 from source_aware_worldbuilding.domain.models import (
@@ -219,7 +220,7 @@ class LorePacketService:
                     index[evidence_id] = snippet
         return index
 
-    def _source_index(self, evidence: list[EvidenceSnippet]) -> dict[str, SourceRecord]:
+    def _source_index(self, evidence: Collection[EvidenceSnippet]) -> dict[str, SourceRecord]:
         index: dict[str, SourceRecord] = {}
         for snippet in evidence:
             if snippet.source_id in index:

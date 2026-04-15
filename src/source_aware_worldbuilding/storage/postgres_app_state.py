@@ -6,7 +6,7 @@ from typing import TypeVar
 
 from psycopg import connect
 from psycopg.rows import dict_row
-from psycopg.sql import SQL, Identifier
+from psycopg.sql import SQL, Composable, Identifier
 from psycopg.types.json import Jsonb
 from pydantic import BaseModel
 
@@ -320,7 +320,7 @@ class PostgresAppStateStore:
         return [model_type.model_validate(json.loads(row["payload"])) for row in rows]
 
     def _order_by_clause(self, order_by: str):
-        clauses = []
+        clauses: list[Composable] = []
         for fragment in order_by.split(","):
             parts = fragment.strip().split()
             if len(parts) == 1:

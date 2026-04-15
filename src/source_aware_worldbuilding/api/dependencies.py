@@ -67,6 +67,7 @@ from source_aware_worldbuilding.adapters.web_research_scout import (
 from source_aware_worldbuilding.adapters.wikibase_adapter import WikibaseTruthStore
 from source_aware_worldbuilding.adapters.zotero_adapter import ZoteroCorpusAdapter
 from source_aware_worldbuilding.domain.models import ResearchExecutionPolicy
+from source_aware_worldbuilding.ports import ResearchSearchProviderPort
 from source_aware_worldbuilding.services.bible import BibleWorkspaceService
 from source_aware_worldbuilding.services.ingestion import IngestionService
 from source_aware_worldbuilding.services.intake import IntakeService
@@ -276,7 +277,9 @@ def _resolve_research_search_provider_ids() -> list[str]:
 
 
 def _build_research_search_provider_registry() -> ResearchSearchProviderRegistry:
-    providers = [DuckDuckGoHtmlSearchProvider(user_agent=settings.app_research_user_agent)]
+    providers: list[ResearchSearchProviderPort] = [
+        DuckDuckGoHtmlSearchProvider(user_agent=settings.app_research_user_agent)
+    ]
     if settings.brave_search_api_key:
         providers.insert(
             0,

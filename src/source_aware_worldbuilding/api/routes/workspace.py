@@ -109,8 +109,7 @@ def _section_snapshot(
 ) -> WorkspaceSectionSnapshot:
     if section.generation_status.value == "ready" and section.ready_for_writer:
         summary = (
-            f"{len(section.references.claim_ids)} reviewed claims are supporting the current "
-            "draft."
+            f"{len(section.references.claim_ids)} reviewed claims are supporting the current draft."
         )
     elif section.coverage_gaps:
         summary = section.coverage_gaps[0]
@@ -165,8 +164,7 @@ def _build_actions(
                 action_id="open-current-section",
                 title="Open the current section",
                 summary=(
-                    f"{current_section.title} is the live writing surface for the current "
-                    "project."
+                    f"{current_section.title} is the live writing surface for the current project."
                 ),
                 screen="bible",
                 tone="author_choice" if current_section.has_manual_edits else "verified",
@@ -276,10 +274,7 @@ def _build_background_items(
         seen.add(job.job_id)
         label = _job_title(job.job_type, section_titles.get(job.result_ref.section_id))
         summary = (
-            job.progress_message
-            or job.error_detail
-            or job.error
-            or "Background work is available."
+            job.progress_message or job.error_detail or job.error or "Background work is available."
         )
         status_label = job.status_label or job.status.value
         items.append(

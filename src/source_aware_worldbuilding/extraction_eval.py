@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from hashlib import sha1
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -129,7 +129,8 @@ def load_extraction_eval_dataset(dataset_id: str) -> ExtractionEvalDataset:
     if not path.exists():
         available = ", ".join(available_extraction_eval_datasets()) or "none"
         raise ValueError(
-            f"Unknown extraction evaluation dataset '{dataset_id}'. Available datasets: {available}."
+            f"Unknown extraction evaluation dataset '{dataset_id}'. "
+            f"Available datasets: {available}."
         )
     return ExtractionEvalDataset.model_validate_json(path.read_text(encoding="utf-8"))
 
@@ -146,7 +147,7 @@ def evaluate_extraction_dataset(
     prepared = _prepare_corpus(dataset)
     output_root.mkdir(parents=True, exist_ok=True)
 
-    path_reports = []
+    path_reports: list[dict[str, Any]] = []
     skipped_paths: list[dict[str, str]] = []
     for path_spec in _available_eval_paths(dataset):
         try:
@@ -213,7 +214,7 @@ def evaluate_extraction_dataset(
             )
         )
 
-    summary = {
+    summary: dict[str, Any] = {
         "evaluation_id": dataset.evaluation_id,
         "title": dataset.title,
         "corpus_id": dataset.corpus_id,
@@ -267,7 +268,8 @@ def _prepare_corpus(dataset: ExtractionEvalDataset) -> _PreparedCorpus:
         text_units = text_unit_store.list_text_units(source_id=source.source_id)
         if not text_units:
             raise ValueError(
-                f"Evaluation dataset '{dataset.evaluation_id}' did not yield any normalized text units."
+                f"Evaluation dataset '{dataset.evaluation_id}' "
+                "did not yield any normalized text units."
             )
         return _PreparedCorpus(
             source=source,
@@ -358,8 +360,8 @@ def _build_graphrag_fixture_bundle(
     prepared: _PreparedCorpus,
 ) -> GraphRAGArtifactBundle:
     text_unit_by_locator = {text_unit.locator: text_unit for text_unit in prepared.text_units}
-    graph_text_units = []
-    documents = []
+    graph_text_units: list[dict[str, Any]] = []
+    documents: list[dict[str, Any]] = []
     graph_text_unit_id_by_text_unit_id: dict[str, str] = {}
 
     for index, text_unit in enumerate(prepared.text_units, start=1):
@@ -378,10 +380,10 @@ def _build_graphrag_fixture_bundle(
             }
         )
 
-    covariates = []
+    covariates: list[dict[str, Any]] = []
     for fixture_claim in dataset.graphrag_fixture_claims:
-        text_unit = text_unit_by_locator.get(fixture_claim.text_unit_locator)
-        if text_unit is None:
+        fixture_text_unit = text_unit_by_locator.get(fixture_claim.text_unit_locator)
+        if fixture_text_unit is None:
             raise ValueError(
                 "GraphRAG fixture claim "
                 f"{fixture_claim.claim_id!r} referenced unknown locator "
@@ -398,7 +400,7 @@ def _build_graphrag_fixture_bundle(
                 "start_date": fixture_claim.start_date,
                 "end_date": fixture_claim.end_date,
                 "source_text": fixture_claim.source_text,
-                "text_unit_id": graph_text_unit_id_by_text_unit_id[text_unit.text_unit_id],
+                "text_unit_id": graph_text_unit_id_by_text_unit_id[fixture_text_unit.text_unit_id],
             }
         )
 
@@ -414,7 +416,7 @@ def _score_path_result(
     *,
     dataset: ExtractionEvalDataset,
     path_result: _PathRunResult,
-) -> dict[str, object]:
+) -> dict[str, Any]:
     output = path_result.output
     evidence_by_id = {item.evidence_id: item for item in output.evidence}
     eligible_matches = _eligible_matches(dataset.gold_claims, output.candidates, evidence_by_id)
@@ -443,15 +445,13 @@ def _score_path_result(
         assigned_by_candidate,
     )
     review_ready_candidate_count = sum(
-        1
-        for item in reviewer_edit_burden["per_candidate"].values()
-        if item["action_count"] == 0
+        1 for item in reviewer_edit_burden["per_candidate"].values() if item["action_count"] == 0
     )
     contradiction = _contradiction_summary(dataset, set(assigned_by_gold))
     stability = _stability_summary(path_result.repeated_outputs)
     gold_claim_by_id = {gold.gold_claim_id: gold for gold in dataset.gold_claims}
 
-    assigned_examples = []
+    assigned_examples: list[dict[str, Any]] = []
     for candidate in output.candidates:
         assigned = assigned_by_candidate.get(candidate.candidate_id)
         if assigned is None:
@@ -469,8 +469,12 @@ def _score_path_result(
                     if match.candidate_id == candidate.candidate_id
                     and match.gold_claim_id != assigned.gold_claim_id
                 ),
-                "edit_actions": reviewer_edit_burden["per_candidate"].get(candidate.candidate_id, {}),
-                "best_evidence_focus": evidence_quality["per_candidate"].get(candidate.candidate_id, {}),
+                "edit_actions": reviewer_edit_burden["per_candidate"].get(
+                    candidate.candidate_id, {}
+                ),
+                "best_evidence_focus": evidence_quality["per_candidate"].get(
+                    candidate.candidate_id, {}
+                ),
             }
         )
 
@@ -484,9 +488,13 @@ def _score_path_result(
             "claim_precision": _safe_ratio(review_ready_candidate_count, len(output.candidates)),
             "factual_support_precision": _safe_ratio(matched_candidates, len(output.candidates)),
             "important_fact_recall": _safe_ratio(matched_gold_claims, len(dataset.gold_claims)),
-            "review_ready_recall": _safe_ratio(review_ready_candidate_count, len(dataset.gold_claims)),
+            "review_ready_recall": _safe_ratio(
+                review_ready_candidate_count, len(dataset.gold_claims)
+            ),
             "exact_duplicate_rate": _safe_ratio(exact_duplicate_count, len(output.candidates)),
-            "semantic_duplicate_rate": _safe_ratio(semantic_duplicate_count, len(output.candidates)),
+            "semantic_duplicate_rate": _safe_ratio(
+                semantic_duplicate_count, len(output.candidates)
+            ),
         },
         "evidence_span_quality": evidence_quality["summary"],
         "reviewer_edit_burden": reviewer_edit_burden["summary"],
@@ -586,15 +594,15 @@ def _reviewer_edit_burden(
     evidence_by_id: dict[str, EvidenceSnippet],
     assigned_by_candidate: dict[str, _MatchRecord],
     eligible_matches: list[_MatchRecord],
-) -> dict[str, object]:
+) -> dict[str, Any]:
     gold_claim_by_id = {gold.gold_claim_id: gold for gold in gold_claims}
     candidate_by_id = {candidate.candidate_id: candidate for candidate in candidates}
     eligible_by_candidate: dict[str, list[_MatchRecord]] = {}
     for match in eligible_matches:
         eligible_by_candidate.setdefault(match.candidate_id, []).append(match)
 
-    per_candidate: dict[str, dict[str, object]] = {}
-    action_totals = {
+    per_candidate: dict[str, dict[str, Any]] = {}
+    action_totals: dict[str, int] = {
         "subject_rewrites": 0,
         "predicate_rewrites": 0,
         "value_rewrites": 0,
@@ -613,7 +621,7 @@ def _reviewer_edit_burden(
             for match in eligible_by_candidate.get(candidate_id, [])
             if match.gold_claim_id != assigned.gold_claim_id
         ]
-        actions = {
+        actions: dict[str, Any] = {
             "subject_rewrite": subject_rewrite,
             "predicate_rewrite": predicate_rewrite,
             "value_rewrite": value_rewrite,
@@ -649,23 +657,21 @@ def _evidence_quality(
     candidates: list[CandidateClaim],
     evidence_by_id: dict[str, EvidenceSnippet],
     assigned_by_candidate: dict[str, _MatchRecord],
-) -> dict[str, object]:
+) -> dict[str, Any]:
     gold_claim_by_id = {gold.gold_claim_id: gold for gold in gold_claims}
-    candidate_by_id = {candidate.candidate_id: candidate for candidate in candidates}
     focus_scores: list[float] = []
     exact_anchor_hits = 0
     span_backed_hits = 0
-    per_candidate: dict[str, dict[str, object]] = {}
+    per_candidate: dict[str, dict[str, Any]] = {}
 
     for candidate_id, assigned in assigned_by_candidate.items():
-        candidate = candidate_by_id[candidate_id]
         gold = gold_claim_by_id[assigned.gold_claim_id]
         evidence = (
-            evidence_by_id.get(assigned.evidence_id)
-            if assigned.evidence_id is not None
-            else None
+            evidence_by_id.get(assigned.evidence_id) if assigned.evidence_id is not None else None
         )
-        anchor = assigned.anchor_text or (gold.evidence_patterns[0] if gold.evidence_patterns else "")
+        anchor = assigned.anchor_text or (
+            gold.evidence_patterns[0] if gold.evidence_patterns else ""
+        )
         evidence_text = evidence.text if evidence is not None else ""
         anchor_length = max(len(_normalize(anchor)), 1)
         evidence_length = max(len(_normalize(evidence_text)), 1)
@@ -673,7 +679,11 @@ def _evidence_quality(
         focus_scores.append(focus)
         if evidence is not None and _normalize(anchor) == _normalize(evidence_text):
             exact_anchor_hits += 1
-        if evidence is not None and evidence.span_start is not None and evidence.span_end is not None:
+        if (
+            evidence is not None
+            and evidence.span_start is not None
+            and evidence.span_end is not None
+        ):
             span_backed_hits += 1
         per_candidate[candidate_id] = {
             "gold_claim_id": gold.gold_claim_id,
@@ -700,7 +710,7 @@ def _evidence_quality(
 def _contradiction_summary(
     dataset: ExtractionEvalDataset,
     matched_gold_claim_ids: set[str],
-) -> dict[str, object]:
+) -> dict[str, Any]:
     if not dataset.contradiction_groups:
         return {
             "opportunities": 0,
@@ -719,11 +729,13 @@ def _contradiction_summary(
     }
 
 
-def _stability_summary(repeated_outputs: list[ExtractionOutput]) -> dict[str, object]:
+def _stability_summary(repeated_outputs: list[ExtractionOutput]) -> dict[str, Any]:
     if not repeated_outputs:
         return {"repeat_count": 0, "exact_match_runs": 0, "exact_match_rate": 0.0}
     baseline = _output_signature(repeated_outputs[0])
-    exact_match_runs = sum(1 for output in repeated_outputs if _output_signature(output) == baseline)
+    exact_match_runs = sum(
+        1 for output in repeated_outputs if _output_signature(output) == baseline
+    )
     return {
         "repeat_count": len(repeated_outputs),
         "exact_match_runs": exact_match_runs,
@@ -731,9 +743,9 @@ def _stability_summary(repeated_outputs: list[ExtractionOutput]) -> dict[str, ob
     }
 
 
-def _build_comparisons(path_reports: list[dict[str, object]]) -> list[dict[str, object]]:
+def _build_comparisons(path_reports: list[dict[str, Any]]) -> list[dict[str, Any]]:
     path_by_name = {item["path"]: item for item in path_reports}
-    comparisons: list[dict[str, object]] = []
+    comparisons: list[dict[str, Any]] = []
 
     heuristic = path_by_name.get("heuristic")
     graphrag_live = path_by_name.get("graphrag_live")
@@ -807,9 +819,9 @@ def _rank_failure_modes(
     candidates: list[CandidateClaim],
     assigned_by_candidate: dict[str, _MatchRecord],
     eligible_matches: list[_MatchRecord],
-    burden_by_candidate: dict[str, dict[str, object]],
+    burden_by_candidate: dict[str, dict[str, Any]],
     unmatched_gold_claims: list[str],
-) -> list[dict[str, object]]:
+) -> list[dict[str, Any]]:
     eligible_by_candidate: dict[str, list[_MatchRecord]] = {}
     for match in eligible_matches:
         eligible_by_candidate.setdefault(match.candidate_id, []).append(match)
@@ -828,7 +840,7 @@ def _rank_failure_modes(
         if burden.get("subject_rewrite"):
             subject_rewrites.append(candidate.candidate_id)
 
-    raw_failure_modes = [
+    raw_failure_modes: list[dict[str, Any]] = [
         {
             "failure_mode": "missed_expected_claims",
             "count": len(unmatched_gold_claims),
@@ -860,10 +872,14 @@ def _rank_failure_modes(
 
 
 def _duplicate_count(candidates: list[CandidateClaim]) -> int:
-    seen = set()
+    seen: set[tuple[str, str, str]] = set()
     duplicates = 0
     for candidate in candidates:
-        signature = (_normalize(candidate.subject), candidate.predicate, _normalize(candidate.value))
+        signature = (
+            _normalize(candidate.subject),
+            candidate.predicate,
+            _normalize(candidate.value),
+        )
         if signature in seen:
             duplicates += 1
             continue
@@ -960,7 +976,7 @@ def _mean(values: list[float]) -> float:
     return sum(values) / len(values)
 
 
-def _build_markdown_report(summary: dict[str, object]) -> str:
+def _build_markdown_report(summary: dict[str, Any]) -> str:
     lines = [
         f"# {summary['title']}",
         "",
@@ -970,7 +986,9 @@ def _build_markdown_report(summary: dict[str, object]) -> str:
         "",
         "## Path Summary",
         "",
-        "| Path | Kind | Claims | Evidence | Precision | Factual Support Precision | Recall | Avg Anchor Focus | Avg Reviewer Actions | Stability |",
+        "| Path | Kind | Claims | Evidence | Precision | "
+        "Factual Support Precision | Recall | Avg Anchor Focus | "
+        "Avg Reviewer Actions | Stability |",
         "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
     for path_report in summary["paths"]:

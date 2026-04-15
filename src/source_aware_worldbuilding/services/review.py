@@ -14,8 +14,10 @@ from source_aware_worldbuilding.domain.models import (
     ReviewClaimPatch,
     ReviewEvent,
     ReviewEvidencePreview,
+    ReviewEvidenceQuality,
     ReviewQueueCard,
     ReviewRequest,
+    ReviewWeaknessReason,
     SourceRecord,
     TextUnit,
 )
@@ -97,7 +99,9 @@ class ReviewService:
         candidate = self.candidate_store.get_candidate(candidate_id)
         if candidate is None:
             return None
-        if request.decision == ReviewDecision.APPROVE and candidate.review_state == ReviewState.APPROVED:
+        if request.decision == ReviewDecision.APPROVE and (
+            candidate.review_state == ReviewState.APPROVED
+        ):
             raise ReviewConflictError("Candidate has already been approved.")
 
         review = ReviewEvent(
@@ -223,7 +227,7 @@ class ReviewService:
         ]
         primary_evidence = evidence_items[0] if evidence_items else None
 
-        weakness_reasons: list[str] = []
+        weakness_reasons: list[ReviewWeaknessReason] = []
         if not evidence_items:
             weakness_reasons.append("missing_evidence")
         else:
@@ -236,7 +240,7 @@ class ReviewService:
             if self._is_short_excerpt(primary_evidence):
                 weakness_reasons.append("short_excerpt")
 
-        evidence_quality = self._evidence_quality(weakness_reasons)
+        evidence_quality: ReviewEvidenceQuality = self._evidence_quality(weakness_reasons)
         payload = candidate.model_dump(mode="python")
         return ReviewQueueCard(
             **payload,
@@ -258,9 +262,7 @@ class ReviewService:
     ) -> ReviewEvidencePreview:
         source = source_by_id.get(snippet.source_id)
         text_unit = (
-            text_units_by_id.get(snippet.text_unit_id)
-            if snippet.text_unit_id is not None
-            else None
+            text_units_by_id.get(snippet.text_unit_id) if snippet.text_unit_id is not None else None
         )
         span = self._resolve_span(snippet, text_unit)
         excerpt = (snippet.text or "").strip()
@@ -348,7 +350,10 @@ class ReviewService:
         normalized = self._normalized_excerpt(preview.excerpt)
         return len(normalized) < self._SHORT_EXCERPT_MIN_LENGTH
 
-    def _evidence_quality(self, weakness_reasons: list[str]) -> str:
+    def _evidence_quality(
+        self,
+        weakness_reasons: list[ReviewWeaknessReason],
+    ) -> ReviewEvidenceQuality:
         weakness = set(weakness_reasons)
         if "missing_evidence" in weakness:
             return "blind"
