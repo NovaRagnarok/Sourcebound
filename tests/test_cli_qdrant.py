@@ -166,4 +166,4 @@ def test_cli_seed_dev_data_fails_fast_when_qdrant_is_unavailable(
 
     assert result.exit_code == 1
     assert "docker compose up -d qdrant" in result.output
-    assert "QDRANT_ENABLED=false" in result.output
+    assert "non-default local mode" in result.output

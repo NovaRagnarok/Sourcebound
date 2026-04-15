@@ -70,7 +70,7 @@ def _embed_weighted_features(features: dict[str, float], vector_size: int) -> li
 
 
 class QdrantProjectionAdapter:
-    """Optional Qdrant projection for approved claims."""
+    """Qdrant projection for approved claims."""
 
     VECTOR_SIZE = 32
 
@@ -191,8 +191,8 @@ class QdrantProjectionAdapter:
                 None,
                 True,
                 (
-                    "Qdrant projection is disabled by default for local startup. Query and "
-                    "composition fall back to in-memory ranking until you explicitly enable it."
+                    "Qdrant projection is disabled. This is a non-default local mode; query "
+                    "and composition fall back to in-memory ranking until you re-enable it."
                 ),
             )
         try:

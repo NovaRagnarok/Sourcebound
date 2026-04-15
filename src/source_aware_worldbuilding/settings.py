@@ -126,7 +126,7 @@ class Settings(BaseSettings):
 
     qdrant_url: str = Field(default="http://localhost:6333", alias="QDRANT_URL")
     qdrant_collection: str = Field(default="approved_claims", alias="QDRANT_COLLECTION")
-    qdrant_enabled: bool = Field(default=False, alias="QDRANT_ENABLED")
+    qdrant_enabled: bool = Field(default=True, alias="QDRANT_ENABLED")
     research_semantic_enabled: bool = Field(
         default=False,
         alias="RESEARCH_SEMANTIC_ENABLED",
@@ -207,8 +207,8 @@ class Settings(BaseSettings):
                     ),
                     fix=(
                         "Set `QDRANT_URL=http://localhost:6333`, or disable "
-                        "`QDRANT_ENABLED` and `RESEARCH_SEMANTIC_ENABLED` for the default "
-                        "local path."
+                        "`QDRANT_ENABLED` and `RESEARCH_SEMANTIC_ENABLED` only if you "
+                        "intentionally want a non-default degraded local path."
                     ),
                 )
             )

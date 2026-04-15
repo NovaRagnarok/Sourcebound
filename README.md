@@ -15,9 +15,10 @@ Sourcebound already includes:
 - a browser UI at `/workspace/`, with `/operator/` available as the advanced
   utilities alias
 - persisted background jobs with an in-process worker enabled by default
-- Postgres-backed app state and Postgres-backed canon as the default local stack
-- optional Zotero, GraphRAG, Qdrant, and Wikibase integrations behind explicit
-  flags or backend selection
+- Postgres-backed app state, Postgres-backed canon, and Qdrant-backed retrieval
+  as the default local stack
+- optional Zotero, GraphRAG, research semantics, and Wikibase integrations
+  behind explicit flags or backend selection
 
 ## What To Try First
 
@@ -27,13 +28,14 @@ For the default fresh-clone local path:
 cp .env.example .env
 make bootstrap
 docker compose up -d postgres
+docker compose up -d qdrant
 .venv/bin/saw status
 .venv/bin/saw seed-dev-data
 .venv/bin/saw serve --reload
 ```
 
-Expected result: Postgres is ready, optional integrations stay disabled, and
-the seeded sample project is visible in the UI.
+Expected result: Postgres and Qdrant are ready, the Qdrant projection is
+initialized during seeding, and the seeded sample project is visible in the UI.
 
 Then open:
 
@@ -41,11 +43,11 @@ Then open:
 - operator view: `http://localhost:8000/operator/`
 - API docs: `http://localhost:8000/docs`
 
-Required for the default path: Python 3.11 or 3.12, a local `.venv`, and
-Postgres from `docker compose`.
+Required for the default path: Python 3.11 or 3.12, a local `.venv`, and both
+Postgres and Qdrant from `docker compose`.
 
-Optional and disabled by default: Zotero, GraphRAG, Qdrant projection and
-research semantics, and Wikibase.
+Optional and disabled by default: Zotero, GraphRAG, research semantics, and
+Wikibase.
 
 ## How It Works
 
@@ -58,7 +60,7 @@ Zotero or manual intake
   -> candidate claims + evidence
   -> human review
   -> approved claims in truth store
-  -> optional Qdrant projection
+  -> Qdrant projection
   -> query + lore export surfaces
 ```
 
@@ -82,7 +84,8 @@ Important current behavior:
 - `APP_JOB_WORKER_ENABLED` defaults to `true`
 - `APP_UI_ENABLED` defaults to `true`
 - extraction defaults to the heuristic adapter until GraphRAG is explicitly enabled
-- Qdrant projection and research semantics are disabled by default
+- Qdrant projection is part of the default local stack
+- research semantics stay disabled until explicitly enabled
 - Qdrant is a projection and retrieval layer, not the source of truth
 - long-running research, Bible composition, regeneration, and export work run
   as persisted background jobs
@@ -102,10 +105,10 @@ cp .env.example .env
 make bootstrap
 ```
 
-3. Start the default local dependency:
+3. Start the default local dependencies:
 
 ```bash
-docker compose up -d postgres
+docker compose up -d postgres qdrant
 ```
 
 4. Check runtime readiness:
@@ -114,9 +117,10 @@ docker compose up -d postgres
 .venv/bin/saw status
 ```
 
-You should see Postgres-backed app state and truth storage as ready. Qdrant,
-Zotero, GraphRAG, and Wikibase should show up as optional or disabled, not as
-startup blockers.
+You should see Postgres-backed app state and truth storage as ready, plus
+Qdrant projection either ready or marked for initialization before seeding.
+Zotero, GraphRAG, research semantics, and Wikibase should show up as optional
+or disabled, not as startup blockers.
 
 5. Seed the sample project and serve the app:
 
@@ -137,6 +141,7 @@ This is the recommended newcomer path. It gives you:
 
 - Postgres-backed workflow state
 - Postgres-backed canon
+- Qdrant-backed retrieval
 - the browser UI
 - the in-process job worker
 - heuristic extraction with no GraphRAG setup required
@@ -172,16 +177,19 @@ APP_STATE_BACKEND=sqlite
 APP_SQLITE_PATH=runtime/sourcebound.db
 ```
 
-### Optional integrations
+### Optional Integrations And Deliberate Deviations
 
-Enable these only when you want them:
+Enable these only when you want them, or disable them when you intentionally
+want a lighter non-default local mode:
 
 - GraphRAG:
   Run `make bootstrap-graphrag`, set `GRAPH_RAG_ENABLED=true`, and finish the
   GraphRAG workspace or artifact setup.
 - Qdrant projection:
-  Set `QDRANT_ENABLED=true`, start Qdrant with `docker compose up -d qdrant`,
-  then run `.venv/bin/saw seed-dev-data` or `.venv/bin/saw qdrant-rebuild`.
+  This is enabled in the default local stack. If you disable it for a lighter
+  mode, re-enable it with `QDRANT_ENABLED=true`, start Qdrant with
+  `docker compose up -d qdrant`, then run `.venv/bin/saw seed-dev-data` or
+  `.venv/bin/saw qdrant-rebuild`.
 - Research semantics:
   Set `RESEARCH_SEMANTIC_ENABLED=true` and point it at the same Qdrant instance.
 - Zotero:
@@ -230,16 +238,19 @@ quality benchmark and current baseline targets, see
 - `saw status` says Postgres is not reachable:
   Run `docker compose up -d postgres` and confirm `APP_POSTGRES_DSN` still
   matches `.env.example`.
+- `saw status` says Qdrant is not reachable:
+  Run `docker compose up -d qdrant` and confirm `QDRANT_URL` still matches
+  `.env.example`.
 - `saw serve` exits immediately with a configuration error:
   Read the listed env var names closely. Startup now only fails for the backend
   or integration you explicitly selected, and the error message includes the
   exact fix.
 - `saw seed-dev-data` fails before seeding:
   This usually means the active backend is not reachable yet. For the default
-  path, start Postgres first.
+  path, start Postgres and Qdrant first.
 - `health/runtime` looks unfamiliar:
-  Optional services such as Zotero, Qdrant, and GraphRAG can show as disabled or
-  optional while the app is still fully ready for the default local path.
+  Optional services such as Zotero, research semantics, and GraphRAG can show as
+  disabled or optional while the app is still fully ready for the default local path.
 
 ## API And UI
 

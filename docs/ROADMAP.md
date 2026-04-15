@@ -18,7 +18,7 @@ Still notably incomplete or provisional:
 
 - GraphRAG is not yet the always-on default in normal local use
 - real Zotero-backed workflows still depend on local credentials and collection setup
-- Qdrant-backed retrieval is available but not yet the default everyday loop for all development
+- Qdrant-backed retrieval is now part of the default local stack, but the ergonomics and quality tuning are still in progress
 - auth and production deployment concerns are still light
 
 ## Phase 1 — Stabilize The Default Stack
@@ -50,9 +50,9 @@ Focus: move from “heuristic fallback works” to “GraphRAG is practical”.
 
 ## Phase 4 — Retrieval And Research Quality
 
-Focus: turn Qdrant-backed search and research semantics into routine tools.
+Focus: make the default Qdrant-backed retrieval path feel polished and dependable.
 
-- make projection-backed retrieval a normal local workflow
+- improve the default projection-backed retrieval workflow
 - improve semantic reranking and duplicate handling for research findings
 - expose clearer query modes by certainty, relationship, and viewpoint
 - strengthen provenance-aware answer assembly from approved claims and Bible paragraphs

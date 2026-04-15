@@ -227,7 +227,7 @@ def test_runtime_health_route_reports_degraded_when_quality_layers_are_missing(m
         for service in body["services"]
     )
     assert any(
-        "optional after first run" in step.lower()
+        "non-default local mode" in step.lower()
         for step in body["next_steps"]
     )
 

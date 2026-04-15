@@ -1819,8 +1819,9 @@ def _ensure_seed_prerequisites() -> dict[str, object] | None:
     except RuntimeError as exc:
         raise RuntimeError(
             f"{exc} Start Qdrant with `docker compose up -d qdrant`. "
-            "If you intentionally want a non-default degraded mode, set "
-            "`QDRANT_ENABLED=false` and `RESEARCH_SEMANTIC_ENABLED=false` before seeding."
+            "If you intentionally want a non-default local mode, set "
+            "`QDRANT_ENABLED=false` and, if needed, `RESEARCH_SEMANTIC_ENABLED=false` "
+            "before seeding."
         ) from exc
 
 

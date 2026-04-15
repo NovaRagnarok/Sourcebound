@@ -425,9 +425,9 @@ def _next_steps(services: list[RuntimeDependencyStatus]) -> list[str]:
             )
     elif not settings.qdrant_enabled:
         steps.append(
-            "Optional after first run: enable Qdrant projection with "
-            "`QDRANT_ENABLED=true` and `docker compose up -d qdrant` if you want "
-            "semantic retrieval instead of in-memory ranking."
+            "Non-default local mode detected: re-enable Qdrant projection with "
+            "`QDRANT_ENABLED=true` and `docker compose up -d qdrant` so retrieval uses "
+            "the default projection path instead of in-memory ranking."
         )
     if settings.research_semantic_enabled and by_name["research_semantics"].ready is False:
         if by_name["research_semantics"].mode == "qdrant:uninitialized":

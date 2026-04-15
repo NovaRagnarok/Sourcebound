@@ -25,7 +25,7 @@ corpus intake
   -> candidate claims + evidence
   -> review decisions
   -> approved claims in truth store
-  -> optional projection index
+  -> Qdrant projection index
   -> query / export consumers
 ```
 
@@ -183,7 +183,7 @@ For normal local development, the repo expects:
 
 - Postgres for state
 - Postgres for canon
-- optional Qdrant for projection
+- Qdrant for projection-backed retrieval
 - Zotero when exercising real corpus workflows
 - GraphRAG when configured and ready, otherwise heuristic fallback
 
