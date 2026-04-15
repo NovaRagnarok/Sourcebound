@@ -11,7 +11,11 @@ from source_aware_worldbuilding.domain.errors import (
     ZoteroNotFoundError,
     ZoteroRateLimitError,
 )
-from source_aware_worldbuilding.domain.models import NormalizeDocumentsRequest, ZoteroPullRequest
+from source_aware_worldbuilding.domain.models import (
+    ExtractCandidatesRequest,
+    NormalizeDocumentsRequest,
+    ZoteroPullRequest,
+)
 from source_aware_worldbuilding.services.ingestion import IngestionService
 from source_aware_worldbuilding.services.normalization import NormalizationService
 
@@ -42,9 +46,12 @@ def normalize_documents(
 
 
 @router.post("/extract-candidates")
-def extract_candidates(service: IngestionService = Depends(get_ingestion_service)) -> dict:
+def extract_candidates(
+    payload: ExtractCandidatesRequest = Body(default_factory=ExtractCandidatesRequest),
+    service: IngestionService = Depends(get_ingestion_service),
+) -> dict:
     try:
-        output = service.extract_candidates()
+        output = service.extract_candidates(source_ids=payload.source_ids)
     except ZoteroError as exc:
         raise _zotero_http_error(exc) from exc
     return {

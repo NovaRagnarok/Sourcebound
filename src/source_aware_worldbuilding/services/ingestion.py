@@ -59,7 +59,13 @@ class IngestionService:
             if source and source.zotero_item_key:
                 requested_item_keys.add(source.zotero_item_key)
 
-        if requested_item_keys:
+        if request.item_keys or request.source_ids:
+            if not requested_item_keys:
+                return ZoteroPullResult(
+                    warnings=[
+                        "No live Zotero item keys were available for the requested pull scope."
+                    ]
+                )
             sources = self.corpus.pull_sources_by_item_keys(sorted(requested_item_keys))
         else:
             sources = self.corpus.pull_sources()

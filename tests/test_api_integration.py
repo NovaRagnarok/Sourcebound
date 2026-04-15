@@ -13,7 +13,12 @@ from source_aware_worldbuilding.api.dependencies import (
 )
 from source_aware_worldbuilding.api.main import app
 from source_aware_worldbuilding.cli import seed_dev_data
-from source_aware_worldbuilding.domain.enums import ClaimKind, ClaimStatus
+from source_aware_worldbuilding.domain.enums import (
+    ClaimKind,
+    ClaimStatus,
+    ExtractionRunStatus,
+    ReviewState,
+)
 from source_aware_worldbuilding.domain.errors import (
     CanonUnavailableError,
     WikibaseSyncError,
@@ -22,7 +27,10 @@ from source_aware_worldbuilding.domain.errors import (
 )
 from source_aware_worldbuilding.domain.models import (
     ApprovedClaim,
+    CandidateClaim,
     EvidenceSnippet,
+    ExtractionOutput,
+    ExtractionRun,
     IntakeResult,
     LorePacketRequest,
     LorePacketResponse,
@@ -887,9 +895,79 @@ def test_ingest_pull_route_accepts_targeted_refresh_request(temp_data_dir) -> No
     assert response.json()["updated_source_count"] == 1
 
 
+def test_ingest_pull_route_does_not_expand_local_only_sources_into_full_pull(temp_data_dir) -> None:
+    JsonListStore(temp_data_dir / "sources.json").write_models(
+        [
+            SourceRecord(
+                source_id="local-1",
+                external_source="local",
+                external_id="LOCAL-1",
+                title="Local notebook page",
+                source_type="document",
+            )
+        ]
+    )
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1/ingest/zotero/pull",
+            json={"source_ids": ["local-1"], "force_refresh": True},
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["count"] == 0
+    assert body["sources"] == []
+    assert any("No live Zotero item keys" in warning for warning in body["warnings"])
+
+
+def test_extract_candidates_route_accepts_targeted_source_request(temp_data_dir) -> None:
+    class FakeIngestionService:
+        def extract_candidates(self, *, source_ids=None):
+            assert source_ids == ["src-1"]
+            return ExtractionOutput(
+                run=ExtractionRun(run_id="run-targeted", status=ExtractionRunStatus.COMPLETED),
+                candidates=[
+                    CandidateClaim(
+                        candidate_id="cand-1",
+                        subject="Dockworkers",
+                        predicate="unloaded",
+                        value="grain before dawn",
+                        claim_kind=ClaimKind.PRACTICE,
+                        status_suggestion=ClaimStatus.PROBABLE,
+                        review_state=ReviewState.PENDING,
+                        evidence_ids=["evi-1"],
+                    )
+                ],
+                evidence=[
+                    EvidenceSnippet(
+                        evidence_id="evi-1",
+                        source_id="src-1",
+                        locator="note",
+                        text="Dockworkers unloaded grain before dawn.",
+                    )
+                ],
+            )
+
+    app.dependency_overrides[get_ingestion_service] = lambda: FakeIngestionService()
+    try:
+        with TestClient(app) as client:
+            response = client.post(
+                "/v1/ingest/extract-candidates",
+                json={"source_ids": ["src-1"]},
+            )
+    finally:
+        app.dependency_overrides.pop(get_ingestion_service, None)
+
+    assert response.status_code == 200
+    assert response.json()["run"]["status"] == "completed"
+    assert response.json()["count"] == 1
+
+
 def test_extract_candidates_route_surfaces_zotero_fetch_failures(temp_data_dir) -> None:
     class FailingIngestionService:
-        def extract_candidates(self):
+        def extract_candidates(self, *, source_ids=None):
+            assert source_ids == []
             raise ZoteroFetchError("Zotero request failed for /users/12345/items/top")
 
     app.dependency_overrides[get_ingestion_service] = lambda: FailingIngestionService()

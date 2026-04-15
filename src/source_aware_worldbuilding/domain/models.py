@@ -211,6 +211,8 @@ class SourceDocumentRecord(BaseModel):
         if self.document_kind in {"note", "manual_text"}:
             discovery_status = "not_applicable"
             fetch_status = "not_applicable"
+        elif (self.raw_metadata_json or {}).get("local_only"):
+            fetch_status = "not_applicable"
         elif self.attachment_discovery_status == "missing":
             discovery_status = "missing"
         elif self.attachment_discovery_status == "discovered":
@@ -534,6 +536,10 @@ class NormalizeDocumentsRequest(BaseModel):
     source_ids: list[str] = Field(default_factory=list)
     document_ids: list[str] = Field(default_factory=list)
     retry_failed: bool = False
+
+
+class ExtractCandidatesRequest(BaseModel):
+    source_ids: list[str] = Field(default_factory=list)
 
 
 class SourceDetailResponse(BaseModel):

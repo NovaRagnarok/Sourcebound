@@ -22,6 +22,9 @@
     stageResearchRun: (runId) => `/v1/research/runs/${runId}/stage`,
     extractResearchRun: (runId) => `/v1/research/runs/${runId}/extract`,
     researchPrograms: "/v1/research/programs",
+    intakeText: "/v1/intake/text",
+    intakeUrl: "/v1/intake/url",
+    intakeFile: "/v1/intake/file",
     pullSources: "/v1/ingest/zotero/pull",
     normalizeDocuments: "/v1/ingest/normalize-documents",
     extractCandidates: "/v1/ingest/extract-candidates",
@@ -114,6 +117,17 @@
       claimKind: "",
       place: "",
       viewpoint: "",
+    },
+    intakeDraft: {
+      mode: "text",
+      title: "",
+      text: "",
+      author: "",
+      year: "",
+      url: "",
+      notes: "",
+      source_type: "document",
+      collection_key: "",
     },
     researchDraft: {
       topic: "",
@@ -358,6 +372,12 @@
       }
 
       if (action === "repull-source") {
+        const selectedSource = state.sources.find((source) => source.source_id === state.selectedSourceId);
+        if (!selectedSource || selectedSource.external_source !== "zotero" || !selectedSource.zotero_item_key) {
+          setBanner("pending", "Local source", "This source lives only in the local workspace, so there is nothing to re-pull from Zotero.");
+          render();
+          return;
+        }
         await pullSources({ sourceIds: [state.selectedSourceId], forceRefresh: true });
         return;
       }
@@ -478,6 +498,11 @@
     });
 
     nodes.app.addEventListener("submit", async (event) => {
+      if (event.target.dataset.form === "intake-source") {
+        event.preventDefault();
+        await submitIntakeSource(event.target);
+      }
+
       if (event.target.dataset.form === "review") {
         event.preventDefault();
         await submitReview(event.target, event.submitter);
@@ -510,6 +535,14 @@
     });
 
     nodes.app.addEventListener("change", (event) => {
+      const intakeModeSelect = event.target.closest("[data-intake-mode]");
+      if (intakeModeSelect) {
+        state.intakeDraft.mode = intakeModeSelect.value || "text";
+        persistState();
+        render();
+        return;
+      }
+
       const researchFilter = event.target.closest("[data-research-filter]");
       if (!researchFilter) {
         return;
@@ -539,6 +572,9 @@
       if (Array.isArray(saved.runs) && saved.runs.length) {
         state.runs = saved.runs;
       }
+      if (saved.intakeDraft) {
+        state.intakeDraft = { ...state.intakeDraft, ...saved.intakeDraft };
+      }
       if (saved.researchDraft) {
         state.researchDraft = { ...state.researchDraft, ...saved.researchDraft };
       }
@@ -566,6 +602,7 @@
           workspaceMode: state.workspaceMode,
           filters: state.filters,
           runs: state.runs,
+          intakeDraft: state.intakeDraft,
           researchDraft: state.researchDraft,
           selectedResearchRunId: state.selectedResearchRunId,
           bible: state.bible,
@@ -1298,6 +1335,42 @@
             </div>
           </div>
         </section>
+
+        <section class="workspace-grid">
+          ${renderIntakePanel({ surface: "workspace" })}
+          <div class="detail">
+            <div class="detail-head">
+              <div>
+                <h3>Source Intake Loop</h3>
+                <div class="detail-note">A real onboarding path should end in review, not in a dead-end import log.</div>
+              </div>
+              <span class="pill probable">${escapeHtml((state.reviewQueue || []).length || state.candidates.length)}</span>
+            </div>
+            <div class="detail-list">
+              <div class="mini">
+                <div class="toolbar">
+                  <strong>1. Add source material</strong>
+                  <span class="pill queued">intake</span>
+                </div>
+                <div class="detail-note">Paste text is the fastest first-run path. File upload works best with text-like files right now.</div>
+              </div>
+              <div class="mini">
+                <div class="toolbar">
+                  <strong>2. Normalize and extract</strong>
+                  <span class="pill probable">automatic</span>
+                </div>
+                <div class="detail-note">Sourcebound will queue text units and extract candidate facts only for the newly added source.</div>
+              </div>
+              <div class="mini">
+                <div class="toolbar">
+                  <strong>3. Review before canon</strong>
+                  <span class="pill verified">trust boundary</span>
+                </div>
+                <div class="detail-note">The loop lands you in Review so nothing enters canon without a human decision.</div>
+              </div>
+            </div>
+          </div>
+        </section>
       </article>
     `;
   }
@@ -1408,6 +1481,132 @@
     });
   }
 
+  function renderIntakePanel({ surface = "workspace" } = {}) {
+    const mode = state.intakeDraft.mode || "text";
+    const corpusService = state.runtimeStatus?.services?.find((service) => service.name === "corpus");
+    const localOnly = corpusService?.mode === "stub";
+    const title = surface === "workspace" ? "Bring In New Material" : "Add Source";
+    const summary =
+      surface === "workspace"
+        ? "Start from your own material, then let Sourcebound carry it into review."
+        : "Create a source without leaving the product, then inspect the audit trail below.";
+    const helper =
+      mode === "text"
+        ? "Best first-run path. Pasted text can move straight into review even before Zotero is configured."
+        : mode === "file"
+          ? "Text-like files work best today. Binary attachments still need richer extraction support."
+          : localOnly
+            ? "Without Zotero, URL intake stores the link and your notes locally instead of fetching the page body."
+            : "When Zotero is configured, the URL is created upstream and then pulled back into the workspace.";
+
+    return `
+      <div class="detail ${surface === "workspace" ? "workspace-panel-primary" : ""}">
+        <div class="detail-head">
+          <div>
+            <h3>${escapeHtml(title)}</h3>
+            <div class="detail-note">${escapeHtml(summary)}</div>
+          </div>
+          <span class="pill ${localOnly ? "queued" : "verified"}">${escapeHtml(localOnly ? "local" : "live")}</span>
+        </div>
+        ${localOnly ? "<div class='helper'>Fresh install mode is active. Text intake works locally; Zotero remains optional until you want live library sync.</div>" : ""}
+        <form class="detail-stack" data-form="intake-source">
+          <div class="detail-grid">
+            <div class="field">
+              <label for="intake-mode">Intake mode</label>
+              <select id="intake-mode" name="intake_mode" data-intake-mode>
+                <option value="text" ${mode === "text" ? "selected" : ""}>Paste text</option>
+                <option value="file" ${mode === "file" ? "selected" : ""}>Upload file</option>
+                <option value="url" ${mode === "url" ? "selected" : ""}>Save URL</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="intake-source-type">Source type</label>
+              <select id="intake-source-type" name="source_type">
+                ${renderSourceTypeOptions(state.intakeDraft.source_type)}
+              </select>
+            </div>
+          </div>
+
+          ${mode === "text" ? `
+            <div class="detail-grid">
+              <div class="field">
+                <label for="intake-title">Title</label>
+                <input id="intake-title" name="title" value="${escapeHtml(state.intakeDraft.title)}" placeholder="Municipal price ledger excerpt" required />
+              </div>
+              <div class="field">
+                <label for="intake-author">Author</label>
+                <input id="intake-author" name="author" value="${escapeHtml(state.intakeDraft.author)}" placeholder="City clerk" />
+              </div>
+              <div class="field">
+                <label for="intake-year">Year or era</label>
+                <input id="intake-year" name="year" value="${escapeHtml(state.intakeDraft.year)}" placeholder="1422" />
+              </div>
+              <div class="field">
+                <label for="intake-collection-key">Collection key</label>
+                <input id="intake-collection-key" name="collection_key" value="${escapeHtml(state.intakeDraft.collection_key)}" placeholder="Optional Zotero collection key" />
+              </div>
+            </div>
+            <div class="field">
+              <label for="intake-text">Source text</label>
+              <textarea id="intake-text" name="text" placeholder="Paste the excerpt, note, or transcription you want Sourcebound to analyze." required>${escapeHtml(state.intakeDraft.text)}</textarea>
+            </div>
+            <div class="field">
+              <label for="intake-notes">Notes</label>
+              <textarea id="intake-notes" name="notes" placeholder="Optional context for yourself or the reviewer.">${escapeHtml(state.intakeDraft.notes)}</textarea>
+            </div>
+          ` : ""}
+
+          ${mode === "file" ? `
+            <div class="detail-grid">
+              <div class="field">
+                <label for="intake-file">File</label>
+                <input id="intake-file" name="file" type="file" required />
+              </div>
+              <div class="field">
+                <label for="intake-file-title">Title</label>
+                <input id="intake-file-title" name="title" value="${escapeHtml(state.intakeDraft.title)}" placeholder="Optional display title" />
+              </div>
+              <div class="field">
+                <label for="intake-file-collection-key">Collection key</label>
+                <input id="intake-file-collection-key" name="collection_key" value="${escapeHtml(state.intakeDraft.collection_key)}" placeholder="Optional Zotero collection key" />
+              </div>
+            </div>
+            <div class="field">
+              <label for="intake-file-notes">Notes</label>
+              <textarea id="intake-file-notes" name="notes" placeholder="Optional context, provenance, or reminders.">${escapeHtml(state.intakeDraft.notes)}</textarea>
+            </div>
+          ` : ""}
+
+          ${mode === "url" ? `
+            <div class="detail-grid">
+              <div class="field">
+                <label for="intake-url">URL</label>
+                <input id="intake-url" name="url" type="url" value="${escapeHtml(state.intakeDraft.url)}" placeholder="https://example.org/source" required />
+              </div>
+              <div class="field">
+                <label for="intake-url-title">Title</label>
+                <input id="intake-url-title" name="title" value="${escapeHtml(state.intakeDraft.title)}" placeholder="Optional title override" />
+              </div>
+              <div class="field">
+                <label for="intake-url-collection-key">Collection key</label>
+                <input id="intake-url-collection-key" name="collection_key" value="${escapeHtml(state.intakeDraft.collection_key)}" placeholder="Optional Zotero collection key" />
+              </div>
+            </div>
+            <div class="field">
+              <label for="intake-url-notes">Notes or captured detail</label>
+              <textarea id="intake-url-notes" name="notes" placeholder="Paste the key detail you care about if you want better local extraction.">${escapeHtml(state.intakeDraft.notes)}</textarea>
+            </div>
+          ` : ""}
+
+          <div class="toolbar">
+            <button class="primary-button" type="submit">${escapeHtml(mode === "file" ? "Upload and Process" : "Save and Process")}</button>
+            <span class="helper">${escapeHtml(helper)}</span>
+          </div>
+        </form>
+      </div>
+    `;
+  }
+
   function renderSourcesScreen() {
     const selected = state.sources.find((source) => source.source_id === state.selectedSourceId) ?? state.sources[0];
     const selectedDetail = state.selectedSourceDetail?.source?.source_id === selected?.source_id ? state.selectedSourceDetail : null;
@@ -1415,6 +1614,7 @@
     const linkedCandidates = state.candidates.filter((candidate) =>
       candidate.evidence_ids.some((evidenceId) => linkedEvidence.some((snippet) => snippet.evidence_id === evidenceId))
     );
+    const canRepullSelected = !!(selected && selected.external_source === "zotero" && selected.zotero_item_key);
 
     return `
       <article class="screen fade-in">
@@ -1425,9 +1625,13 @@
           </div>
           <div class="screen-actions">
             <button class="secondary-button" type="button" data-action="pull-sources">Pull Zotero sources</button>
-            <button class="secondary-button" type="button" data-action="repull-source" ${selected ? "" : "disabled"}>Re-pull selected source</button>
+            <button class="secondary-button" type="button" data-action="repull-source" ${canRepullSelected ? "" : "disabled"}>Re-pull selected source</button>
             <button class="secondary-button" type="button" data-action="retry-source-normalization" ${selected ? "" : "disabled"}>Retry normalization</button>
           </div>
+        </div>
+
+        <div class="split">
+          ${renderIntakePanel({ surface: "sources" })}
         </div>
 
         <div class="split">
@@ -3424,6 +3628,40 @@
     ].join(" · ");
   }
 
+  function renderSourceTypeOptions(selectedValue) {
+    const options = [
+      ["document", "Document"],
+      ["record", "Record"],
+      ["letter", "Letter"],
+      ["chronicle", "Chronicle"],
+      ["petition", "Petition"],
+      ["ordinance", "Ordinance"],
+      ["oral_history", "Oral history"],
+      ["webpage", "Web page"],
+    ];
+    return options
+      .map(([value, label]) => `<option value="${escapeHtml(value)}" ${selectedValue === value ? "selected" : ""}>${escapeHtml(label)}</option>`)
+      .join("");
+  }
+
+  function buildIntakeFileFormData({ file, title, notes, sourceType, collectionKey }) {
+    const payload = new FormData();
+    payload.set("file", file);
+    if (title) payload.set("title", title);
+    if (notes) payload.set("notes", notes);
+    if (sourceType) payload.set("source_type", sourceType);
+    if (collectionKey) payload.set("collection_key", collectionKey);
+    return payload;
+  }
+
+  function canAutoProcessIntake(result) {
+    return (result.source_documents || []).some((document) =>
+      document.raw_text
+      || document.text_extraction_status === "extracted"
+      || document.raw_text_status === "ready"
+    );
+  }
+
   async function refreshSourceDetail(sourceId, { quiet = false } = {}) {
     if (!sourceId) {
       state.selectedSourceDetail = null;
@@ -3481,6 +3719,169 @@
     }
   }
 
+  async function submitIntakeSource(form) {
+    const formData = new FormData(form);
+    const mode = String(formData.get("intake_mode") || "text").trim() || "text";
+    const sourceType = String(formData.get("source_type") || "document").trim() || "document";
+    const title = String(formData.get("title") || "").trim();
+    const author = String(formData.get("author") || "").trim();
+    const year = String(formData.get("year") || "").trim();
+    const text = String(formData.get("text") || "");
+    const url = String(formData.get("url") || "").trim();
+    const notes = String(formData.get("notes") || "");
+    const collectionKey = String(formData.get("collection_key") || "").trim();
+
+    state.intakeDraft = {
+      ...state.intakeDraft,
+      mode,
+      title,
+      author,
+      year,
+      text,
+      url,
+      notes,
+      source_type: sourceType,
+      collection_key: collectionKey,
+    };
+    persistState();
+
+    const file = formData.get("file");
+    if (mode === "file" && (!(file instanceof File) || !file.size)) {
+      setBanner("failed", "No file selected", "Choose a file before starting source intake.");
+      render();
+      return;
+    }
+
+    applyLoading(true);
+    try {
+      setBanner("queued", "Processing source", "Saving the source, preparing text, and moving the strongest new facts toward review.");
+      render();
+
+      let intakeResult;
+      if (mode === "text") {
+        intakeResult = await fetchJson(API.intakeText, {
+          method: "POST",
+          body: {
+            title,
+            text,
+            author: nullableString(author),
+            year: nullableString(year),
+            source_type: sourceType,
+            notes: nullableString(notes),
+            collection_key: nullableString(collectionKey),
+          },
+        });
+      } else if (mode === "url") {
+        intakeResult = await fetchJson(API.intakeUrl, {
+          method: "POST",
+          body: {
+            url,
+            title: nullableString(title),
+            notes: nullableString(notes),
+            collection_key: nullableString(collectionKey),
+          },
+        });
+      } else {
+        intakeResult = await fetchJson(API.intakeFile, {
+          method: "POST",
+          body: buildIntakeFileFormData({
+            file,
+            title,
+            notes,
+            sourceType,
+            collectionKey,
+          }),
+        });
+      }
+
+      const sourceIds = (intakeResult.pulled_sources || []).map((source) => source.source_id).filter(Boolean);
+      if (sourceIds.length) {
+        state.selectedSourceId = sourceIds[0];
+      }
+
+      await refreshLiveData({ quiet: true });
+      await refreshSourceDetail(state.selectedSourceId, { quiet: true });
+      state.intakeDraft = {
+        ...state.intakeDraft,
+        title: "",
+        text: "",
+        author: "",
+        year: "",
+        url: "",
+        notes: "",
+      };
+
+      if (!sourceIds.length) {
+        setBanner(
+          "pending",
+          "Source saved",
+          "The source was created, but nothing was returned for normalization or extraction yet."
+        );
+        render();
+        return;
+      }
+
+      const autoProcess = canAutoProcessIntake(intakeResult);
+      if (!autoProcess) {
+        setBanner(
+          "pending",
+          "Source saved",
+          "The source was added, but no extractable text was available yet. Check the source detail for warnings."
+        );
+        render();
+        return;
+      }
+
+      const normalization = await fetchJson(API.normalizeDocuments, {
+        method: "POST",
+        body: {
+          source_ids: sourceIds,
+          retry_failed: false,
+        },
+      });
+
+      await refreshLiveData({ quiet: true });
+      await refreshSourceDetail(state.selectedSourceId, { quiet: true });
+
+      if (!(normalization.text_unit_count > 0)) {
+        setBanner(
+          normalization.warnings?.length ? "pending" : "live",
+          "Source normalized",
+          normalization.warnings?.[0]
+            || "The source was saved, but no text units were created for extraction yet."
+        );
+        render();
+        return;
+      }
+
+      const extraction = await runExtraction({
+        sourceIds,
+        quietSuccess: true,
+        navigateToReview: true,
+      });
+      if (!extraction) {
+        return;
+      }
+
+      const extractedCount = extraction.count ?? extraction.candidates?.length ?? 0;
+      const warningCount = (intakeResult.warnings || []).length + (normalization.warnings || []).length;
+      setBanner(
+        warningCount ? "pending" : "live",
+        "Source ready for review",
+        extractedCount
+          ? `Created ${extractedCount} candidate fact${extractedCount === 1 ? "" : "s"} and opened the review queue.`
+          : "The source is saved and normalized, but extraction did not yield any candidate facts yet."
+      );
+      render();
+    } catch (error) {
+      setBanner("failed", "Source intake failed", error.message || "Could not process the new source.");
+      render();
+    } finally {
+      applyLoading(false);
+      persistState();
+    }
+  }
+
   async function retrySourceNormalization(sourceId) {
     if (!sourceId) {
       return;
@@ -3510,15 +3911,22 @@
     }
   }
 
-  async function runExtraction() {
+  async function runExtraction({
+    sourceIds = [],
+    quietSuccess = false,
+    navigateToReview = false,
+  } = {}) {
     applyLoading(true);
     try {
-      const payload = await fetchJson(API.extractCandidates, { method: "POST" });
+      const payload = await fetchJson(API.extractCandidates, {
+        method: "POST",
+        body: { source_ids: sourceIds },
+      });
       if (Array.isArray(payload.candidates)) {
-        state.candidates = payload.candidates;
+        state.candidates = mergeByKey(state.candidates, payload.candidates, "candidate_id");
       }
       if (Array.isArray(payload.evidence)) {
-        state.evidence = payload.evidence;
+        state.evidence = mergeByKey(state.evidence, payload.evidence, "evidence_id");
       }
       if (payload.run) {
         state.runs = [payload.run, ...state.runs.filter((run) => run.run_id !== payload.run.run_id)];
@@ -3536,18 +3944,38 @@
       } catch (error) {
         console.warn("Could not refresh review queue after extraction", error);
       }
+      try {
+        const [sources, workspaceSummary] = await Promise.all([
+          fetchJson(API.sources),
+          fetchJson(API.workspaceSummary),
+        ]);
+        state.sources = sources;
+        state.workspaceSummary = workspaceSummary;
+      } catch (error) {
+        console.warn("Could not refresh workspace state after extraction", error);
+      }
+      if (state.selectedSourceId) {
+        await refreshSourceDetail(state.selectedSourceId, { quiet: true });
+      }
       state.selectedCandidateId =
         state.reviewQueue.find((candidate) => isUnresolvedReviewState(candidate.review_state))?.candidate_id ??
         state.candidates.find((candidate) => isUnresolvedReviewState(candidate.review_state))?.candidate_id ??
         state.reviewQueue[0]?.candidate_id ??
         state.candidates[0]?.candidate_id ??
         null;
+      if (navigateToReview) {
+        state.activeScreen = "review";
+        location.hash = "#review";
+      }
       state.lastSync = new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
       nodes.lastSync.textContent = state.lastSync;
       await refreshRuntimeStatus();
       setApiStatus(true, `Extraction returned ${payload.count ?? state.candidates.length} candidates.`);
-      setBanner("live", "Extraction complete", `Queued ${payload.count ?? state.candidates.length} candidates from the live endpoint.`);
+      if (!quietSuccess) {
+        setBanner("live", "Extraction complete", `Queued ${payload.count ?? state.candidates.length} candidates from the live endpoint.`);
+      }
       render();
+      return payload;
     } catch (error) {
       const nextRunId = `local-${Date.now()}`;
       state.runs = [
@@ -3566,6 +3994,7 @@
       setApiStatus(false, "Extraction failed. Seed data remains available.");
       setBanner("failed", "Extraction failed", error.message || "The extraction endpoint is unavailable.");
       render();
+      return null;
     } finally {
       applyLoading(false);
       persistState();
@@ -4466,6 +4895,17 @@
       .filter(Boolean);
   }
 
+  function mergeByKey(existing, incoming, key) {
+    const merged = new Map((existing || []).map((item) => [item?.[key], item]));
+    for (const item of incoming || []) {
+      if (!item?.[key]) {
+        continue;
+      }
+      merged.set(item[key], item);
+    }
+    return Array.from(merged.values());
+  }
+
   function parseCoverageTargets(value) {
     return splitList(value).reduce((accumulator, item) => {
       const [key, rawCount] = item.split(":").map((part) => part.trim());
@@ -4673,14 +5113,15 @@
 
   async function fetchJson(path, options = {}) {
     const url = `${state.apiBase}${path}`;
+    const isFormData = options.body instanceof FormData;
     const init = {
-      headers: {
-        "Content-Type": "application/json",
-        ...(options.headers || {}),
-      },
+      headers: { ...(options.headers || {}) },
       ...options,
     };
-    if (options.body && typeof options.body !== "string") {
+    if (!isFormData && !("Content-Type" in init.headers)) {
+      init.headers["Content-Type"] = "application/json";
+    }
+    if (!isFormData && options.body && typeof options.body !== "string") {
       init.body = JSON.stringify(options.body);
     }
 

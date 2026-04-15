@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from source_aware_worldbuilding.domain.errors import ZoteroConfigError
 from source_aware_worldbuilding.domain.models import (
     IntakeTextRequest,
     IntakeUrlRequest,
@@ -147,3 +148,52 @@ def test_intake_service_warns_when_no_documents_are_discovered() -> None:
 
     assert result.source_documents == []
     assert any("No source documents were discovered" in warning for warning in result.warnings)
+
+
+def test_intake_service_falls_back_to_local_text_intake_when_zotero_is_unconfigured() -> None:
+    service = build_service()
+
+    def fail_create_text_source(_request):
+        raise ZoteroConfigError("ZOTERO_LIBRARY_ID is required")
+
+    service.corpus.create_text_source = fail_create_text_source
+
+    result = service.intake_text(
+        IntakeTextRequest(
+            title="Local source",
+            text="Bread prices rose sharply during the winter shortage.",
+            notes="Copied from a local notebook.",
+        )
+    )
+
+    assert result.created_item.zotero_item_key.startswith("LOCAL-")
+    assert result.pulled_sources[0].external_source == "local"
+    assert result.pulled_sources[0].zotero_item_key is None
+    assert result.pulled_sources[0].title == "Local source"
+    assert result.source_documents[0].document_kind == "manual_text"
+    assert result.source_documents[0].raw_text == "Bread prices rose sharply during the winter shortage."
+    assert result.source_documents[0].normalization_status == "queued"
+    assert any("local workspace" in warning for warning in result.warnings)
+
+
+def test_intake_service_falls_back_to_local_file_intake_for_text_like_files() -> None:
+    service = build_service()
+
+    def fail_create_file_source(**_kwargs):
+        raise ZoteroConfigError("ZOTERO_LIBRARY_ID is required")
+
+    service.corpus.create_file_source = fail_create_file_source
+
+    result = service.intake_file(
+        filename="archive.txt",
+        content_type="text/plain",
+        content=b"Dockworkers unloaded grain before dawn.",
+    )
+
+    assert result.pulled_sources[0].external_source == "local"
+    assert result.pulled_sources[0].zotero_item_key is None
+    assert result.source_documents[0].filename == "archive.txt"
+    assert result.source_documents[0].raw_text == "Dockworkers unloaded grain before dawn."
+    assert result.source_documents[0].normalization_status == "queued"
+    assert result.source_documents[0].attachment_fetch_status == "not_applicable"
+    assert result.source_documents[0].text_extraction_status == "extracted"
