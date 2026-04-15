@@ -18,7 +18,7 @@ from source_aware_worldbuilding.domain.normalization import (
     normalized_candidate_key,
 )
 
-SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+|\n+")
+SENTENCE_FRAGMENT_RE = re.compile(r'.+?(?:[.!?](?:["\'])?(?=\s|$)|\n+|$)', re.S)
 GENERIC_SUBJECTS = {"people", "person", "they", "it", "this", "that", "these", "those"}
 NOISY_TEXT_PATTERNS = (
     "photo by",
@@ -119,34 +119,19 @@ class HeuristicExtractionAdapter:
             return []
 
         spans: list[tuple[str, int, int]] = []
-        last_end = 0
-        for match in SENTENCE_SPLIT_RE.finditer(text):
-            chunk = text[last_end : match.start()]
-            if chunk.strip():
-                start_offset = len(chunk) - len(chunk.lstrip(" -"))
-                end_offset = len(chunk.rstrip(" -"))
-                sentence = chunk[start_offset:end_offset]
-                if sentence:
-                    spans.append(
-                        (
-                            sentence,
-                            last_end + start_offset,
-                            last_end + end_offset,
-                        )
-                    )
-            last_end = match.end()
-
-        tail = text[last_end:]
-        if tail.strip():
-            start_offset = len(tail) - len(tail.lstrip(" -"))
-            end_offset = len(tail.rstrip(" -"))
-            sentence = tail[start_offset:end_offset]
+        for match in SENTENCE_FRAGMENT_RE.finditer(text):
+            chunk = match.group(0)
+            if not chunk.strip():
+                continue
+            start_offset = len(chunk) - len(chunk.lstrip(" -\n"))
+            end_offset = len(chunk.rstrip(" -\n"))
+            sentence = chunk[start_offset:end_offset]
             if sentence:
                 spans.append(
                     (
                         sentence,
-                        last_end + start_offset,
-                        last_end + end_offset,
+                        match.start() + start_offset,
+                        match.start() + end_offset,
                     )
                 )
 
@@ -155,11 +140,12 @@ class HeuristicExtractionAdapter:
     def _is_usable_sentence(self, sentence: str) -> bool:
         normalized = " ".join(sentence.split()).strip()
         lower = normalized.lower()
+        boundary_safe = normalized.rstrip('"”’\'')
         if len(normalized) < 35 or len(normalized.split()) < 6:
             return False
         if len(normalized) > 320:
             return False
-        if normalized.endswith((":", "—", "-", "“", '"')):
+        if boundary_safe.endswith((":", "—", "-", "“")):
             return False
         if "…" in normalized or normalized.endswith("..."):
             return False
@@ -239,9 +225,10 @@ class HeuristicExtractionAdapter:
     def _is_usable_claim_value(self, value: str) -> bool:
         cleaned = " ".join(value.split()).strip(" .,:;")
         lower = cleaned.lower()
+        boundary_safe = cleaned.rstrip('"”’\'')
         if len(cleaned) < 24 or len(cleaned.split()) < 4:
             return False
-        if cleaned.endswith((":", "—", "-", "“", '"')):
+        if boundary_safe.endswith((":", "—", "-", "“")):
             return False
         if cleaned.startswith(("After defining", "This paper", "This article", "In this paper")):
             return False

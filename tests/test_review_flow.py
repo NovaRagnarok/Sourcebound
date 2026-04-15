@@ -280,6 +280,31 @@ def test_review_missing_candidate_returns_none(temp_data_dir: Path) -> None:
     assert len(review_store.list_reviews()) == review_count_before
 
 
+def test_review_cannot_approve_same_candidate_twice(temp_data_dir: Path) -> None:
+    seed_dev_data()
+    candidate_store, truth_store, review_store, service = build_review_service(temp_data_dir)
+
+    first = service.review_candidate(
+        "cand-grain-bell-beadles",
+        ReviewRequest(decision=ReviewDecision.APPROVE),
+    )
+    review_count_after_first = len(review_store.list_reviews())
+
+    assert first is not None
+
+    with pytest.raises(ReviewConflictError):
+        service.review_candidate(
+            "cand-grain-bell-beadles",
+            ReviewRequest(decision=ReviewDecision.APPROVE),
+        )
+
+    candidate = candidate_store.get_candidate("cand-grain-bell-beadles")
+    assert candidate is not None
+    assert candidate.review_state == ReviewState.APPROVED
+    assert len(truth_store.list_claims()) == 1
+    assert len(review_store.list_reviews()) == review_count_after_first
+
+
 class FailingTruthStore(InMemoryTruthStore):
     def save_claim(self, claim, evidence=None, review=None) -> None:
         _ = claim, evidence, review

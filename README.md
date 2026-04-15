@@ -212,7 +212,11 @@ Useful examples:
 .venv/bin/saw qdrant-rebuild --json-output
 .venv/bin/saw zotero-check --json-output
 .venv/bin/saw intake-text "Field Notes" "Observed three shrine rituals at dusk."
+.venv/bin/saw demo-corpus-run wheatley-london-bread --json-output
 ```
+
+For one reproducible end-to-end real-corpus walkthrough, see
+[Demo Corpus Workflow](docs/DEMO_CORPUS_WORKFLOW.md).
 
 ## First-Run Troubleshooting
 

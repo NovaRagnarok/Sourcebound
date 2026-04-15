@@ -2,7 +2,11 @@ from __future__ import annotations
 
 from uuid import uuid4
 
-from source_aware_worldbuilding.domain.enums import UNRESOLVED_REVIEW_STATES, ReviewState
+from source_aware_worldbuilding.domain.enums import (
+    UNRESOLVED_REVIEW_STATES,
+    ReviewDecision,
+    ReviewState,
+)
 from source_aware_worldbuilding.domain.errors import ReviewConflictError
 from source_aware_worldbuilding.domain.models import (
     ApprovedClaim,
@@ -93,6 +97,8 @@ class ReviewService:
         candidate = self.candidate_store.get_candidate(candidate_id)
         if candidate is None:
             return None
+        if request.decision == ReviewDecision.APPROVE and candidate.review_state == ReviewState.APPROVED:
+            raise ReviewConflictError("Candidate has already been approved.")
 
         review = ReviewEvent(
             review_id=f"rev-{uuid4().hex[:12]}",

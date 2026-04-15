@@ -42,14 +42,14 @@
     },
     {
       "predicate": "described_as",
-      "value_contains": "forbidden by public ordinance",
+      "value_contains": "tourte baker",
       "claim_patch": {
-        "subject": "London bakers",
-        "predicate": "redirected",
-        "value": "customary gratuity payments into larger loaves by public ordinance"
+        "subject": "London white bakers",
+        "predicate": "were_barred_from",
+        "value": "making tourte bread"
       },
       "override_status": "probable",
-      "notes": "Kept as probable canon because the demo corpus is a small secondary excerpt."
+      "notes": "Approved as a bounded baking-rule claim from the excerpt."
     },
     {
       "predicate": "described_as",

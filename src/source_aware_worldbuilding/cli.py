@@ -2267,6 +2267,11 @@ def _handle_zotero_cli_error(exc: ZoteroError) -> None:
     raise typer.Exit(code=1)
 
 
+def _handle_cli_value_error(exc: ValueError) -> None:
+    print(f"[red]{exc}[/red]")
+    raise typer.Exit(code=1)
+
+
 @app.command("intake-text")
 def intake_text(
     title: str,
@@ -2392,7 +2397,10 @@ def demo_corpus_run(
     json_output: bool = False,
 ) -> None:
     target_dir = data_dir or Path("runtime") / "demo" / corpus_id
-    result = run_demo_corpus(corpus_id, data_dir=target_dir)
+    try:
+        result = run_demo_corpus(corpus_id, data_dir=target_dir)
+    except ValueError as exc:
+        _handle_cli_value_error(exc)
     if json_output:
         typer.echo(json.dumps(result.model_dump(mode="json"), indent=2))
         return

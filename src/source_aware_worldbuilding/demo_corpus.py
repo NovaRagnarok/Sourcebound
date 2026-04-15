@@ -30,14 +30,16 @@ from source_aware_worldbuilding.domain.models import (
     BibleProjectProfileUpdateRequest,
     BibleSectionCreateRequest,
     BibleSectionFilters,
+    IntakeTextRequest,
     ReviewClaimPatch,
     ReviewRequest,
     SourceDocumentRecord,
     SourceRecord,
-    sync_source_with_documents,
+    ZoteroCreatedItem,
 )
 from source_aware_worldbuilding.services.bible import BibleWorkspaceService
 from source_aware_worldbuilding.services.ingestion import IngestionService
+from source_aware_worldbuilding.services.intake import IntakeService
 from source_aware_worldbuilding.services.normalization import NormalizationService
 from source_aware_worldbuilding.services.review import ReviewService
 
@@ -99,21 +101,57 @@ class DemoCorpusRunSummary(BaseModel):
     markdown_path: str
 
 
-class _DemoCorpusNoop:
+class DemoCorpusAdapter:
+    def __init__(self, manifest: DemoCorpusManifest, corpus_dir: Path) -> None:
+        self.manifest = manifest
+        self.corpus_dir = corpus_dir
+        self.item_key = f"demo-{manifest.corpus_id}"
+
     def pull_sources(self):
         return []
 
     def discover_source_documents(self, sources, *, existing_documents=None, force_refresh=False):
-        _ = sources, existing_documents, force_refresh
-        return []
+        _ = existing_documents, force_refresh
+        source_ids = {source.source_id for source in sources}
+        if self.manifest.source.source_id not in source_ids:
+            return []
+        return [
+            _build_source_document_record(
+                self.manifest,
+                self.corpus_dir,
+                self.manifest.source.source_id,
+                spec,
+            )
+            for spec in self.manifest.documents
+        ]
 
     def pull_text_units(self, sources):
         _ = sources
         return []
 
     def pull_sources_by_item_keys(self, item_keys):
-        _ = item_keys
-        return []
+        if self.item_key not in set(item_keys):
+            return []
+        source = self.manifest.source.model_copy(deep=True)
+        source.external_source = "demo"
+        source.external_id = self.manifest.corpus_id
+        source.zotero_item_key = self.item_key
+        source.raw_metadata_json = {"demo_corpus_id": self.manifest.corpus_id}
+        return [source]
+
+    def create_text_source(self, request: IntakeTextRequest) -> ZoteroCreatedItem:
+        _ = request
+        return ZoteroCreatedItem(
+            zotero_item_key=self.item_key,
+            title=self.manifest.source.title,
+            item_type=self.manifest.source.source_type,
+        )
+
+    def create_url_source(self, request):
+        raise NotImplementedError("Demo corpus adapter only supports manifest-backed text intake.")
+
+    def create_file_source(self, **kwargs):
+        raise NotImplementedError("Demo corpus adapter only supports manifest-backed text intake.")
 
 
 _DATA_FILES = (
@@ -142,6 +180,7 @@ def run_demo_corpus(corpus_id: str, *, data_dir: Path) -> DemoCorpusRunSummary:
     manifest, corpus_dir = load_demo_corpus_manifest(corpus_id)
     output_dir = data_dir.resolve()
     _reset_output_dir(output_dir)
+    corpus = DemoCorpusAdapter(manifest, corpus_dir)
 
     source_store = FileSourceStore(output_dir)
     source_document_store = FileSourceDocumentStore(output_dir)
@@ -154,18 +193,25 @@ def run_demo_corpus(corpus_id: str, *, data_dir: Path) -> DemoCorpusRunSummary:
     bible_profile_store = FileBibleProjectProfileStore(output_dir)
     bible_section_store = FileBibleSectionStore(output_dir)
 
-    source = manifest.source.model_copy(deep=True)
-    source.external_source = "demo"
-    source.external_id = manifest.corpus_id
-    source.raw_metadata_json = {"demo_corpus_id": manifest.corpus_id}
-
-    source_documents = [
-        _build_source_document_record(manifest, corpus_dir, source.source_id, spec)
-        for spec in manifest.documents
-    ]
-    sync_source_with_documents(source, source_documents)
-    source_store.save_sources([source])
-    source_document_store.save_source_documents(source_documents)
+    intake_service = IntakeService(
+        corpus=corpus,
+        source_store=source_store,
+        source_document_store=source_document_store,
+    )
+    intake_result = intake_service.intake_text(
+        IntakeTextRequest(
+            title=manifest.source.title,
+            text=(
+                f"Demo corpus manifest intake for {manifest.corpus_id}. "
+                "The checked-in note and attachment documents are the discoverable evidence."
+            ),
+            source_type=manifest.source.source_type,
+            notes=f"demo_corpus_id={manifest.corpus_id}",
+        )
+    )
+    if not intake_result.pulled_sources:
+        raise ValueError(f"Demo corpus '{manifest.corpus_id}' did not yield a pulled source.")
+    source = intake_result.pulled_sources[0]
 
     normalization_service = NormalizationService(
         source_document_store=source_document_store,
@@ -175,7 +221,7 @@ def run_demo_corpus(corpus_id: str, *, data_dir: Path) -> DemoCorpusRunSummary:
     normalization_service.normalize_documents(source_ids=[source.source_id])
 
     ingestion_service = IngestionService(
-        corpus=_DemoCorpusNoop(),
+        corpus=corpus,
         extractor=HeuristicExtractionAdapter(),
         source_store=source_store,
         text_unit_store=text_unit_store,
@@ -200,8 +246,13 @@ def run_demo_corpus(corpus_id: str, *, data_dir: Path) -> DemoCorpusRunSummary:
         review_cards[0] if review_cards else None,
     )
     approved_claim_ids: list[str] = []
+    consumed_candidate_ids: set[str] = set()
     for approval in manifest.approvals:
-        candidate = _find_candidate_for_approval(candidate_store.list_candidates(), approval)
+        candidate = _find_candidate_for_approval(
+            candidate_store.list_candidates(),
+            approval,
+            consumed_candidate_ids=consumed_candidate_ids,
+        )
         approved = review_service.review_candidate(
             candidate.candidate_id,
             ReviewRequest(
@@ -212,6 +263,7 @@ def run_demo_corpus(corpus_id: str, *, data_dir: Path) -> DemoCorpusRunSummary:
             ),
         )
         if approved is not None:
+            consumed_candidate_ids.add(candidate.candidate_id)
             approved_claim_ids.append(approved.claim_id)
 
     bible_service = BibleWorkspaceService(
@@ -340,8 +392,17 @@ def _build_source_document_record(
     )
 
 
-def _find_candidate_for_approval(candidates, approval: DemoCorpusApprovalSpec):
+def _find_candidate_for_approval(
+    candidates,
+    approval: DemoCorpusApprovalSpec,
+    *,
+    consumed_candidate_ids: set[str] | None = None,
+):
+    matches = []
+    consumed_candidate_ids = consumed_candidate_ids or set()
     for candidate in candidates:
+        if candidate.candidate_id in consumed_candidate_ids:
+            continue
         if approval.predicate is not None and candidate.predicate != approval.predicate:
             continue
         if approval.subject_contains is not None and (
@@ -350,7 +411,14 @@ def _find_candidate_for_approval(candidates, approval: DemoCorpusApprovalSpec):
             continue
         if approval.value_contains.lower() not in candidate.value.lower():
             continue
-        return candidate
+        matches.append(candidate)
+    if len(matches) == 1:
+        return matches[0]
+    if len(matches) > 1:
+        raise ValueError(
+            "Approval rule matched multiple candidates; make it more specific "
+            f"(value_contains={approval.value_contains!r})."
+        )
     raise ValueError(
         "Could not find a candidate matching approval rule "
         f"value_contains={approval.value_contains!r}."
