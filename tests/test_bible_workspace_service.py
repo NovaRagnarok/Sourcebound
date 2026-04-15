@@ -205,6 +205,28 @@ def test_bible_workspace_preserves_manual_edits_when_regenerated(temp_data_dir: 
     assert regenerated.generation_status == BibleSectionGenerationStatus.THIN
 
 
+def test_bible_workspace_creates_rumor_sections_without_blueprint_regression(
+    temp_data_dir: Path,
+) -> None:
+    populate_bible_fixtures(temp_data_dir)
+    service = build_service(temp_data_dir)
+    service.save_profile(
+        "project-greyport",
+        BibleProjectProfileUpdateRequest(project_name="Greyport Bible"),
+    )
+
+    section = service.create_section(
+        BibleSectionCreateRequest(
+            project_id="project-greyport",
+            section_type=BibleSectionType.RUMORS_AND_CONTESTED,
+        )
+    )
+
+    assert section.section_type == BibleSectionType.RUMORS_AND_CONTESTED
+    assert section.title
+    assert section.references.claim_ids
+
+
 def test_bible_workspace_can_export_saved_project(temp_data_dir: Path) -> None:
     populate_bible_fixtures(temp_data_dir)
     service = build_service(temp_data_dir)

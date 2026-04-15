@@ -1,0 +1,277 @@
+{
+  "corpus_id": "harbor-watch-proof-loop",
+  "corpus_name": "Harbor watch proof loop pilot",
+  "project_id": "project-harbor-watch-proof-loop",
+  "profile": {
+    "project_name": "Harbor Watch Bible",
+    "era": "Late autumn harbor season",
+    "geography": "East Pier",
+    "narrative_focus": "Dock tolls, sceneable gear, and contested harbor folklore",
+    "desired_facets": [
+      "economics",
+      "practices",
+      "material_culture",
+      "rumor"
+    ],
+    "tone": "grounded_literary",
+    "composition_defaults": {
+      "include_statuses": [
+        "verified",
+        "probable"
+      ]
+    }
+  },
+  "sources": [
+    {
+      "lane_id": "zotero_happy_watch_notes",
+      "proof_role": "happy_path",
+      "intake_mode": "zotero_text",
+      "title": "Harbor watch notes",
+      "input_path": "zotero_happy_seed.txt",
+      "source_type": "record",
+      "notes": "Fixture-backed Zotero item with a note and a text attachment.",
+      "source": {
+        "source_id": "src-pilot-watch-notes",
+        "external_source": "zotero",
+        "title": "Harbor watch notes",
+        "author": "Quarter watch clerk",
+        "year": "1902",
+        "source_type": "record",
+        "locator_hint": "east pier watch log",
+        "abstract": "Shift notes on lantern issue and pier gossip."
+      },
+      "documents": [
+        {
+          "document_id": "zdoc-pilot-watch-note",
+          "document_kind": "note",
+          "path": "watch_note.txt",
+          "locator": "watch note",
+          "filename": "watch-note.txt",
+          "text_extraction_status": "extracted",
+          "normalization_status": "queued"
+        },
+        {
+          "document_id": "zdoc-pilot-watch-attachment",
+          "document_kind": "attachment",
+          "path": "watch_attachment.txt",
+          "locator": "watch attachment",
+          "filename": "watch-attachment.txt",
+          "attachment_discovery_status": "discovered",
+          "attachment_fetch_status": "fetched",
+          "text_extraction_status": "extracted",
+          "normalization_status": "queued"
+        }
+      ],
+      "expected_outcome": {
+        "document_count": 2,
+        "stage_summary": {
+          "total": 2,
+          "present": 2,
+          "fetched": 1,
+          "extracted": 2,
+          "normalized": 2
+        }
+      }
+    },
+    {
+      "lane_id": "zotero_degraded_broadside",
+      "proof_role": "degraded",
+      "intake_mode": "zotero_text",
+      "title": "Scanned harbor broadside",
+      "input_path": "zotero_degraded_seed.txt",
+      "source_type": "document",
+      "notes": "Fixture-backed Zotero item with a discoverable attachment that cannot be extracted.",
+      "source": {
+        "source_id": "src-pilot-broadside",
+        "external_source": "zotero",
+        "title": "Scanned harbor broadside",
+        "author": "Dock office",
+        "year": "1902",
+        "source_type": "document",
+        "locator_hint": "pier notice",
+        "abstract": "A degraded scan retained only as a warning-path pilot lane."
+      },
+      "documents": [
+        {
+          "document_id": "zdoc-pilot-broadside-scan",
+          "document_kind": "attachment",
+          "locator": "broadside scan",
+          "filename": "broadside-scan.pdf",
+          "mime_type": "application/pdf",
+          "attachment_discovery_status": "discovered",
+          "attachment_fetch_status": "fetched",
+          "text_extraction_status": "failed",
+          "normalization_status": "failed",
+          "stage_errors": [
+            "Scanned attachment could not be extracted into text."
+          ]
+        }
+      ],
+      "expected_outcome": {
+        "document_count": 1,
+        "stage_summary": {
+          "total": 1,
+          "present": 1,
+          "fetched": 1,
+          "failed": 1
+        },
+        "warning_contains": [
+          "could not be extracted into text"
+        ]
+      }
+    },
+    {
+      "lane_id": "manual_price_ledger",
+      "proof_role": "happy_path",
+      "intake_mode": "manual_text",
+      "title": "Quay toll ledger",
+      "input_path": "manual_price_ledger.txt",
+      "source_type": "record",
+      "notes": "Manual pasted text lane for the repeatable proof gate.",
+      "source": {
+        "source_id": "src-pilot-manual-ledger",
+        "external_source": "local",
+        "title": "Quay toll ledger",
+        "author": "Gatehouse clerk",
+        "year": "1902",
+        "source_type": "record",
+        "locator_hint": "manual ledger paste",
+        "abstract": "Manual pasted source for toll practice."
+      },
+      "documents": [
+        {
+          "document_id": "zdoc-pilot-manual-ledger",
+          "document_kind": "manual_text",
+          "path": "manual_price_ledger.txt",
+          "locator": "manual text",
+          "filename": "manual-price-ledger.txt",
+          "text_extraction_status": "extracted",
+          "normalization_status": "queued"
+        }
+      ],
+      "expected_outcome": {
+        "document_count": 1,
+        "stage_summary": {
+          "total": 1,
+          "present": 1,
+          "extracted": 1,
+          "normalized": 1
+        }
+      }
+    },
+    {
+      "lane_id": "manual_basket_inventory",
+      "proof_role": "happy_path",
+      "intake_mode": "manual_file",
+      "title": "Basket inventory",
+      "input_path": "manual_basket_inventory.txt",
+      "source_type": "document",
+      "notes": "Manual text-like file lane for the repeatable proof gate.",
+      "source": {
+        "source_id": "src-pilot-manual-baskets",
+        "external_source": "local",
+        "title": "Basket inventory",
+        "author": "Storehouse runner",
+        "year": "1902",
+        "source_type": "document",
+        "locator_hint": "manual inventory file",
+        "abstract": "Manual text-like file source for material cues."
+      },
+      "documents": [
+        {
+          "document_id": "zdoc-pilot-manual-baskets",
+          "document_kind": "attachment",
+          "path": "manual_basket_inventory.txt",
+          "locator": "manual inventory file",
+          "filename": "manual-basket-inventory.txt",
+          "attachment_discovery_status": "discovered",
+          "attachment_fetch_status": "not_applicable",
+          "text_extraction_status": "extracted",
+          "normalization_status": "queued"
+        }
+      ],
+      "expected_outcome": {
+        "document_count": 1,
+        "stage_summary": {
+          "total": 1,
+          "present": 1,
+          "extracted": 1,
+          "normalized": 1
+        }
+      }
+    }
+  ],
+  "reviews": [
+    {
+      "decision": "approve",
+      "predicate": "rumored_that",
+      "subject_contains": "Night ferrymen",
+      "value_contains": "tide bell answered back",
+      "override_status": "rumor",
+      "notes": "Approved as a bounded harbor rumor for the writer-facing contested section."
+    },
+    {
+      "decision": "approve",
+      "predicate": "described_as",
+      "subject_contains": "Night ferrymen",
+      "value_contains": "oilcloth lanterns",
+      "override_status": "probable",
+      "notes": "Approved as a sceneable material-culture line from the attachment."
+    },
+    {
+      "decision": "approve",
+      "predicate": "described_as",
+      "subject_contains": "Tarred grain baskets",
+      "value_contains": "quay scales",
+      "override_status": "probable",
+      "notes": "Approved as a second sceneable object line for the economics section."
+    },
+    {
+      "decision": "approve",
+      "predicate": "described_as",
+      "subject_contains": "Quay toll ledger",
+      "value_contains": "two brass tokens",
+      "override_status": "verified",
+      "notes": "Approved as a verified trade-practice line from manual pasted text."
+    }
+  ],
+  "sections": [
+    {
+      "section_type": "economics_and_material_culture",
+      "filters": {
+        "statuses": [
+          "verified",
+          "probable"
+        ]
+      },
+      "require_ready": true
+    },
+    {
+      "section_type": "rumors_and_contested_accounts",
+      "filters": {
+        "statuses": [
+          "rumor",
+          "contested",
+          "probable",
+          "verified"
+        ]
+      }
+    }
+  ],
+  "thresholds": {
+    "max_happy_path_failed_documents": 0,
+    "max_blind_review_cards": 0,
+    "max_unresolved_candidates": 0,
+    "min_substantive_ready_sections": 1,
+    "extraction_dataset_id": "harbor-watch-proof-loop",
+    "extraction": {
+      "important_fact_recall": 0.83,
+      "claim_precision": 0.5,
+      "avg_reviewer_actions": 1.5,
+      "avg_anchor_focus": 0.6
+    }
+  },
+  "live_zotero": {
+    "item_keys": []
+  }
+}

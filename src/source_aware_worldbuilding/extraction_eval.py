@@ -25,12 +25,18 @@ from source_aware_worldbuilding.demo_corpus import (
     _build_source_document_record,
     load_demo_corpus_manifest,
 )
+from source_aware_worldbuilding.pilot_corpus import (
+    _build_pilot_source_document_record,
+    available_pilot_corpora,
+    load_pilot_corpus_manifest,
+)
 from source_aware_worldbuilding.domain.enums import ExtractionRunStatus
 from source_aware_worldbuilding.domain.models import (
     CandidateClaim,
     EvidenceSnippet,
     ExtractionOutput,
     ExtractionRun,
+    SourceDocumentRecord,
     SourceRecord,
     TextUnit,
 )
@@ -90,7 +96,7 @@ class ExtractionEvalDataset(BaseModel):
 
 @dataclass(slots=True)
 class _PreparedCorpus:
-    source: SourceRecord
+    sources: list[SourceRecord]
     text_units: list[TextUnit]
     dataset_path: Path
 
@@ -145,6 +151,45 @@ def evaluate_extraction_dataset(
         raise ValueError("repeat must be >= 1.")
     dataset = load_extraction_eval_dataset(dataset_id)
     prepared = _prepare_corpus(dataset)
+    return _evaluate_dataset_with_prepared(
+        dataset=dataset,
+        prepared=prepared,
+        output_root=output_root,
+        repeat=repeat,
+    )
+
+
+def evaluate_prepared_extraction_dataset(
+    dataset_id: str,
+    *,
+    output_root: Path,
+    sources: list[SourceRecord],
+    text_units: list[TextUnit],
+    repeat: int = 3,
+) -> dict[str, object]:
+    if repeat < 1:
+        raise ValueError("repeat must be >= 1.")
+    dataset = load_extraction_eval_dataset(dataset_id)
+    prepared = _PreparedCorpus(
+        sources=sources,
+        text_units=text_units,
+        dataset_path=_dataset_root() / f"{dataset.evaluation_id}.json",
+    )
+    return _evaluate_dataset_with_prepared(
+        dataset=dataset,
+        prepared=prepared,
+        output_root=output_root,
+        repeat=repeat,
+    )
+
+
+def _evaluate_dataset_with_prepared(
+    *,
+    dataset: ExtractionEvalDataset,
+    prepared: _PreparedCorpus,
+    output_root: Path,
+    repeat: int,
+) -> dict[str, object]:
     output_root.mkdir(parents=True, exist_ok=True)
 
     path_reports: list[dict[str, Any]] = []
@@ -236,43 +281,76 @@ def _dataset_root() -> Path:
 
 
 def _prepare_corpus(dataset: ExtractionEvalDataset) -> _PreparedCorpus:
-    manifest, corpus_dir = load_demo_corpus_manifest(dataset.corpus_id)
     with TemporaryDirectory(prefix="sourcebound-extraction-eval-") as temp_dir:
         data_dir = Path(temp_dir)
         source_store = FileSourceStore(data_dir)
         source_document_store = FileSourceDocumentStore(data_dir)
         text_unit_store = FileTextUnitStore(data_dir)
 
-        source = manifest.source.model_copy(deep=True)
-        source.external_source = "demo"
-        source.external_id = dataset.corpus_id
-        source.zotero_item_key = f"demo-{dataset.corpus_id}"
-        source.raw_metadata_json = {"demo_corpus_id": dataset.corpus_id}
-        source_store.save_sources([source])
+        sources: list[SourceRecord]
+        source_documents: list[SourceDocumentRecord]
+        source_ids: list[str]
+        if dataset.corpus_id in set(available_pilot_corpora()):
+            manifest, corpus_dir = load_pilot_corpus_manifest(dataset.corpus_id)
+            sources = []
+            source_documents = []
+            for source_spec in manifest.sources:
+                if source_spec.source is None:
+                    continue
+                source = source_spec.source.model_copy(deep=True)
+                source.external_source = "pilot_fixture"
+                source.external_id = f"PILOT-{manifest.corpus_id}-{source_spec.lane_id}".upper()
+                source.zotero_item_key = source.external_id
+                source.raw_metadata_json = {
+                    "pilot_corpus_id": manifest.corpus_id,
+                    "pilot_lane_id": source_spec.lane_id,
+                }
+                sources.append(source)
+                for document_spec in source_spec.documents:
+                    source_documents.append(
+                        _build_pilot_source_document_record(
+                            manifest=manifest,
+                            corpus_dir=corpus_dir,
+                            source_id=source.source_id,
+                            lane_id=source_spec.lane_id,
+                            spec=document_spec,
+                        )
+                    )
+            source_ids = [source.source_id for source in sources]
+        else:
+            manifest, corpus_dir = load_demo_corpus_manifest(dataset.corpus_id)
+            source = manifest.source.model_copy(deep=True)
+            source.external_source = "demo"
+            source.external_id = dataset.corpus_id
+            source.zotero_item_key = f"demo-{dataset.corpus_id}"
+            source.raw_metadata_json = {"demo_corpus_id": dataset.corpus_id}
+            sources = [source]
+            source_documents = [
+                _build_source_document_record(
+                    manifest,
+                    corpus_dir,
+                    source.source_id,
+                    document_spec,
+                )
+                for document_spec in manifest.documents
+            ]
+            source_ids = [source.source_id]
 
-        source_documents = [
-            _build_source_document_record(
-                manifest,
-                corpus_dir,
-                source.source_id,
-                document_spec,
-            )
-            for document_spec in manifest.documents
-        ]
+        source_store.save_sources(sources)
         source_document_store.save_source_documents(source_documents)
         NormalizationService(
             source_document_store=source_document_store,
             text_unit_store=text_unit_store,
             source_store=source_store,
-        ).normalize_documents(source_ids=[source.source_id])
-        text_units = text_unit_store.list_text_units(source_id=source.source_id)
+        ).normalize_documents(source_ids=source_ids)
+        text_units = text_unit_store.list_text_units()
         if not text_units:
             raise ValueError(
                 f"Evaluation dataset '{dataset.evaluation_id}' "
                 "did not yield any normalized text units."
             )
         return _PreparedCorpus(
-            source=source,
+            sources=sources,
             text_units=text_units,
             dataset_path=_dataset_root() / f"{dataset.evaluation_id}.json",
         )
@@ -330,13 +408,13 @@ def _run_extraction_path(
     if path_spec.path == "heuristic":
         return HeuristicExtractionAdapter().extract_candidates(
             run=run,
-            sources=[prepared.source],
+            sources=prepared.sources,
             text_units=prepared.text_units,
         )
     if path_spec.path == "graphrag_live":
         return GraphRAGExtractionAdapter().extract_candidates(
             run=run,
-            sources=[prepared.source],
+            sources=prepared.sources,
             text_units=prepared.text_units,
         )
     if path_spec.path == "graphrag_mapping_fixture":
@@ -345,7 +423,7 @@ def _run_extraction_path(
         output = adapter._map_artifacts_to_output(
             artifacts=artifacts,
             run=run,
-            sources=[prepared.source],
+            sources=prepared.sources,
             source_text_units=prepared.text_units,
         )
         output.run.notes = (

@@ -98,7 +98,15 @@ from source_aware_worldbuilding.domain.enums import (
     ReviewDecision,
     ReviewState,
 )
-from source_aware_worldbuilding.domain.errors import ZoteroError
+from source_aware_worldbuilding.domain.errors import (
+    ZoteroAuthError,
+    ZoteroConfigError,
+    ZoteroError,
+    ZoteroFetchError,
+    ZoteroNotFoundError,
+    ZoteroRateLimitError,
+    ZoteroWriteError,
+)
 from source_aware_worldbuilding.domain.models import (
     ApprovedClaim,
     BibleCompositionDefaults,
@@ -131,10 +139,15 @@ from source_aware_worldbuilding.domain.models import (
     TextUnit,
     ZoteroCreatedItem,
     ZoteroPullRequest,
+    summarize_source_documents,
 )
 from source_aware_worldbuilding.extraction_eval import (
     available_extraction_eval_datasets,
     evaluate_extraction_dataset,
+)
+from source_aware_worldbuilding.pilot_corpus import (
+    available_pilot_corpora,
+    run_pilot_corpus,
 )
 from source_aware_worldbuilding.ports import (
     CorpusPort,
@@ -2206,6 +2219,99 @@ def _print_runtime_status(runtime_status: RuntimeStatus) -> None:
             print(f"- {step}")
 
 
+def _zotero_error_category(exc: ZoteroError) -> str:
+    if isinstance(exc, ZoteroConfigError):
+        return "config"
+    if isinstance(exc, ZoteroAuthError):
+        return "auth"
+    if isinstance(exc, ZoteroNotFoundError):
+        return "library_or_item_not_found"
+    if isinstance(exc, ZoteroRateLimitError):
+        return "rate_limit"
+    if isinstance(exc, ZoteroWriteError):
+        return "write"
+    if isinstance(exc, ZoteroFetchError):
+        return "fetch"
+    return "unknown"
+
+
+def _source_document_rollup(source_documents: list[SourceDocumentRecord]) -> dict[str, object]:
+    document_warnings = list(
+        dict.fromkeys(
+            error for document in source_documents for error in document.stage_errors if error
+        )
+    )
+    return {
+        "source_document_count": len(source_documents),
+        "stage_breakdown": summarize_source_documents(source_documents),
+        "document_warnings": document_warnings,
+        "failed_document_count": sum(
+            1
+            for document in source_documents
+            if document.metadata_import_status == "failed"
+            or document.attachment_fetch_status == "failed"
+            or document.text_extraction_status == "failed"
+            or document.normalization_status == "failed"
+        ),
+        "source_documents_preview": [
+            document.model_dump(mode="json") for document in source_documents[:3]
+        ],
+    }
+
+
+def _blocked_stage_for_documents(source_documents: list[SourceDocumentRecord]) -> str:
+    if not source_documents:
+        return "discovery"
+    if any(not document.present_in_latest_pull for document in source_documents):
+        return "pull"
+    if any(document.attachment_discovery_status == "missing" for document in source_documents):
+        return "discovery"
+    if any(document.attachment_fetch_status == "failed" for document in source_documents):
+        return "fetch"
+    if any(document.text_extraction_status == "failed" for document in source_documents):
+        return "text_extraction"
+    if any(document.normalization_status == "failed" for document in source_documents):
+        return "normalization"
+    if any(document.normalization_status == "queued" for document in source_documents):
+        return "normalization"
+    return "ready"
+
+
+def _next_action_for_documents(source_documents: list[SourceDocumentRecord]) -> str:
+    blocked_stage = _blocked_stage_for_documents(source_documents)
+    if blocked_stage == "discovery":
+        return "Check that the Zotero item has a note or text-bearing attachment."
+    if blocked_stage == "fetch":
+        return "Retry the pull and confirm the attachment is still available upstream."
+    if blocked_stage == "text_extraction":
+        return "Use a text-bearing attachment or fall back to manual text intake."
+    if blocked_stage == "normalization":
+        return "Run `saw normalize-documents` after the extracted text is present."
+    if blocked_stage == "pull":
+        return "Retry the pull with the correct Zotero item key or collection scope."
+    return "This source is ready for extraction."
+
+
+def _print_source_document_rollup(source_documents: list[SourceDocumentRecord]) -> None:
+    if not source_documents:
+        print("Blocked stage: discovery | Next action: Check that the source produced documents.")
+        return
+    summary = summarize_source_documents(source_documents)
+    print(
+        "Blocked stage: "
+        f"{_blocked_stage_for_documents(source_documents)} | "
+        f"Next action: {_next_action_for_documents(source_documents)}"
+    )
+    print(f"Stage summary: {json.dumps(summary, sort_keys=True)}")
+    warnings = list(
+        dict.fromkeys(
+            error for document in source_documents for error in document.stage_errors if error
+        )
+    )
+    for warning in warnings[:3]:
+        print(f"[yellow]{warning}[/yellow]")
+
+
 @app.command("zotero-check")
 def zotero_check(
     json_output: bool = False,
@@ -2239,10 +2345,17 @@ def _build_zotero_report(*, source_limit: int, include_text_units: bool) -> dict
         "include_text_units": include_text_units,
         "missing": missing,
         "success": False,
+        "error_stage": None,
         "source_count": 0,
         "text_unit_count": 0,
         "sources_preview": [],
+        "source_document_count": 0,
+        "source_documents_preview": [],
+        "stage_breakdown": {},
+        "document_warnings": [],
+        "failed_document_count": 0,
         "text_units_preview": [],
+        "live_smoke": {"status": "skipped", "detail": "Zotero is not configured yet."},
     }
     if missing:
         report["detail"] = "Zotero is not configured yet."
@@ -2255,6 +2368,17 @@ def _build_zotero_report(*, source_limit: int, include_text_units: bool) -> dict
         report["sources_preview"] = [
             source.model_dump(mode="json") for source in sources[:source_limit]
         ]
+        if sources:
+            source_documents = adapter.discover_source_documents(
+                sources[:source_limit],
+                existing_documents=[],
+                force_refresh=False,
+            )
+            report.update(_source_document_rollup(source_documents))
+            report["live_smoke"] = {
+                "status": "passed",
+                "detail": "Live Zotero pull and document discovery succeeded.",
+            }
 
         if include_text_units and sources:
             text_units = adapter.pull_text_units(sources[:1])
@@ -2267,10 +2391,20 @@ def _build_zotero_report(*, source_limit: int, include_text_units: bool) -> dict
         report["detail"] = "Zotero pull succeeded."
         return report
     except ZoteroError as exc:
+        report["error_stage"] = _zotero_error_category(exc)
         report["detail"] = str(exc)
+        report["live_smoke"] = {
+            "status": "failed",
+            "detail": str(exc),
+        }
         return report
     except Exception as exc:
+        report["error_stage"] = "unknown"
         report["detail"] = f"Zotero pull failed: {exc}"
+        report["live_smoke"] = {
+            "status": "failed",
+            "detail": str(exc),
+        }
         return report
 
 
@@ -2296,7 +2430,13 @@ def _print_zotero_report(report: dict) -> None:
     if report["success"]:
         print(
             f"Sources pulled: {report['source_count']} | "
+            f"Documents discovered: {report['source_document_count']} | "
             f"Text units previewed: {report['text_unit_count']}"
+        )
+        print(
+            "Stage breakdown: "
+            f"{json.dumps(report['stage_breakdown'], sort_keys=True)} | "
+            f"Failed documents: {report['failed_document_count']}"
         )
         preview_table = Table(title="Zotero Source Preview")
         preview_table.add_column("Source ID")
@@ -2311,6 +2451,10 @@ def _print_zotero_report(report: dict) -> None:
                 source.get("year") or "n/a",
             )
         print(preview_table)
+        for warning in report["document_warnings"][:3]:
+            print(f"[yellow]{warning}[/yellow]")
+    elif report.get("error_stage"):
+        print(f"Failure category: {report['error_stage']}")
 
 
 def _handle_zotero_cli_error(exc: ZoteroError) -> None:
@@ -2356,8 +2500,12 @@ def intake_text(
         f"Sources: {len(result.pulled_sources)} | "
         f"Documents queued: {len(result.source_documents)}"
     )
+    _print_source_document_rollup(result.source_documents)
     for warning in result.warnings:
-        print(f"[yellow]{warning}[/yellow]")
+        if warning not in {
+            error for document in result.source_documents for error in document.stage_errors
+        }:
+            print(f"[yellow]{warning}[/yellow]")
 
 
 @app.command("intake-url")
@@ -2387,8 +2535,12 @@ def intake_url(
         f"Sources: {len(result.pulled_sources)} | "
         f"Documents queued: {len(result.source_documents)}"
     )
+    _print_source_document_rollup(result.source_documents)
     for warning in result.warnings:
-        print(f"[yellow]{warning}[/yellow]")
+        if warning not in {
+            error for document in result.source_documents for error in document.stage_errors
+        }:
+            print(f"[yellow]{warning}[/yellow]")
 
 
 @app.command("intake-file")
@@ -2420,8 +2572,12 @@ def intake_file(
         f"Sources: {len(result.pulled_sources)} | "
         f"Documents queued: {len(result.source_documents)}"
     )
+    _print_source_document_rollup(result.source_documents)
     for warning in result.warnings:
-        print(f"[yellow]{warning}[/yellow]")
+        if warning not in {
+            error for document in result.source_documents for error in document.stage_errors
+        }:
+            print(f"[yellow]{warning}[/yellow]")
 
 
 @app.command("demo-corpus-list")
@@ -2475,6 +2631,74 @@ def demo_corpus_run(
     print(f"Summary: {result.summary_path}")
 
 
+@app.command("pilot-corpus-list")
+def pilot_corpus_list(json_output: bool = False) -> None:
+    corpora = available_pilot_corpora()
+    if json_output:
+        typer.echo(json.dumps({"corpora": corpora}, indent=2))
+        return
+    if not corpora:
+        print("[yellow]No pilot corpora are checked in.[/yellow]")
+        return
+    for corpus_id in corpora:
+        print(corpus_id)
+
+
+@app.command("pilot-corpus-run")
+def pilot_corpus_run(
+    corpus_id: str = typer.Argument(..., help="Checked-in pilot corpus id."),
+    data_dir: Path | None = typer.Option(
+        None,
+        "--data-dir",
+        help="Output directory for the pilot run. Defaults to runtime/pilot/<corpus-id>.",
+    ),
+    live_zotero: bool = typer.Option(
+        False,
+        "--live-zotero",
+        help="Also run the optional live Zotero smoke path when configured.",
+    ),
+    json_output: bool = False,
+) -> None:
+    target_dir = data_dir or Path("runtime") / "pilot" / corpus_id
+    try:
+        result = run_pilot_corpus(corpus_id, data_dir=target_dir, live_zotero=live_zotero)
+    except ValueError as exc:
+        _handle_cli_value_error(exc)
+    if json_output:
+        typer.echo(json.dumps(result.model_dump(mode="json"), indent=2))
+        if not result.gate_passed:
+            raise typer.Exit(code=1)
+        return
+    print(
+        f"[green]Ran pilot corpus {corpus_id}[/green] | "
+        f"Gate: {'pass' if result.gate_passed else 'fail'} | "
+        f"Sources: {result.source_count} | "
+        f"Candidates: {result.candidate_count} | "
+        f"Approved claims: {result.approved_claim_count}"
+    )
+    print(
+        f"Review mix: {json.dumps(result.evidence_quality_mix, sort_keys=True)} | "
+        f"Unresolved: {result.unresolved_candidate_count}"
+    )
+    for section in result.section_summaries:
+        print(
+            f"Section: {section.title} ({section.generation_status.value}) | "
+            f"ready={section.ready_for_writer} | markdown={section.markdown_path}"
+        )
+    if result.live_zotero is not None:
+        print(
+            f"Live Zotero: {result.live_zotero.status} | {result.live_zotero.detail}"
+        )
+    if result.gate_failures:
+        print("[red]Gate failures[/red]")
+        for failure in result.gate_failures:
+            print(f"- {failure}")
+    print(f"Summary: {result.summary_path}")
+    print(f"Report: {result.report_path}")
+    if not result.gate_passed:
+        raise typer.Exit(code=1)
+
+
 @app.command("zotero-pull")
 def zotero_pull(
     source_id: list[str] | None = None,
@@ -2508,8 +2732,12 @@ def zotero_pull(
         f"unchanged: {result.unchanged_document_count} | "
         f"failed: {result.failed_document_count}"
     )
+    _print_source_document_rollup(result.source_documents)
     for warning in result.warnings:
-        print(f"[yellow]{warning}[/yellow]")
+        if warning not in {
+            error for document in result.source_documents for error in document.stage_errors
+        }:
+            print(f"[yellow]{warning}[/yellow]")
 
 
 @app.command("normalize-documents")
