@@ -204,6 +204,7 @@ The CLI is mainly for runtime checks, setup, seed data, and ingestion:
 - `saw intake-text`
 - `saw intake-url`
 - `saw intake-file`
+- `saw evaluate-extraction`
 
 Useful examples:
 
@@ -213,10 +214,13 @@ Useful examples:
 .venv/bin/saw zotero-check --json-output
 .venv/bin/saw intake-text "Field Notes" "Observed three shrine rituals at dusk."
 .venv/bin/saw demo-corpus-run wheatley-london-bread --json-output
+.venv/bin/saw evaluate-extraction --dataset wheatley-london-bread --json-output
 ```
 
 For one reproducible end-to-end real-corpus walkthrough, see
-[Demo Corpus Workflow](docs/DEMO_CORPUS_WORKFLOW.md).
+[Demo Corpus Workflow](docs/DEMO_CORPUS_WORKFLOW.md). For the extraction
+quality benchmark and current baseline targets, see
+[Extraction Evaluation](docs/EXTRACTION_EVAL.md).
 
 ## First-Run Troubleshooting
 

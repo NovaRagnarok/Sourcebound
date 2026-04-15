@@ -130,6 +130,10 @@ from source_aware_worldbuilding.domain.models import (
     TextUnit,
     ZoteroPullRequest,
 )
+from source_aware_worldbuilding.extraction_eval import (
+    available_extraction_eval_datasets,
+    evaluate_extraction_dataset,
+)
 from source_aware_worldbuilding.services.bible import BibleWorkspaceService
 from source_aware_worldbuilding.services.ingestion import IngestionService
 from source_aware_worldbuilding.services.normalization import NormalizationService
@@ -3194,6 +3198,45 @@ def benchmark_2003_dj(
         f"Late retrospectives: {scorecard['late_retrospective_count']} | "
         f"Top-10 proxy reviewable: {scorecard['top_candidate_proxy_reviewable_count']}"
     )
+
+
+@app.command("evaluate-extraction")
+def evaluate_extraction(
+    dataset: str = "wheatley-london-bread",
+    output_root: Path = Path("runtime/extraction_evals"),
+    repeat: int = 3,
+    json_output: bool = False,
+) -> None:
+    if repeat < 1:
+        raise typer.BadParameter("repeat must be >= 1.")
+    try:
+        report = evaluate_extraction_dataset(
+            dataset,
+            output_root=output_root / dataset,
+            repeat=repeat,
+        )
+    except ValueError as exc:
+        available = ", ".join(available_extraction_eval_datasets()) or "none"
+        raise typer.BadParameter(f"{exc} Available datasets: {available}.") from exc
+
+    if json_output:
+        typer.echo(json.dumps(report, indent=2))
+        return
+
+    print("[bold]Extraction Evaluation[/bold]")
+    print(f"Dataset: {report['evaluation_id']}")
+    print(f"Artifacts: {output_root / dataset}")
+    for path_report in report["paths"]:
+        print(
+            f"{path_report['path']}: "
+            f"kind={path_report['path_kind']}, "
+            f"precision={path_report['metrics']['claim_precision']:.4f}, "
+            f"factual_support_precision={path_report['metrics']['factual_support_precision']:.4f}, "
+            f"recall={path_report['metrics']['important_fact_recall']:.4f}, "
+            f"anchor_focus={path_report['evidence_span_quality']['avg_anchor_focus']:.4f}, "
+            f"reviewer_actions={path_report['reviewer_edit_burden']['avg_actions_per_matched_candidate']:.4f}, "
+            f"stability={path_report['stability']['exact_match_rate']:.4f}"
+        )
 
 
 if __name__ == "__main__":
