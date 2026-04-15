@@ -2,82 +2,100 @@
 
 ## Current Status
 
-The repo is well beyond the initial scaffold.
+The repo is well beyond the initial scaffold. The current work is mostly about
+hardening, reducing setup friction, and tightening the external story around
+what is already implemented.
 
-Already shipped:
+### Shipped now
 
-- writer workspace mounted at `/workspace/` with `/operator/` retained as an advanced alias
+- writer workspace mounted at `/workspace/` with `/operator/` retained as an
+  advanced alias
 - ingestion, intake, review, query, export, and runtime-health APIs
 - research runs with staging and extract handoff
 - Postgres-backed app state
 - Postgres-backed canon as the default truth-store path
 - lore packet export
+- persisted background jobs for research, Bible, and export work
 - live integration coverage for Zotero, Qdrant, and Wikibase
 
-Still notably incomplete or provisional:
+### Enabled by default but still maturing
 
-- GraphRAG is not yet the always-on default in normal local use
-- real Zotero-backed workflows still depend on local credentials and collection setup
-- Qdrant-backed retrieval is now part of the default local stack, but the ergonomics and quality tuning are still in progress
-- auth and production deployment concerns are still light
+- Qdrant-backed retrieval and projection in the default local stack
 
-## Phase 1 — Stabilize The Default Stack
+### Optional or provisional
 
-Focus: make the documented Postgres-first stack feel boring and dependable.
+- GraphRAG as an alternate extraction path
+- real Zotero-backed workflows
+- research semantics on top of Qdrant
+- Wikibase as an alternate truth store
 
-- tighten `.env.example` around the current defaults and optional integrations
+### Not yet productized
+
+- auth and multi-user access control
+- production deployment beyond minimal self-host guidance
+- broad benchmark coverage beyond the current narrow presets
+
+## Current Product Boundary
+
+Sourcebound is currently a local-first or trusted-operator tool. It is usable
+today for self-hosted technical users, but it does not yet ship a user auth
+layer or a polished public multi-user deployment story. The near-term roadmap
+focus is to reduce ambiguity about that boundary while making the shipped stack
+more dependable.
+
+## Phase 1 — Trustworthy Default Stack
+
+Focus: make the documented Postgres-first stack feel boring, dependable, and
+externally legible.
+
 - keep the writer-first flow smooth in the Postgres-backed path
 - harden runtime status and setup diagnostics
+- keep docs, runtime wording, and quick-start instructions aligned
 - continue closing gaps between file-backed tests and Postgres-backed behavior
 
-## Phase 2 — Real Corpus Workflow
+## Phase 2 — Auth And Access Design
 
-Focus: make Zotero-backed intake and normalization the standard source workflow.
+Focus: make the next security milestone decision-complete before shipping any
+partial gate.
+
+- decide the trusted-operator versus multi-user boundary explicitly
+- define auth and access-control requirements for operator surfaces
+- decide session, identity, and deployment assumptions before implementation
+- avoid landing a half-finished auth layer that misrepresents the product
+
+## Phase 3 — Real Corpus Workflow
+
+Focus: make Zotero-backed intake and normalization feel routine instead of
+merely supported.
 
 - improve source-document discovery and attachment handling
 - make `zotero-check` and intake tooling better at surfacing config or API issues
 - reduce friction between manual intake and pull-based ingest
 - validate the loop on a narrow but real pilot corpus
 
-## Phase 3 — Extraction Upgrade
+## Phase 4 — Retrieval And Extraction Quality
 
-Focus: move from “heuristic fallback works” to “GraphRAG is practical”.
+Focus: improve the maturing quality layers without pretending they are already
+the default gold path.
 
-- harden GraphRAG runtime readiness checks
-- improve artifact import and in-process GraphRAG paths
-- compare heuristic and GraphRAG output quality on benchmark runs
+- make the Qdrant-backed retrieval path more dependable in everyday local use
+- improve semantic reranking and duplicate handling for research findings
+- move GraphRAG from “implemented but setup-heavy” toward “practical when chosen”
 - improve evidence span quality and candidate usefulness for review
 
-## Phase 4 — Retrieval And Research Quality
+## Phase 5 — Product Hardening
 
-Focus: make the default Qdrant-backed retrieval path feel polished and dependable.
+Focus: make self-hosted operation safer and easier before widening the product
+surface.
 
-- improve the default projection-backed retrieval workflow
-- improve semantic reranking and duplicate handling for research findings
-- expose clearer query modes by certainty, relationship, and viewpoint
-- strengthen provenance-aware answer assembly from approved claims and Bible paragraphs
-
-## Phase 5 — Canon Modeling
-
-Focus: deepen what approved canon can express.
-
-- expand relationship handling across claims
-- refine author-decision support as a first-class canon layer
-- improve contradiction, drift, and supersession workflows
+- strengthen deployment guidance beyond local docker compose
+- improve observability around retries, degraded modes, and partial completion
+- extend the shipped persisted-job model if the in-process worker stops being enough
 - keep file, Postgres, and optional Wikibase behavior aligned
 
-## Phase 6 — Product Hardening
+## Phase 6 — Benchmarking And Evaluation
 
-Focus: make the tool more usable outside a dev-only loop.
-
-- extend the shipped persisted-job model if local-first async work grows beyond the in-process worker
-- auth and access control decisions for the operator surface
-- deployment guidance beyond local docker compose
-- stronger observability around retries, degraded modes, and partial completion
-
-## Phase 7 — Benchmarking And Evaluation
-
-Focus: make progress measurable.
+Focus: make progress measurable without overstating current benchmark breadth.
 
 - keep expanding benchmark scenarios beyond the current `benchmark-2003-dj` preset
 - track quality, coverage, and reviewability of extracted candidates

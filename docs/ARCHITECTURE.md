@@ -2,7 +2,12 @@
 
 ## Decision Summary
 
-Sourcebound is still a modular monolith with explicit ports and adapters, but it is no longer just an architecture seed. The current repo already implements the main operational loop:
+Sourcebound is still a modular monolith with explicit ports and adapters, but
+it is no longer just an architecture seed. The current repo already implements
+the main operational loop and should be understood using the same public status
+taxonomy as the rest of the docs.
+
+### Shipped now
 
 - intake and source ingestion
 - document normalization
@@ -10,9 +15,32 @@ Sourcebound is still a modular monolith with explicit ports and adapters, but it
 - human review
 - approved canon storage
 - query and export surfaces
-- writer-facing research runs with advanced utility controls
+- writer-facing workspace and operator utilities
+- persisted background jobs
+- Postgres-backed state and canon as the default stack
 
-The design goal remains the same: keep the workflow in one Python codebase while preserving clean seams around external systems.
+### Enabled by default but still maturing
+
+- Qdrant-backed retrieval and projection in the recommended local stack
+
+### Optional or provisional
+
+- Zotero-backed live corpus workflows
+- GraphRAG-backed extraction
+- research semantics
+- Wikibase as an alternate truth-store path
+
+### Not yet productized
+
+- auth and multi-user access control
+- polished production deployment beyond minimal self-host guidance
+- broad benchmark coverage across all workflows
+
+## Current Product Boundary
+
+The architecture is built for a trusted operator today, not a public multi-user
+service. The design keeps strong seams around external systems, but the product
+surface still assumes a local-first or self-hosted technical operator.
 
 ## Current Runtime Topology
 
@@ -25,7 +53,7 @@ corpus intake
   -> candidate claims + evidence
   -> review decisions
   -> approved claims in truth store
-  -> Qdrant projection index
+  -> projection index
   -> query / export consumers
 ```
 
@@ -92,7 +120,8 @@ Concrete implementations behind the ports:
 ### API and UI
 
 - FastAPI exposes the workflow and utility routes
-- the writer workspace is a shipped static frontend mounted at `/workspace/`, with `/operator/` kept as an advanced alias
+- the writer workspace is a shipped static frontend mounted at `/workspace/`,
+  with `/operator/` kept as an advanced alias
 
 ## Storage Model
 
@@ -116,7 +145,7 @@ App state covers operational records such as:
 
 `APP_STATE_BACKEND` selects the implementation:
 
-- `postgres` is the default
+- `postgres` is the default and recommended runtime path
 - `sqlite` is supported
 - `file` is the zero-infra fallback
 
@@ -124,11 +153,12 @@ App state covers operational records such as:
 
 Approved canon is behind a separate truth-store port:
 
-- `postgres` is the default
+- `postgres` is the default and recommended runtime path
 - `file` is supported for local-only work
-- `wikibase` is optional
+- `wikibase` is optional and still a provisional alternate backend
 
-This separation is intentional: app state and canon are related, but not the same responsibility.
+This separation is intentional: app state and canon are related, but not the
+same responsibility.
 
 ### Projection layer
 
@@ -137,12 +167,14 @@ Qdrant is used as a rebuildable projection:
 - approved-claim retrieval for query flows
 - research finding semantic dedupe / novelty checks
 
-It is not the source of truth.
-It may improve ranking for query and Bible composition, but rendered output must still resolve back to approved claims and linked evidence.
+It is not the source of truth. It is enabled in the recommended local stack,
+but it is still maturing as the routine retrieval path and remains safe to
+rebuild from canonical state.
 
 ## Postgres Canon Schema
 
-The Postgres truth-store path now uses explicit canon tables rather than a single generic blob store.
+The Postgres truth-store path now uses explicit canon tables rather than a
+single generic blob store.
 
 - `claims`
 - `claim_evidence`
@@ -153,17 +185,20 @@ The Postgres truth-store path now uses explicit canon tables rather than a singl
 - `source_documents`
 - `source_chunks`
 
-This supports provenance, review history, relationship tracking, and versioned canon writes without leaking persistence details into service logic.
+This supports provenance, review history, relationship tracking, and versioned
+canon writes without leaking persistence details into service logic.
 
 ## Key Trust Boundaries
 
 ### Extraction is not canon
 
-Neither heuristic extraction nor GraphRAG output becomes canon automatically. Both only produce candidate claims.
+Neither heuristic extraction nor GraphRAG output becomes canon automatically.
+Both only produce candidate claims.
 
 ### Research is not canon
 
-Research findings are staging material. They must still be normalized, extracted, and reviewed.
+Research findings are staging material. They must still be normalized,
+extracted, and reviewed.
 
 ### Review is the trust boundary
 
@@ -171,21 +206,23 @@ The only path to approved canon is explicit review.
 
 ### Projection is downstream only
 
-Qdrant search results can help rank or retrieve, but canonical answers must still resolve back to approved claims and linked evidence.
+Qdrant search results can help rank or retrieve, but canonical answers must
+still resolve back to approved claims and linked evidence.
 
 ### Jobs are orchestration only
 
-Persisted jobs track long-running work, but the authoritative results still live in the existing research-run and Bible-section stores.
+Persisted jobs track long-running work, but the authoritative results still
+live in the existing research-run and Bible-section stores.
 
 ## Current Default Stack
 
-For normal local development, the repo expects:
+For normal local development or trusted-operator use, the repo expects:
 
 - Postgres for state
 - Postgres for canon
-- Qdrant for projection-backed retrieval
-- Zotero when exercising real corpus workflows
-- GraphRAG when configured and ready, otherwise heuristic fallback
+- Qdrant for the default retrieval path, with rebuildability preserved
+- Zotero only when exercising real corpus workflows
+- GraphRAG only when configured and ready, otherwise heuristic fallback
 
 ## Bounded Contexts
 
@@ -200,7 +237,8 @@ The codebase is still organized around a few natural seams:
 - retrieval / query
 - application surface
 
-These seams are useful now for testability and adapter swapping, and later if any part deserves extraction into a separate worker or service.
+These seams are useful now for testability and adapter swapping, and later if
+any part deserves extraction into a separate worker or service.
 
 ## Near-Term Split Candidates
 

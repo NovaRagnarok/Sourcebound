@@ -210,8 +210,9 @@ def _corpus_status() -> RuntimeDependencyStatus:
             reachable=None,
             ready=True,
             detail=(
-                "Zotero is optional for first run. Intake routes still work, but they stay on "
-                "manual and stub flows until you configure a live library."
+                "Zotero is supported but optional for the current release. Intake routes still "
+                "work, but they stay on manual and stub flows until you configure a live "
+                "library."
             ),
         )
 
@@ -296,8 +297,8 @@ def _extraction_status() -> RuntimeDependencyStatus:
             reachable=None,
             ready=True,
             detail=(
-                "Heuristic extraction is active for local startup. This is the default path "
-                "and keeps first run dependency-light."
+                "Heuristic extraction is active for local startup. This is the shipped default "
+                "path and keeps first run dependency-light while GraphRAG remains optional."
             ),
         )
 
@@ -422,7 +423,7 @@ def _next_steps(services: list[RuntimeDependencyStatus]) -> list[str]:
         steps.append(
             "Non-default local mode detected: re-enable Qdrant projection with "
             "`QDRANT_ENABLED=true` and `docker compose up -d qdrant` so retrieval uses "
-            "the default projection path instead of in-memory ranking."
+            "the default local projection path instead of in-memory ranking."
         )
     if settings.research_semantic_enabled and by_name["research_semantics"].ready is False:
         if by_name["research_semantics"].mode == "qdrant:uninitialized":
@@ -456,7 +457,8 @@ def _next_steps(services: list[RuntimeDependencyStatus]) -> list[str]:
     if by_name["extraction"].mode == "heuristic":
         steps.append(
             "Optional after first run: enable GraphRAG or another richer extraction "
-            "path if you want higher-quality candidate generation."
+            "path if you want higher-quality candidate generation beyond the shipped "
+            "heuristic default."
         )
     elif by_name["extraction"].ready is False:
         steps.append(
