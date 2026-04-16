@@ -3,6 +3,7 @@ from __future__ import annotations
 import threading
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 from source_aware_worldbuilding.adapters.file_backed import (
     FileBibleProjectProfileStore,
@@ -271,6 +272,52 @@ def test_job_service_processes_curated_research_jobs(temp_data_dir: Path) -> Non
     assert completed.last_checkpoint_at is not None
 
 
+def test_job_service_marks_partial_research_jobs_with_review_guidance(
+    temp_data_dir: Path,
+) -> None:
+    class PartialResearchService:
+        def prepare_run(self, request):
+            _ = request
+            return SimpleNamespace(run_id="run-partial")
+
+        def execute_run(self, run_id, *, checkpoint=None):
+            _ = run_id, checkpoint
+
+        def get_run_detail(self, run_id):
+            _ = run_id
+            return SimpleNamespace(
+                run=SimpleNamespace(
+                    status=SimpleNamespace(value="degraded_fallback"),
+                    warnings=["Projection fell back to memory ranking."],
+                )
+            )
+
+    job_service = JobService(
+        job_store=FileJobStore(temp_data_dir),
+        research_service=PartialResearchService(),
+        bible_service=build_bible_service(temp_data_dir),
+    )
+
+    job = job_service.enqueue_research_run(
+        ResearchRunRequest(
+            brief=ResearchBrief(
+                topic="partial research run",
+                adapter_id="curated_inputs",
+            )
+        )
+    )
+    processed = job_service.process_pending_jobs()
+    completed = job_service.get_job(job.job_id)
+
+    assert processed is True
+    assert completed is not None
+    assert completed.status.value == "partial"
+    assert completed.status_label == "partial"
+    assert completed.progress_message == "Projection fell back to memory ranking."
+    assert completed.degraded_reason == "Projection fell back to memory ranking."
+    assert "Projection fell back to memory ranking." in completed.warnings
+
+
 def test_job_service_can_cancel_queued_jobs_and_export_in_background(temp_data_dir: Path) -> None:
     populate_bible_fixtures(temp_data_dir)
     bible_service = build_bible_service(temp_data_dir)
@@ -372,6 +419,47 @@ def test_job_service_retries_failed_jobs_by_creating_a_new_attempt(temp_data_dir
     assert retry.retry_of_job_id == failed_job.job_id
     assert retry.attempt_count == failed_job.attempt_count + 1
     assert retry.status_label == "queued"
+    assert retry.progress_message == "Queued retry attempt 2 of 2 and waiting for the background worker."
+
+
+def test_job_service_marks_retryable_failures_with_retry_guidance(temp_data_dir: Path) -> None:
+    class BrokenBibleService(BibleWorkspaceService):
+        def compose_prepared_section(self, section_id: str, progress_callback=None):
+            _ = section_id, progress_callback
+            raise RuntimeError("compose blew up")
+
+    populate_bible_fixtures(temp_data_dir)
+    broken_service = BrokenBibleService(
+        profile_store=FileBibleProjectProfileStore(temp_data_dir),
+        section_store=FileBibleSectionStore(temp_data_dir),
+        truth_store=FileTruthStore(temp_data_dir),
+        evidence_store=FileEvidenceStore(temp_data_dir),
+        source_store=FileSourceStore(temp_data_dir),
+    )
+    broken_service.save_profile(
+        "project-greyport",
+        BibleProjectProfileUpdateRequest(project_name="Greyport Bible", geography="Greyport"),
+    )
+    job_service = JobService(
+        job_store=FileJobStore(temp_data_dir),
+        research_service=build_research_service(temp_data_dir),
+        bible_service=broken_service,
+    )
+
+    job = job_service.enqueue_bible_compose(
+        BibleSectionCreateRequest(
+            project_id="project-greyport",
+            section_type=BibleSectionType.SETTING_OVERVIEW,
+        )
+    )
+    processed = job_service.process_pending_jobs()
+    completed = job_service.get_job(job.job_id)
+
+    assert processed is True
+    assert completed is not None
+    assert completed.status == JobStatus.FAILED
+    assert completed.progress_message == "Attempt 1 of 2 failed. Review the error and retry when ready."
+    assert completed.error_detail == "compose blew up"
 
 
 def test_job_service_reconciles_stale_running_jobs(temp_data_dir: Path) -> None:

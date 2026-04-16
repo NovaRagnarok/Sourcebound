@@ -370,6 +370,15 @@ def _research_semantics_status() -> RuntimeDependencyStatus:
 
 
 def _job_worker_status() -> RuntimeDependencyStatus:
+    if settings.app_job_worker_enabled:
+        detail = f"In-process worker enabled with {settings.app_job_poll_interval_seconds}s polling."
+    elif settings.app_allow_queued_jobs_without_worker:
+        detail = "Background job worker is disabled; long-running routes will queue without auto-processing."
+    else:
+        detail = (
+            "Background job worker is disabled; long-running routes are blocked "
+            "until APP_JOB_WORKER_ENABLED=true."
+        )
     return RuntimeDependencyStatus(
         name="job_worker",
         role="Persisted background research and bible jobs",
@@ -377,12 +386,7 @@ def _job_worker_status() -> RuntimeDependencyStatus:
         configured=settings.app_job_worker_enabled,
         reachable=None,
         ready=settings.app_job_worker_enabled,
-        detail=(
-            f"In-process worker enabled with {settings.app_job_poll_interval_seconds}s polling."
-            if settings.app_job_worker_enabled
-            else "Background job worker is disabled; long-running routes will queue "
-            "without auto-processing."
-        ),
+        detail=detail,
     )
 
 

@@ -410,6 +410,12 @@ class JobService:
         max_attempts: int = 2,
     ) -> JobRecord:
         now = utc_now()
+        progress_message = "Queued and waiting for the background worker."
+        if retry_of_job_id:
+            progress_message = (
+                f"Queued retry attempt {attempt_count} of {max_attempts} "
+                "and waiting for the background worker."
+            )
         return JobRecord(
             job_id=f"job-{uuid4().hex[:12]}",
             job_type=job_type,
@@ -422,7 +428,7 @@ class JobService:
             progress_stage="queued",
             progress_current=0,
             progress_total=100,
-            progress_message="Queued and waiting for the background worker.",
+            progress_message=progress_message,
             result_ref=result_ref,
             worker_state="queued",
             created_at=now,
@@ -466,11 +472,23 @@ class JobService:
         job.progress_stage = job.status_label
         job.progress_current = job.progress_total
         if job.status == JobStatus.PARTIAL:
-            job.progress_message = (
-                job.degraded_reason or "Completed with explicit degradation or warnings."
-            )
+            if job.retry_of_job_id:
+                job.progress_message = (
+                    f"Retry attempt {job.attempt_count} of {job.max_attempts} "
+                    "completed with warnings. Review the warnings before trusting the result."
+                )
+            else:
+                job.progress_message = (
+                    job.degraded_reason
+                    or "Completed with warnings. Review the warnings before trusting the result."
+                )
         else:
-            job.progress_message = "Completed successfully."
+            if job.retry_of_job_id:
+                job.progress_message = (
+                    f"Retry attempt {job.attempt_count} of {job.max_attempts} completed successfully."
+                )
+            else:
+                job.progress_message = "Completed successfully."
         job.completed_at = utc_now()
         job.updated_at = utc_now()
         job.last_heartbeat_at = job.updated_at
@@ -484,7 +502,13 @@ class JobService:
         job.status_label = "failed"
         job.worker_state = "failed"
         job.progress_stage = "failed"
-        job.progress_message = str(exc)
+        if job.retryable:
+            job.progress_message = (
+                f"Attempt {job.attempt_count} of {job.max_attempts} failed. "
+                "Review the error and retry when ready."
+            )
+        else:
+            job.progress_message = str(exc)
         job.error = str(exc)
         job.error_code = exc.__class__.__name__
         job.error_detail = str(exc)

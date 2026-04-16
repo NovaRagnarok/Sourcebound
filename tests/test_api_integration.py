@@ -4,6 +4,14 @@ import time
 
 from fastapi.testclient import TestClient
 
+from source_aware_worldbuilding.adapters.file_backed import (
+    FileBibleProjectProfileStore,
+    FileBibleSectionStore,
+    FileEvidenceStore,
+    FileJobStore,
+    FileSourceStore,
+    FileTruthStore,
+)
 from source_aware_worldbuilding.adapters.qdrant_adapter import QdrantProjectionAdapter
 from source_aware_worldbuilding.api.dependencies import (
     get_ingestion_service,
@@ -19,6 +27,7 @@ from source_aware_worldbuilding.domain.enums import (
     ClaimKind,
     ClaimStatus,
     ExtractionRunStatus,
+    JobStatus,
     ReviewState,
 )
 from source_aware_worldbuilding.domain.errors import (
@@ -36,6 +45,7 @@ from source_aware_worldbuilding.domain.models import (
     IntakeResult,
     LorePacketRequest,
     LorePacketResponse,
+    BibleProjectProfileUpdateRequest,
     SourceDocumentRecord,
     SourceRecord,
     ZoteroCreatedItem,
@@ -43,6 +53,8 @@ from source_aware_worldbuilding.domain.models import (
 )
 from source_aware_worldbuilding.settings import settings
 from source_aware_worldbuilding.storage.json_store import JsonListStore
+from source_aware_worldbuilding.services.bible import BibleWorkspaceService
+from source_aware_worldbuilding.services.jobs import JobService
 
 
 def wait_for_job(client: TestClient, job_id: str, *, attempts: int = 40) -> dict:
@@ -150,6 +162,16 @@ def populate_lore_packet_fixtures(data_dir) -> None:
                 status=ClaimStatus.AUTHOR_CHOICE,
             ),
         ]
+    )
+
+
+def build_bible_service(data_dir):
+    return BibleWorkspaceService(
+        profile_store=FileBibleProjectProfileStore(data_dir),
+        section_store=FileBibleSectionStore(data_dir),
+        truth_store=FileTruthStore(data_dir),
+        evidence_store=FileEvidenceStore(data_dir),
+        source_store=FileSourceStore(data_dir),
     )
 
 
@@ -806,6 +828,104 @@ def test_job_backed_routes_return_setup_guidance_when_job_service_cannot_boot(
         )
         assert research.status_code == 503
         assert "Background job support is not ready" in research.json()["detail"]
+
+
+def test_job_routes_surface_retryable_failure_and_retry_flow(
+    temp_data_dir, monkeypatch
+) -> None:
+    class NoopResearchService:
+        def prepare_run(self, request):  # pragma: no cover - not exercised
+            _ = request
+            raise AssertionError("Research should not be invoked in this test.")
+
+        def execute_run(self, run_id, *, checkpoint=None):  # pragma: no cover - not exercised
+            _ = run_id, checkpoint
+            raise AssertionError("Research should not be invoked in this test.")
+
+        def get_run_detail(self, run_id):  # pragma: no cover - not exercised
+            _ = run_id
+            raise AssertionError("Research should not be invoked in this test.")
+
+    populate_lore_packet_fixtures(temp_data_dir)
+    bible_service = build_bible_service(temp_data_dir)
+    bible_service.save_profile(
+        "project-greyport",
+        BibleProjectProfileUpdateRequest(project_name="Greyport Bible", geography="Greyport"),
+    )
+    job_service = JobService(
+        job_store=FileJobStore(temp_data_dir),
+        research_service=NoopResearchService(),
+        bible_service=bible_service,
+    )
+
+    queued = job_service.enqueue_bible_export("project-greyport")
+    failed = job_service.get_job(queued.job_id)
+    assert failed is not None
+    failed.status = JobStatus.FAILED
+    failed.status_label = "failed"
+    failed.worker_state = "failed"
+    failed.progress_stage = "failed"
+    failed.progress_message = "Synthetic export failure."
+    failed.error = "Synthetic export failure."
+    failed.error_detail = "Synthetic export failure."
+    failed.retryable = True
+    job_service.job_store.update_job(failed)
+
+    monkeypatch.setattr(job_runtime_routes, "get_job_service", lambda: job_service)
+
+    with TestClient(app) as client:
+        detail = client.get(f"/v1/jobs/{queued.job_id}")
+        assert detail.status_code == 200
+        detail_body = detail.json()
+        assert detail_body["status_label"] == "failed"
+        assert detail_body["retryable"] is True
+        assert detail_body["error_detail"] == "Synthetic export failure."
+        assert detail_body["operator_summary"] == "Attempt 1 of 2 failed. Synthetic export failure."
+        assert detail_body["operator_next_action"] == "Inspect the error, then use Retry job to queue a new attempt."
+
+        retry = client.post(f"/v1/jobs/{queued.job_id}/retry")
+        assert retry.status_code == 200
+        retry_body = retry.json()
+        assert retry_body["status_label"] == "queued"
+        assert retry_body["retry_of_job_id"] == queued.job_id
+        assert retry_body["operator_summary"] == "Queued retry attempt 2 of 2 and waiting for the background worker."
+
+        processed = job_service.process_pending_jobs()
+        assert processed is True
+
+        retry_detail = client.get(f"/v1/jobs/{retry_body['job_id']}")
+        assert retry_detail.status_code == 200
+        assert retry_detail.json()["status"] == "completed"
+        assert retry_detail.json()["operator_summary"] == "Retry attempt 2 of 2 finished successfully."
+
+        jobs = client.get("/v1/jobs")
+        assert jobs.status_code == 200
+        status_by_id = {item["job_id"]: item["status_label"] for item in jobs.json()}
+        assert status_by_id[queued.job_id] == "failed"
+        assert status_by_id[retry_body["job_id"]] == "completed"
+        failed_row = next(item for item in jobs.json() if item["job_id"] == queued.job_id)
+        retry_row = next(item for item in jobs.json() if item["job_id"] == retry_body["job_id"])
+        assert failed_row["operator_next_action"] == "Inspect the error, then use Retry job to queue a new attempt."
+        assert retry_row["operator_summary"] == "Retry attempt 2 of 2 finished successfully."
+
+
+def test_runtime_health_worker_detail_reflects_blocked_job_routes(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "app_state_backend", "file")
+    monkeypatch.setattr(settings, "app_truth_backend", "file")
+    monkeypatch.setattr(settings, "graph_rag_enabled", False)
+    monkeypatch.setattr(settings, "qdrant_enabled", False)
+    monkeypatch.setattr(settings, "zotero_library_id", None)
+    monkeypatch.setattr(settings, "app_job_worker_enabled", False)
+    monkeypatch.setattr(settings, "app_allow_queued_jobs_without_worker", False)
+
+    with TestClient(app) as client:
+        response = client.get("/health/runtime")
+
+    assert response.status_code == 200
+    body = response.json()
+    worker = next(service for service in body["services"] if service["name"] == "job_worker")
+    assert worker["ready"] is False
+    assert "long-running routes are blocked" in worker["detail"]
 
 
 def test_async_author_flow_uses_background_jobs_end_to_end(temp_data_dir) -> None:

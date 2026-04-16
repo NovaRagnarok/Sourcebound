@@ -3183,8 +3183,28 @@
     }
     const warnings = job.warnings || [];
     const diagnostic = [];
+    const state = job.worker_state || job.status_label || job.status;
+    if (job.retry_of_job_id) {
+      diagnostic.push(
+        `<div class="mini"><strong>Retry lineage</strong><div class="detail-note">Retrying ${escapeHtml(job.retry_of_job_id)} as attempt ${escapeHtml(job.attempt_count || 1)} of ${escapeHtml(job.max_attempts || job.attempt_count || 1)}.</div></div>`
+      );
+    } else if ((Number(job.max_attempts || 1) > 1 || Number(job.attempt_count || 1) > 1)) {
+      diagnostic.push(
+        `<div class="mini"><strong>Attempt</strong><div class="detail-note">Attempt ${escapeHtml(job.attempt_count || 1)} of ${escapeHtml(job.max_attempts || job.attempt_count || 1)}.</div></div>`
+      );
+    }
     if (job.progress_message) {
       diagnostic.push(`<div class="mini"><strong>Stage</strong><div class="detail-note">${escapeHtml(job.progress_message)}</div></div>`);
+    }
+    if (state === "partial") {
+      diagnostic.push(
+        "<div class='warning'>Partial completion: review the warnings before treating this job as done.</div>"
+      );
+    }
+    if (state === "failed" && job.retryable) {
+      diagnostic.push(
+        "<div class='warning'>This failed job can be retried from the job controls after you inspect the error.</div>"
+      );
     }
     if (job.stalled_reason) {
       diagnostic.push(`<div class="warning">${escapeHtml(job.stalled_reason)}</div>`);
@@ -3194,6 +3214,11 @@
     }
     if ((job.status_label || job.status) === "failed") {
       diagnostic.push(`<div class="warning">${escapeHtml(job.error_detail || job.error || "Background job failed.")}</div>`);
+    }
+    if (job.operator_next_action) {
+      diagnostic.push(
+        `<div class="mini"><strong>Next step</strong><div class="detail-note">${escapeHtml(job.operator_next_action)}</div></div>`
+      );
     }
     if (warnings.length) {
       diagnostic.push(...warnings.map((warning) => `<div class="warning">${escapeHtml(warning)}</div>`));
@@ -5066,8 +5091,28 @@
     const total = Number(job.progress_total || 100);
     const current = Number(job.progress_current || 0);
     const percent = total > 0 ? Math.max(0, Math.min(100, Math.round((current / total) * 100))) : 0;
-    const label = (job.worker_state || job.status_label || job.status || "queued").replaceAll("_", " ");
-    return `${label}${job.progress_stage ? ` · ${job.progress_stage.replaceAll("_", " ")}` : ""}${["running", "queued", "cancel_requested"].includes(job.worker_state || job.status_label || job.status) ? ` · ${percent}%` : ""}`;
+    const state = job.worker_state || job.status_label || job.status || "queued";
+    const label = state.replaceAll("_", " ");
+    const qualifiers = [];
+    const attemptCount = Number(job.attempt_count || 1);
+    const maxAttempts = Number(job.max_attempts || Math.max(1, attemptCount));
+    if (maxAttempts > 1 || attemptCount > 1) {
+      qualifiers.push(`attempt ${attemptCount} of ${maxAttempts}`);
+    }
+    if (state === "partial") {
+      qualifiers.push("review warnings");
+    } else if (state === "stalled") {
+      qualifiers.push("worker stalled");
+    } else if (state === "failed" && job.retryable) {
+      qualifiers.push("retry available");
+    }
+    if (["running", "queued", "cancel_requested"].includes(state)) {
+      if (job.progress_stage) {
+        qualifiers.push(job.progress_stage.replaceAll("_", " "));
+      }
+      qualifiers.push(`${percent}%`);
+    }
+    return [label, ...qualifiers].join(" · ");
   }
 
   function renderJobPill(job) {
@@ -5095,6 +5140,7 @@
       return "Background workflow status is available.";
     }
     return (
+      job.operator_summary ||
       job.progress_message ||
       job.stalled_reason ||
       job.degraded_reason ||
