@@ -22,6 +22,7 @@ def restore_api_dependency_overrides() -> None:
     original_postgres_dsn = settings.app_postgres_dsn
     original_postgres_schema = settings.app_postgres_schema
     original_strict_startup_checks = settings.app_strict_startup_checks
+    original_operator_token = settings.app_operator_token
     original_wikibase_base_url = settings.wikibase_base_url
     original_wikibase_api_url = settings.wikibase_api_url
     original_wikibase_username = settings.wikibase_username
@@ -40,6 +41,7 @@ def restore_api_dependency_overrides() -> None:
     original_zotero_collection_key = settings.zotero_collection_key
     original_zotero_api_key = settings.zotero_api_key
     original_zotero_base_url = settings.zotero_base_url
+    settings.app_operator_token = original_operator_token or "test-operator-token"
     try:
         yield
     finally:
@@ -52,6 +54,7 @@ def restore_api_dependency_overrides() -> None:
         settings.app_postgres_dsn = original_postgres_dsn
         settings.app_postgres_schema = original_postgres_schema
         settings.app_strict_startup_checks = original_strict_startup_checks
+        settings.app_operator_token = original_operator_token
         settings.wikibase_base_url = original_wikibase_base_url
         settings.wikibase_api_url = original_wikibase_api_url
         settings.wikibase_username = original_wikibase_username
@@ -70,6 +73,12 @@ def restore_api_dependency_overrides() -> None:
         settings.zotero_collection_key = original_zotero_collection_key
         settings.zotero_api_key = original_zotero_api_key
         settings.zotero_base_url = original_zotero_base_url
+
+
+@pytest.fixture
+def operator_auth_headers() -> dict[str, str]:
+    token = settings.app_operator_token or "test-operator-token"
+    return {"Authorization": f"Bearer {token}"}
 
 
 @pytest.fixture

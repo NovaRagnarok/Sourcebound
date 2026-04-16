@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
+from source_aware_worldbuilding.api.dependencies import require_operator_actor
 from source_aware_worldbuilding.api.routes._job_runtime import require_job_service
 from source_aware_worldbuilding.domain.errors import WorkerUnavailableError
 
@@ -83,6 +84,7 @@ def get_job(
 @router.post("/{job_id}/cancel")
 def cancel_job(
     job_id: str,
+    _actor=Depends(require_operator_actor),
 ) -> dict:
     service = require_job_service(action="cancelling background jobs")
     try:
@@ -94,6 +96,7 @@ def cancel_job(
 @router.post("/{job_id}/retry")
 def retry_job(
     job_id: str,
+    _actor=Depends(require_operator_actor),
 ) -> dict:
     service = require_job_service(action="retrying background jobs")
     try:

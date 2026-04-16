@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 
-from source_aware_worldbuilding.api.dependencies import get_lore_packet_service
+from source_aware_worldbuilding.api.dependencies import get_lore_packet_service, require_operator_actor
 from source_aware_worldbuilding.domain.errors import CanonUnavailableError, WikibaseSyncError
 from source_aware_worldbuilding.domain.models import LorePacketRequest
 from source_aware_worldbuilding.services.lore_packet import LorePacketService
@@ -12,6 +12,7 @@ router = APIRouter(prefix="/v1/exports", tags=["exports"])
 def export_lore_packet(
     payload: LorePacketRequest,
     service: LorePacketService = Depends(get_lore_packet_service),
+    _actor=Depends(require_operator_actor),
 ) -> dict:
     try:
         return service.export(payload).model_dump(mode="json")

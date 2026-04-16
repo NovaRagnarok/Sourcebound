@@ -149,7 +149,9 @@ def test_live_zotero_pull_reads_real_library(require_live_zotero) -> None:
 
 
 @pytest.mark.live_wikibase
-def test_live_wikibase_review_flow_round_trips_claim(require_live_wikibase, monkeypatch) -> None:
+def test_live_wikibase_review_flow_round_trips_claim(
+    require_live_wikibase, monkeypatch, operator_auth_headers
+) -> None:
     cache_dir = require_live_wikibase
     monkeypatch.setattr(settings, "app_state_backend", "file")
     monkeypatch.setattr(settings, "app_truth_backend", "wikibase")
@@ -189,6 +191,7 @@ def test_live_wikibase_review_flow_round_trips_claim(require_live_wikibase, monk
     )
 
     with TestClient(app) as client:
+        client.headers.update(operator_auth_headers)
         approve_response = client.post(
             f"/v1/candidates/cand-live-{token}/review",
             json={"decision": "approve"},

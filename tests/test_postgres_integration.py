@@ -32,6 +32,7 @@ def _table_count(dsn: str, schema: str, table_name: str) -> int:
 
 def test_operator_flow_routes_share_postgres_backed_state(
     postgres_app_state: dict[str, str | Path],
+    operator_auth_headers: dict[str, str],
 ) -> None:
     dsn = str(postgres_app_state["dsn"])
     schema = str(postgres_app_state["schema"])
@@ -59,6 +60,7 @@ def test_operator_flow_routes_share_postgres_backed_state(
     assert _table_count(dsn, schema, "source_chunks") == 8
 
     with TestClient(app) as client:
+        client.headers.update(operator_auth_headers)
         sources_before = client.get("/v1/sources")
         assert sources_before.status_code == 200
         assert len(sources_before.json()) == 10

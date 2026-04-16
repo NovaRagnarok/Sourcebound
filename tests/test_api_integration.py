@@ -233,6 +233,70 @@ def test_root_redirects_to_writer_workspace_alias() -> None:
     assert response.headers["location"] == "/workspace/"
 
 
+def test_protected_mutations_require_operator_auth(
+    temp_data_dir, operator_auth_headers
+) -> None:
+    calls: list[str] = []
+
+    class FakeIntakeService:
+        def intake_text(self, payload):
+            calls.append(payload.title)
+            return IntakeResult(
+                created_item=ZoteroCreatedItem(
+                    zotero_item_key="ITEM-1",
+                    title=payload.title,
+                    item_type="document",
+                ),
+                pulled_sources=[SourceRecord(source_id="src-operator-auth", title=payload.title)],
+                source_documents=[],
+            )
+
+    app.dependency_overrides[get_intake_service] = lambda: FakeIntakeService()
+    try:
+        with TestClient(app) as client:
+            unauthenticated = client.post(
+                "/v1/intake/text",
+                json={"title": "Protected source", "text": "body"},
+            )
+            unauthorized = client.post(
+                "/v1/intake/text",
+                json={"title": "Protected source", "text": "body"},
+                headers={"Authorization": "Bearer wrong-token"},
+            )
+            health = client.get("/health")
+            client.headers.update(operator_auth_headers)
+            authenticated = client.post(
+                "/v1/intake/text",
+                json={"title": "Protected source", "text": "body"},
+            )
+    finally:
+        app.dependency_overrides.pop(get_intake_service, None)
+
+    assert unauthenticated.status_code == 401
+    assert unauthenticated.headers["www-authenticate"] == "Bearer"
+    assert "Authentication required" in unauthenticated.json()["detail"]
+    assert unauthorized.status_code == 403
+    assert "not authorized" in unauthorized.json()["detail"]
+    assert health.status_code == 200
+    assert authenticated.status_code == 200
+    assert calls == ["Protected source"]
+
+
+def test_protected_mutations_return_setup_guidance_when_operator_auth_is_unconfigured(
+    temp_data_dir, monkeypatch
+) -> None:
+    monkeypatch.setattr(settings, "app_operator_token", None)
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1/intake/text",
+            json={"title": "Protected source", "text": "body"},
+        )
+
+    assert response.status_code == 503
+    assert "APP_OPERATOR_TOKEN" in response.json()["detail"]
+
+
 def test_setup_surfaces_boot_without_default_services(monkeypatch) -> None:
     monkeypatch.setattr(settings, "app_state_backend", "postgres")
     monkeypatch.setattr(settings, "app_truth_backend", "postgres")
@@ -299,10 +363,13 @@ def test_runtime_health_route_reports_degraded_when_quality_layers_are_missing(m
     assert any("non-default local mode" in step.lower() for step in body["next_steps"])
 
 
-def test_operator_flow_routes_share_file_backed_state(temp_data_dir) -> None:
+def test_operator_flow_routes_share_file_backed_state(
+    temp_data_dir, operator_auth_headers
+) -> None:
     seed_dev_data()
 
     with TestClient(app) as client:
+        client.headers.update(operator_auth_headers)
         workspace_summary = client.get("/v1/workspace/summary")
         assert workspace_summary.status_code == 200
         summary_body = workspace_summary.json()
@@ -426,10 +493,13 @@ def test_review_queue_route_returns_enriched_cards(temp_data_dir) -> None:
     assert card["location_summary"] == "curated input · Rouen · 1422-01-01 to 1422-02-28"
 
 
-def test_review_route_supports_claim_patch_and_deferred_states(temp_data_dir) -> None:
+def test_review_route_supports_claim_patch_and_deferred_states(
+    temp_data_dir, operator_auth_headers
+) -> None:
     seed_dev_data()
 
     with TestClient(app) as client:
+        client.headers.update(operator_auth_headers)
         approve_response = client.post(
             "/v1/candidates/cand-grain-bell-beadles/review",
             json={
@@ -487,10 +557,13 @@ def test_review_route_supports_claim_patch_and_deferred_states(temp_data_dir) ->
         assert workspace_summary.json()["pending_review_count"] == 3
 
 
-def test_review_route_rejects_unedited_approval_for_deferred_candidates(temp_data_dir) -> None:
+def test_review_route_rejects_unedited_approval_for_deferred_candidates(
+    temp_data_dir, operator_auth_headers
+) -> None:
     seed_dev_data()
 
     with TestClient(app) as client:
+        client.headers.update(operator_auth_headers)
         response = client.post(
             "/v1/candidates/cand-grain-bell-timing/review",
             json={"decision": "approve"},
@@ -523,7 +596,9 @@ def test_query_route_keeps_bread_token_question_topic_first(temp_data_dir) -> No
     assert body["claim_clusters"][0]["lead_claim_id"] == "claim-bread-tokens"
 
 
-def test_review_route_surfaces_wikibase_sync_failures(temp_data_dir) -> None:
+def test_review_route_surfaces_wikibase_sync_failures(
+    temp_data_dir, operator_auth_headers
+) -> None:
     seed_dev_data()
 
     class FailingReviewService:
@@ -533,6 +608,7 @@ def test_review_route_surfaces_wikibase_sync_failures(temp_data_dir) -> None:
 
     try:
         with TestClient(app) as client:
+            client.headers.update(operator_auth_headers)
             claims_before = client.get("/v1/claims")
             assert claims_before.status_code == 200
             claim_count_before = len(claims_before.json())
@@ -558,10 +634,13 @@ def test_review_route_surfaces_wikibase_sync_failures(temp_data_dir) -> None:
         app.dependency_overrides.pop(get_review_service, None)
 
 
-def test_lore_packet_export_route_returns_markdown_packet(temp_data_dir) -> None:
+def test_lore_packet_export_route_returns_markdown_packet(
+    temp_data_dir, operator_auth_headers
+) -> None:
     populate_lore_packet_fixtures(temp_data_dir)
 
     with TestClient(app) as client:
+        client.headers.update(operator_auth_headers)
         response = client.post(
             "/v1/exports/lore-packet",
             json={"project_name": "greyport", "files": ["basic-lore.md", "timeline.md"]},
@@ -576,10 +655,13 @@ def test_lore_packet_export_route_returns_markdown_packet(temp_data_dir) -> None
     assert "Timeline" in body["files"][1]["content"]
 
 
-def test_bible_workspace_routes_support_profile_section_and_export(temp_data_dir) -> None:
+def test_bible_workspace_routes_support_profile_section_and_export(
+    temp_data_dir, operator_auth_headers
+) -> None:
     populate_lore_packet_fixtures(temp_data_dir)
 
     with TestClient(app) as client:
+        client.headers.update(operator_auth_headers)
         profile = client.put(
             "/v1/bible/profiles/project-greyport",
             json={
@@ -649,7 +731,9 @@ def test_bible_workspace_routes_support_profile_section_and_export(temp_data_dir
         assert completed_export["result_payload"]["profile"]["project_name"] == "Greyport Bible"
 
 
-def test_lore_packet_route_surfaces_canon_unavailable_errors(temp_data_dir) -> None:
+def test_lore_packet_route_surfaces_canon_unavailable_errors(
+    temp_data_dir, operator_auth_headers
+) -> None:
     class FailingLorePacketService:
         def export(self, request: LorePacketRequest) -> LorePacketResponse:
             _ = request
@@ -658,14 +742,18 @@ def test_lore_packet_route_surfaces_canon_unavailable_errors(temp_data_dir) -> N
     app.dependency_overrides[get_lore_packet_service] = lambda: FailingLorePacketService()
 
     with TestClient(app) as client:
+        client.headers.update(operator_auth_headers)
         response = client.post("/v1/exports/lore-packet", json={"project_name": "greyport"})
 
     assert response.status_code == 503
     assert "canon unavailable" in response.json()["detail"]
 
 
-def test_research_routes_accept_nested_execution_policy_and_curated_inputs(temp_data_dir) -> None:
+def test_research_routes_accept_nested_execution_policy_and_curated_inputs(
+    temp_data_dir, operator_auth_headers
+) -> None:
     with TestClient(app) as client:
+        client.headers.update(operator_auth_headers)
         response = client.post(
             "/v1/research/runs",
             json={
@@ -716,12 +804,15 @@ def test_research_routes_accept_nested_execution_policy_and_curated_inputs(temp_
         assert "semantic" in body["run"]["telemetry"]
 
 
-def test_long_running_routes_return_503_when_worker_disabled(temp_data_dir, monkeypatch) -> None:
+def test_long_running_routes_return_503_when_worker_disabled(
+    temp_data_dir, monkeypatch, operator_auth_headers
+) -> None:
     populate_lore_packet_fixtures(temp_data_dir)
     monkeypatch.setattr(settings, "app_job_worker_enabled", False)
     monkeypatch.setattr(settings, "app_allow_queued_jobs_without_worker", False)
 
     with TestClient(app) as client:
+        client.headers.update(operator_auth_headers)
         profile = client.put(
             "/v1/bible/profiles/project-greyport",
             json={"project_name": "Greyport Bible", "geography": "Greyport"},
@@ -744,11 +835,12 @@ def test_long_running_routes_return_503_when_worker_disabled(temp_data_dir, monk
 
 
 def test_job_backed_reads_stay_usable_when_job_service_cannot_boot(
-    temp_data_dir, monkeypatch
+    temp_data_dir, monkeypatch, operator_auth_headers
 ) -> None:
     populate_lore_packet_fixtures(temp_data_dir)
 
     with TestClient(app) as client:
+        client.headers.update(operator_auth_headers)
         profile = client.put(
             "/v1/bible/profiles/project-greyport",
             json={"project_name": "Greyport Bible", "geography": "Greyport"},
@@ -800,7 +892,7 @@ def test_job_backed_reads_stay_usable_when_job_service_cannot_boot(
 
 
 def test_job_backed_routes_return_setup_guidance_when_job_service_cannot_boot(
-    temp_data_dir, monkeypatch
+    temp_data_dir, monkeypatch, operator_auth_headers
 ) -> None:
     populate_lore_packet_fixtures(temp_data_dir)
 
@@ -810,6 +902,7 @@ def test_job_backed_routes_return_setup_guidance_when_job_service_cannot_boot(
     monkeypatch.setattr(job_runtime_routes, "get_job_service", explode)
 
     with TestClient(app) as client:
+        client.headers.update(operator_auth_headers)
         jobs = client.get("/v1/jobs")
         assert jobs.status_code == 503
         assert "Background job support is not ready" in jobs.json()["detail"]
@@ -831,7 +924,7 @@ def test_job_backed_routes_return_setup_guidance_when_job_service_cannot_boot(
 
 
 def test_job_routes_surface_retryable_failure_and_retry_flow(
-    temp_data_dir, monkeypatch
+    temp_data_dir, monkeypatch, operator_auth_headers
 ) -> None:
     class NoopResearchService:
         def prepare_run(self, request):  # pragma: no cover - not exercised
@@ -874,6 +967,7 @@ def test_job_routes_surface_retryable_failure_and_retry_flow(
     monkeypatch.setattr(job_runtime_routes, "get_job_service", lambda: job_service)
 
     with TestClient(app) as client:
+        client.headers.update(operator_auth_headers)
         detail = client.get(f"/v1/jobs/{queued.job_id}")
         assert detail.status_code == 200
         detail_body = detail.json()
@@ -928,10 +1022,13 @@ def test_runtime_health_worker_detail_reflects_blocked_job_routes(monkeypatch) -
     assert "long-running routes are blocked" in worker["detail"]
 
 
-def test_async_author_flow_uses_background_jobs_end_to_end(temp_data_dir) -> None:
+def test_async_author_flow_uses_background_jobs_end_to_end(
+    temp_data_dir, operator_auth_headers
+) -> None:
     project_id = "project-author-flow"
 
     with TestClient(app) as client:
+        client.headers.update(operator_auth_headers)
         profile = client.put(
             f"/v1/bible/profiles/{project_id}",
             json={
@@ -1074,7 +1171,9 @@ def test_async_author_flow_uses_background_jobs_end_to_end(temp_data_dir) -> Non
         assert any(item["section_id"] == section_id for item in export_body["sections"])
 
 
-def test_intake_routes_return_shared_result_shapes(temp_data_dir) -> None:
+def test_intake_routes_return_shared_result_shapes(
+    temp_data_dir, operator_auth_headers
+) -> None:
     created_item = ZoteroCreatedItem(
         zotero_item_key="ITEM-1",
         title="Test source",
@@ -1113,6 +1212,7 @@ def test_intake_routes_return_shared_result_shapes(temp_data_dir) -> None:
     app.dependency_overrides[get_intake_service] = lambda: FakeIntakeService()
 
     with TestClient(app) as client:
+        client.headers.update(operator_auth_headers)
         text_response = client.post(
             "/v1/intake/text",
             json={"title": "Test source", "text": "hello world"},
@@ -1151,7 +1251,9 @@ def test_source_detail_route_returns_documents_and_stage_summary(temp_data_dir) 
     assert "stage_errors" in body
 
 
-def test_ingest_pull_route_accepts_targeted_refresh_request(temp_data_dir) -> None:
+def test_ingest_pull_route_accepts_targeted_refresh_request(
+    temp_data_dir, operator_auth_headers
+) -> None:
     class FakeIngestionService:
         def pull_sources(self, payload):
             assert payload.source_ids == ["zotero-ITEM-1"]
@@ -1165,6 +1267,7 @@ def test_ingest_pull_route_accepts_targeted_refresh_request(temp_data_dir) -> No
     app.dependency_overrides[get_ingestion_service] = lambda: FakeIngestionService()
     try:
         with TestClient(app) as client:
+            client.headers.update(operator_auth_headers)
             response = client.post(
                 "/v1/ingest/zotero/pull",
                 json={"source_ids": ["zotero-ITEM-1"], "force_refresh": True},
@@ -1176,7 +1279,9 @@ def test_ingest_pull_route_accepts_targeted_refresh_request(temp_data_dir) -> No
     assert response.json()["updated_source_count"] == 1
 
 
-def test_ingest_pull_route_does_not_expand_local_only_sources_into_full_pull(temp_data_dir) -> None:
+def test_ingest_pull_route_does_not_expand_local_only_sources_into_full_pull(
+    temp_data_dir, operator_auth_headers
+) -> None:
     JsonListStore(temp_data_dir / "sources.json").write_models(
         [
             SourceRecord(
@@ -1190,6 +1295,7 @@ def test_ingest_pull_route_does_not_expand_local_only_sources_into_full_pull(tem
     )
 
     with TestClient(app) as client:
+        client.headers.update(operator_auth_headers)
         response = client.post(
             "/v1/ingest/zotero/pull",
             json={"source_ids": ["local-1"], "force_refresh": True},
@@ -1202,7 +1308,9 @@ def test_ingest_pull_route_does_not_expand_local_only_sources_into_full_pull(tem
     assert any("No live Zotero item keys" in warning for warning in body["warnings"])
 
 
-def test_extract_candidates_route_accepts_targeted_source_request(temp_data_dir) -> None:
+def test_extract_candidates_route_accepts_targeted_source_request(
+    temp_data_dir, operator_auth_headers
+) -> None:
     class FakeIngestionService:
         def extract_candidates(self, *, source_ids=None):
             assert source_ids == ["src-1"]
@@ -1233,6 +1341,7 @@ def test_extract_candidates_route_accepts_targeted_source_request(temp_data_dir)
     app.dependency_overrides[get_ingestion_service] = lambda: FakeIngestionService()
     try:
         with TestClient(app) as client:
+            client.headers.update(operator_auth_headers)
             response = client.post(
                 "/v1/ingest/extract-candidates",
                 json={"source_ids": ["src-1"]},
@@ -1245,7 +1354,9 @@ def test_extract_candidates_route_accepts_targeted_source_request(temp_data_dir)
     assert response.json()["count"] == 1
 
 
-def test_extract_candidates_route_surfaces_zotero_fetch_failures(temp_data_dir) -> None:
+def test_extract_candidates_route_surfaces_zotero_fetch_failures(
+    temp_data_dir, operator_auth_headers
+) -> None:
     class FailingIngestionService:
         def extract_candidates(self, *, source_ids=None):
             assert source_ids == []
@@ -1254,6 +1365,7 @@ def test_extract_candidates_route_surfaces_zotero_fetch_failures(temp_data_dir) 
     app.dependency_overrides[get_ingestion_service] = lambda: FailingIngestionService()
     try:
         with TestClient(app) as client:
+            client.headers.update(operator_auth_headers)
             response = client.post("/v1/ingest/extract-candidates")
     finally:
         app.dependency_overrides.pop(get_ingestion_service, None)
@@ -1262,8 +1374,11 @@ def test_extract_candidates_route_surfaces_zotero_fetch_failures(temp_data_dir) 
     assert "Zotero request failed" in response.json()["detail"]
 
 
-def test_extract_candidates_route_bootstraps_stub_corpus_without_zotero(temp_data_dir) -> None:
+def test_extract_candidates_route_bootstraps_stub_corpus_without_zotero(
+    temp_data_dir, operator_auth_headers
+) -> None:
     with TestClient(app) as client:
+        client.headers.update(operator_auth_headers)
         response = client.post("/v1/ingest/extract-candidates")
         sources_response = client.get("/v1/sources")
 
@@ -1273,7 +1388,9 @@ def test_extract_candidates_route_bootstraps_stub_corpus_without_zotero(temp_dat
     assert {item["source_id"] for item in sources_response.json()} >= {"src-1", "src-2"}
 
 
-def test_normalize_documents_route_accepts_retry_payload(temp_data_dir) -> None:
+def test_normalize_documents_route_accepts_retry_payload(
+    temp_data_dir, operator_auth_headers
+) -> None:
     class FakeNormalizationService:
         def normalize_documents(self, *, document_ids=None, source_ids=None, retry_failed=False):
             assert source_ids == ["zotero-ITEM-1"]
@@ -1283,6 +1400,7 @@ def test_normalize_documents_route_accepts_retry_payload(temp_data_dir) -> None:
     app.dependency_overrides[get_normalization_service] = lambda: FakeNormalizationService()
     try:
         with TestClient(app) as client:
+            client.headers.update(operator_auth_headers)
             response = client.post(
                 "/v1/ingest/normalize-documents",
                 json={"source_ids": ["zotero-ITEM-1"], "retry_failed": True},
@@ -1294,7 +1412,9 @@ def test_normalize_documents_route_accepts_retry_payload(temp_data_dir) -> None:
     assert response.json()["document_count"] == 1
 
 
-def test_intake_route_surfaces_zotero_write_failures(temp_data_dir) -> None:
+def test_intake_route_surfaces_zotero_write_failures(
+    temp_data_dir, operator_auth_headers
+) -> None:
     class FailingIntakeService:
         def intake_text(self, payload):
             _ = payload
@@ -1303,6 +1423,7 @@ def test_intake_route_surfaces_zotero_write_failures(temp_data_dir) -> None:
     app.dependency_overrides[get_intake_service] = lambda: FailingIntakeService()
 
     with TestClient(app) as client:
+        client.headers.update(operator_auth_headers)
         response = client.post(
             "/v1/intake/text",
             json={"title": "Bad source", "text": "body"},
@@ -1312,7 +1433,9 @@ def test_intake_route_surfaces_zotero_write_failures(temp_data_dir) -> None:
     assert "Zotero" in response.json()["detail"]
 
 
-def test_intake_route_surfaces_zotero_fetch_failures(temp_data_dir) -> None:
+def test_intake_route_surfaces_zotero_fetch_failures(
+    temp_data_dir, operator_auth_headers
+) -> None:
     class FailingIntakeService:
         def intake_text(self, payload):
             _ = payload
@@ -1321,6 +1444,7 @@ def test_intake_route_surfaces_zotero_fetch_failures(temp_data_dir) -> None:
     app.dependency_overrides[get_intake_service] = lambda: FailingIntakeService()
     try:
         with TestClient(app) as client:
+            client.headers.update(operator_auth_headers)
             response = client.post(
                 "/v1/intake/text",
                 json={"title": "Bad source", "text": "body"},

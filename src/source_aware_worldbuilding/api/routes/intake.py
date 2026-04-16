@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 
-from source_aware_worldbuilding.api.dependencies import get_intake_service
+from source_aware_worldbuilding.api.dependencies import get_intake_service, require_operator_actor
 from source_aware_worldbuilding.domain.errors import (
     ZoteroAuthError,
     ZoteroConfigError,
@@ -14,7 +14,11 @@ from source_aware_worldbuilding.domain.errors import (
 from source_aware_worldbuilding.domain.models import IntakeTextRequest, IntakeUrlRequest
 from source_aware_worldbuilding.services.intake import IntakeService
 
-router = APIRouter(prefix="/v1/intake", tags=["intake"])
+router = APIRouter(
+    prefix="/v1/intake",
+    tags=["intake"],
+    dependencies=[Depends(require_operator_actor)],
+)
 
 
 @router.post("/text")

@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from fastapi import Depends, HTTPException, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+
 from source_aware_worldbuilding.adapters.file_backed import (
     FileBibleProjectProfileStore,
     FileBibleSectionStore,
@@ -66,7 +69,7 @@ from source_aware_worldbuilding.adapters.web_research_scout import (
 )
 from source_aware_worldbuilding.adapters.wikibase_adapter import WikibaseTruthStore
 from source_aware_worldbuilding.adapters.zotero_adapter import ZoteroCorpusAdapter
-from source_aware_worldbuilding.domain.models import ResearchExecutionPolicy
+from source_aware_worldbuilding.domain.models import AuthenticatedActor, ResearchExecutionPolicy
 from source_aware_worldbuilding.ports import ResearchSearchProviderPort
 from source_aware_worldbuilding.services.bible import BibleWorkspaceService
 from source_aware_worldbuilding.services.ingestion import IngestionService
@@ -81,6 +84,35 @@ from source_aware_worldbuilding.settings import settings
 
 _job_service: JobService | None = None
 _job_service_key: tuple[object, ...] | None = None
+_operator_bearer = HTTPBearer(auto_error=False)
+
+
+def _require_configured_operator_token() -> str:
+    token = (settings.app_operator_token or "").strip()
+    if token:
+        return token
+    raise HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail="Operator auth is not configured. Set APP_OPERATOR_TOKEN to enable protected routes.",
+    )
+
+
+def require_operator_actor(
+    credentials: HTTPAuthorizationCredentials | None = Depends(_operator_bearer),
+) -> AuthenticatedActor:
+    expected_token = _require_configured_operator_token()
+    if credentials is None or credentials.scheme.lower() != "bearer":
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required for this route.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    if credentials.credentials != expected_token:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Authenticated actor is not authorized for this route.",
+        )
+    return AuthenticatedActor()
 
 
 def _sqlite_path() -> Path:

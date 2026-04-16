@@ -3,6 +3,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException
 from source_aware_worldbuilding.api.dependencies import (
     get_ingestion_service,
     get_normalization_service,
+    require_operator_actor,
 )
 from source_aware_worldbuilding.domain.errors import (
     ZoteroAuthError,
@@ -19,7 +20,11 @@ from source_aware_worldbuilding.domain.models import (
 from source_aware_worldbuilding.services.ingestion import IngestionService
 from source_aware_worldbuilding.services.normalization import NormalizationService
 
-router = APIRouter(prefix="/v1/ingest", tags=["ingest"])
+router = APIRouter(
+    prefix="/v1/ingest",
+    tags=["ingest"],
+    dependencies=[Depends(require_operator_actor)],
+)
 
 
 @router.post("/zotero/pull")

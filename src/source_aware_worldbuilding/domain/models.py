@@ -1465,6 +1465,11 @@ class ResearchFacetCoverage(BaseModel):
     coverage_gap_reason: str | None = None
 
 
+class AuthenticatedActor(BaseModel):
+    actor_id: str = "trusted-operator"
+    role: Literal["operator"] = "operator"
+
+
 class RuntimeDependencyStatus(BaseModel):
     name: str
     role: str
