@@ -43,8 +43,9 @@ For a concrete execution order tied to the current readiness review, see
 Sourcebound is currently a local-first or trusted-operator tool. It is usable
 today for self-hosted technical users, but it does not yet ship a user auth
 layer or a polished public multi-user deployment story. The near-term roadmap
-focus is to reduce ambiguity about that boundary while making the shipped stack
-more dependable.
+focus is to keep that boundary explicit while making the shipped stack more
+dependable. The next auth step is for a self-hosted small trusted team, not a
+public sign-up or multi-tenant product expansion.
 
 ## Phase 1 — Trustworthy Default Stack
 
@@ -61,9 +62,12 @@ externally legible.
 Focus: make the next security milestone decision-complete before shipping any
 partial gate.
 
-- decide the trusted-operator versus multi-user boundary explicitly
-- define auth and access-control requirements for operator surfaces
-- decide session, identity, and deployment assumptions before implementation
+- implement against the explicit trusted-operator boundary instead of implying
+  public multi-user support
+- define the first protected split between writer-facing and operator-only
+  surfaces
+- decide session, identity, and deployment assumptions for a self-hosted small
+  trusted team before implementation
 - avoid landing a half-finished auth layer that misrepresents the product
 
 ## Phase 3 — Real Corpus Workflow

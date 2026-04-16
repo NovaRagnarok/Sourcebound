@@ -27,6 +27,7 @@ want a trustworthy runtime boundary today.
 
 - user auth
 - multi-user access control
+- public sign-up or tenant provisioning
 - polished production deployment beyond minimal self-host guidance
 
 ## Current Product Boundary
@@ -36,7 +37,11 @@ application:
 
 - there is no shipped user auth or access-control layer
 - the recommended deployment shape assumes a small trusted team or single
-  operator
+  operator in one self-hosted deployment
+- the intended next auth boundary is writer-facing workspace use versus
+  operator-only setup, recovery, runtime, and other mutation-heavy actions
+- no public sign-up, tenant provisioning, or public multi-tenant hosting is
+  supported
 - Qdrant is recommended for the default retrieval path, but it is still a
   rebuildable projection rather than the source of truth
 - Postgres-backed app state and canon are the stable core runtime path
@@ -215,6 +220,7 @@ The following should not be implied by the current deployment guidance:
 
 - built-in user auth
 - built-in multi-user access control
+- public sign-up or tenant provisioning
 - hardened public-internet exposure guidance
 - autoscaled worker architecture
 - broad observability and SLO guidance

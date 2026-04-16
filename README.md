@@ -34,6 +34,7 @@ writer-first workspace UI.
 ### Not yet productized
 
 - user auth and multi-user access control
+- public sign-up, tenant provisioning, or public multi-user hosting
 - production deployment beyond minimal self-host guidance
 - broad benchmark coverage beyond the current narrow evaluation paths
 
@@ -42,7 +43,11 @@ writer-first workspace UI.
 Sourcebound is currently a local-first or trusted-operator tool. It is usable
 today for technical users who can run Postgres, Qdrant, and the app worker
 themselves, but it does not yet ship a user auth or access-control
-layer. Deployment guidance is intentionally minimal and aimed at self-hosted
+layer. The planned auth boundary is for one self-hosted deployment used by a
+small trusted team, not a public sign-up or multi-tenant rollout. The
+near-term protected split is writer-facing workspace use versus operator-only
+surfaces such as `/operator/`, setup/recovery, and other mutation-heavy admin
+actions. Deployment guidance is intentionally minimal and aimed at self-hosted
 technical operators rather than a polished multi-tenant product rollout.
 
 ## What To Try First
