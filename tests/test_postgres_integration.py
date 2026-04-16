@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import socket
 import subprocess
 from pathlib import Path
 
@@ -410,3 +412,29 @@ def test_newcomer_smoke_script_exercises_default_stack() -> None:
     assert completed.returncode == 0, (
         f"stdout:\n{completed.stdout}\n\nstderr:\n{completed.stderr}"
     )
+
+
+def test_newcomer_smoke_script_fails_fast_when_configured_port_is_occupied() -> None:
+    root_dir = Path(__file__).resolve().parents[1]
+    script = root_dir / "scripts" / "newcomer_smoke.sh"
+    env = os.environ.copy()
+
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
+        listener.bind(("127.0.0.1", 0))
+        listener.listen(1)
+        env["SOURCEBOUND_SMOKE_APP_PORT"] = str(listener.getsockname()[1])
+
+        completed = subprocess.run(
+            [str(script)],
+            cwd=root_dir,
+            capture_output=True,
+            text=True,
+            check=False,
+            env=env,
+        )
+
+    assert completed.returncode == 1, (
+        f"stdout:\n{completed.stdout}\n\nstderr:\n{completed.stderr}"
+    )
+    assert "configured smoke app port" in completed.stderr
+    assert "SOURCEBOUND_SMOKE_APP_PORT" in completed.stderr
