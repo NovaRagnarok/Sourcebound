@@ -59,6 +59,11 @@ without forcing external integrations on first run.
   GraphRAG, research semantics, live Zotero workflows, and the Wikibase
   truth-store path
 
+Treat the support matrix in [Deployment Guide](DEPLOYMENT.md) as canonical for
+release decisions. For the routine release checklist, rollback guide, and issue
+triage standard for that same boundary, use
+[Release Operations](RELEASE_OPERATIONS.md).
+
 ## Why This Stack
 
 This keeps the daily writing and operator loop dependable:

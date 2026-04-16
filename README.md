@@ -62,7 +62,9 @@ technical operators rather than a polished multi-tenant product rollout.
   truth-store path
 
 For the canonical support matrix and deployment-policy wording, see
-[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md). For the routine release checklist,
+rollback guide, and issue-triage standard tied to that same boundary, see
+[docs/RELEASE_OPERATIONS.md](docs/RELEASE_OPERATIONS.md).
 
 ## What To Try First
 
@@ -106,10 +108,10 @@ the app container, see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md). That path uses
 Docker Compose for Postgres, Qdrant, the app container with the in-process job
 worker enabled, and an HTTP reverse proxy on `http://localhost:8080/`.
 
-## How It Works
-
 For the one supported writer-to-operator team loop inside the product today,
 see [docs/BIBLE_HANDOFF_WORKFLOW.md](docs/BIBLE_HANDOFF_WORKFLOW.md).
+
+## How It Works
 
 The main source-to-canon flow looks like this:
 
@@ -318,8 +320,9 @@ For the current release:
 - the recovery order is backup Postgres and exports first, restore Postgres
   next, then rebuild Qdrant or reseed only when you intentionally want the
   sample corpus back
-- the full upgrade and rollback checklist lives in
-  [Deployment Guide](docs/DEPLOYMENT.md)
+- the full release checklist, rollback guide, and issue-triage standard live
+  in [Release Operations](docs/RELEASE_OPERATIONS.md), with deployment-specific
+  detail kept in [Deployment Guide](docs/DEPLOYMENT.md)
 
 For minimal self-host guidance, see [Operator Stack](docs/AUTHOR_STACK.md) and
 [Deployment Guide](docs/DEPLOYMENT.md).

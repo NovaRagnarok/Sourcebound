@@ -4,6 +4,9 @@ Sourcebound does not yet ship a polished production deployment story. This page
 documents the smallest supported self-host shape for technical operators who
 want a trustworthy runtime boundary today.
 
+For the routine release checklist, rollback runbook, and issue-triage standard
+for that same boundary, see [Release Operations](RELEASE_OPERATIONS.md).
+
 ## Status Taxonomy
 
 ### Shipped now
@@ -63,6 +66,10 @@ Use these support levels consistently:
 - `Supported`: routine and documented for the current trusted-operator product boundary
 - `Experimental`: usable for intentional local testing, but not the default operator path
 - `Provisional`: implemented or supported in narrow cases, but still setup-heavy or not yet routine
+
+When release or rollback decisions are in question, treat this support matrix as
+the source of truth and use [Release Operations](RELEASE_OPERATIONS.md) for the
+operator checklist layered on top of it.
 
 ## Recommended Runtime Shape
 
