@@ -29,7 +29,7 @@ from source_aware_worldbuilding.adapters.wikibase_adapter import WikibaseTruthSt
 from source_aware_worldbuilding.adapters.zotero_adapter import ZoteroCorpusAdapter
 from source_aware_worldbuilding.api.dependencies import get_extractor
 from source_aware_worldbuilding.domain.enums import ClaimKind, ClaimStatus, ExtractionRunStatus
-from source_aware_worldbuilding.domain.errors import ZoteroFetchError
+from source_aware_worldbuilding.domain.errors import ZoteroConfigError, ZoteroFetchError
 from source_aware_worldbuilding.domain.models import (
     ApprovedClaim,
     EvidenceSnippet,
@@ -195,6 +195,7 @@ def test_zotero_adapter_can_create_text_source_and_pull_by_item_key(monkeypatch)
     monkeypatch.setattr(settings, "zotero_library_id", "12345")
     monkeypatch.setattr(settings, "zotero_collection_key", "COLL-1")
     monkeypatch.setattr(settings, "zotero_library_type", "user")
+    monkeypatch.setattr(settings, "zotero_api_key", "test-api-key")
     monkeypatch.setattr(settings, "zotero_base_url", "https://example.test/api")
     requests: list[tuple[str, str, object]] = []
 
@@ -253,6 +254,23 @@ def test_zotero_adapter_can_create_text_source_and_pull_by_item_key(monkeypatch)
     assert len(pulled) == 1
     assert pulled[0].source_id == "zotero-ITEM-1"
     assert any(method == "POST" for method, _, _ in requests)
+
+
+def test_zotero_adapter_create_text_source_requires_api_key(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "zotero_library_id", "12345")
+    monkeypatch.setattr(settings, "zotero_collection_key", "COLL-1")
+    monkeypatch.setattr(settings, "zotero_library_type", "user")
+    monkeypatch.setattr(settings, "zotero_api_key", None)
+
+    with pytest.raises(ZoteroConfigError, match="ZOTERO_API_KEY"):
+        ZoteroCorpusAdapter().create_text_source(
+            IntakeTextRequest(
+                title="Created source",
+                text="hello world",
+                source_type="document",
+                collection_key="COLL-1",
+            )
+        )
 
 
 def test_zotero_adapter_fetches_attachment_body_and_extracts_text(monkeypatch, tmp_path) -> None:
@@ -561,6 +579,7 @@ def test_zotero_adapter_file_intake_returns_warning_for_binary_file(monkeypatch)
     monkeypatch.setattr(settings, "zotero_library_id", "12345")
     monkeypatch.setattr(settings, "zotero_collection_key", None)
     monkeypatch.setattr(settings, "zotero_library_type", "user")
+    monkeypatch.setattr(settings, "zotero_api_key", "test-api-key")
     monkeypatch.setattr(settings, "zotero_base_url", "https://example.test/api")
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -593,6 +612,22 @@ def test_zotero_adapter_file_intake_returns_warning_for_binary_file(monkeypatch)
 
     assert created.zotero_item_key == "ITEM-1"
     assert warnings
+
+
+def test_zotero_adapter_create_file_source_requires_api_key(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "zotero_library_id", "12345")
+    monkeypatch.setattr(settings, "zotero_collection_key", None)
+    monkeypatch.setattr(settings, "zotero_library_type", "user")
+    monkeypatch.setattr(settings, "zotero_api_key", None)
+
+    with pytest.raises(ZoteroConfigError, match="ZOTERO_API_KEY"):
+        ZoteroCorpusAdapter().create_file_source(
+            filename="scan.pdf",
+            content_type="application/pdf",
+            content=b"%PDF-1.7",
+            title="Scanned source",
+            notes="Imported by test",
+        )
 
 
 def test_extraction_adapter_dedupes_candidates_and_infers_place_and_time() -> None:
