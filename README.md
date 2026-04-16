@@ -108,6 +108,9 @@ worker enabled, and an HTTP reverse proxy on `http://localhost:8080/`.
 
 ## How It Works
 
+For the one supported writer-to-operator team loop inside the product today,
+see [docs/BIBLE_HANDOFF_WORKFLOW.md](docs/BIBLE_HANDOFF_WORKFLOW.md).
+
 The main source-to-canon flow looks like this:
 
 ```text

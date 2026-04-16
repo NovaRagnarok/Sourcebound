@@ -690,12 +690,12 @@ def test_lore_packet_export_route_returns_markdown_packet(
 
 
 def test_bible_workspace_routes_support_profile_section_and_export(
-    temp_data_dir, operator_auth_headers
+    temp_data_dir, writer_auth_headers, operator_auth_headers
 ) -> None:
     populate_lore_packet_fixtures(temp_data_dir)
 
     with TestClient(app) as client:
-        client.headers.update(operator_auth_headers)
+        client.headers.update(writer_auth_headers)
         profile = client.put(
             "/v1/bible/profiles/project-greyport",
             json={
@@ -707,6 +707,8 @@ def test_bible_workspace_routes_support_profile_section_and_export(
         )
         assert profile.status_code == 200
         assert profile.json()["project_name"] == "Greyport Bible"
+        assert profile.json()["audit_history"][-1]["event_type"] == "profile_saved"
+        assert profile.json()["audit_history"][-1]["actor_id"] == "trusted-writer"
 
         section = client.post(
             "/v1/bible/sections",
@@ -725,18 +727,79 @@ def test_bible_workspace_routes_support_profile_section_and_export(
         assert section_record.json()["references"]["claim_ids"]
         assert "composition_metrics" in section_record.json()
 
+        pre_handoff_summary = client.get("/v1/workspace/summary")
+        assert pre_handoff_summary.status_code == 200
+        assert any(
+            item["title"] == "Shape the live section"
+            for item in pre_handoff_summary.json()["next_actions"]
+        )
+
         edited = client.put(
             f"/v1/bible/sections/{section_id}",
             json={"title": "Setting Notes", "content": "Manual setting notes"},
         )
         assert edited.status_code == 200
         assert edited.json()["has_manual_edits"] is True
+        assert edited.json()["audit_history"][-1]["event_type"] == "section_updated"
+        assert edited.json()["audit_history"][-1]["actor_role"] == "writer"
+
+        writer_regenerate = client.post(
+            f"/v1/bible/sections/{section_id}/regenerate",
+            json={"filters": {"place": "Greyport"}},
+        )
+        assert writer_regenerate.status_code == 403
+
+        writer_export = client.post("/v1/bible/exports/project-greyport")
+        assert writer_export.status_code == 403
+
+        workspace_summary = client.get("/v1/workspace/summary")
+        assert workspace_summary.status_code == 200
+        handoff_action = next(
+            item
+            for item in workspace_summary.json()["next_actions"]
+            if item["title"] == "Hand off the live section"
+        )
+        assert "operator" in handoff_action["summary"].lower()
+        assert handoff_action["badge"] == "operator handoff"
+
+        second_section = client.post(
+            "/v1/bible/sections",
+            json={
+                "project_id": "project-greyport",
+                "section_type": "rumors_and_contested_accounts",
+                "filters": {"place": "NoSuchPlace"},
+            },
+        )
+        assert second_section.status_code == 202
+        second_section_job = wait_for_job(client, second_section.json()["job_id"])
+        assert second_section_job["status"] == "completed"
+        second_section_id = second_section_job["result_ref"]["section_id"]
+        second_section_record = client.get(f"/v1/bible/sections/{second_section_id}")
+        assert second_section_record.status_code == 200
+        assert second_section_record.json()["ready_for_writer"] is False
+
+        multi_section_summary = client.get("/v1/workspace/summary")
+        assert multi_section_summary.status_code == 200
+        assert any(
+            item["title"] == "Hand off the live section"
+            for item in multi_section_summary.json()["next_actions"]
+        )
+
+        client.headers.clear()
+        client.headers.update(operator_auth_headers)
 
         regenerated = client.post(
             f"/v1/bible/sections/{section_id}/regenerate",
             json={"filters": {"place": "Greyport"}},
         )
         assert regenerated.status_code == 202
+        queued_regeneration = client.get(f"/v1/bible/sections/{section_id}")
+        assert queued_regeneration.status_code == 200
+        assert any(
+            item["event_type"] == "section_regenerate_requested"
+            and item["actor_id"] == "trusted-operator"
+            for item in queued_regeneration.json()["audit_history"]
+        )
         regenerate_job = wait_for_job(client, regenerated.json()["job_id"])
         assert regenerate_job["status"] == "completed"
         refreshed = client.get(f"/v1/bible/sections/{section_id}")
@@ -744,6 +807,11 @@ def test_bible_workspace_routes_support_profile_section_and_export(
         assert refreshed.json()["content"] == "Manual setting notes"
         assert refreshed.json()["generated_markdown"]
         assert refreshed.json()["composition_metrics"]["target_beats"] >= 1
+        assert any(
+            item["event_type"] == "section_regenerate_requested"
+            and item["actor_id"] == "trusted-operator"
+            for item in refreshed.json()["audit_history"]
+        )
 
         provenance = client.get(f"/v1/bible/sections/{section_id}/provenance")
         assert provenance.status_code == 200
@@ -756,13 +824,31 @@ def test_bible_workspace_routes_support_profile_section_and_export(
         exported = client.get("/v1/bible/exports/project-greyport")
         assert exported.status_code == 200
         assert exported.json()["profile"]["project_name"] == "Greyport Bible"
-        assert len(exported.json()["sections"]) == 1
+        assert len(exported.json()["sections"]) == 2
 
         export_job = client.post("/v1/bible/exports/project-greyport")
         assert export_job.status_code == 202
+        latest_export = client.get("/v1/bible/exports/project-greyport")
+        assert latest_export.status_code == 200
+        assert any(
+            item["event_type"] == "project_export_requested"
+            and item["actor_id"] == "trusted-operator"
+            for item in latest_export.json()["profile"]["audit_history"]
+        )
         completed_export = wait_for_job(client, export_job.json()["job_id"])
         assert completed_export["status"] == "completed"
         assert completed_export["result_payload"]["profile"]["project_name"] == "Greyport Bible"
+        exported_section = next(
+            item
+            for item in completed_export["result_payload"]["sections"]
+            if item["section_id"] == section_id
+        )
+        assert exported_section["content"] == "Manual setting notes"
+        assert any(
+            item["event_type"] == "project_export_requested"
+            and item["actor_id"] == "trusted-operator"
+            for item in completed_export["result_payload"]["profile"]["audit_history"]
+        )
 
 
 def test_lore_packet_route_surfaces_canon_unavailable_errors(
