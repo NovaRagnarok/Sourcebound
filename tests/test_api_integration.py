@@ -38,6 +38,7 @@ from source_aware_worldbuilding.domain.errors import (
 )
 from source_aware_worldbuilding.domain.models import (
     ApprovedClaim,
+    BibleProjectProfileUpdateRequest,
     CandidateClaim,
     EvidenceSnippet,
     ExtractionOutput,
@@ -45,16 +46,15 @@ from source_aware_worldbuilding.domain.models import (
     IntakeResult,
     LorePacketRequest,
     LorePacketResponse,
-    BibleProjectProfileUpdateRequest,
     SourceDocumentRecord,
     SourceRecord,
     ZoteroCreatedItem,
     ZoteroPullResult,
 )
-from source_aware_worldbuilding.settings import settings
-from source_aware_worldbuilding.storage.json_store import JsonListStore
 from source_aware_worldbuilding.services.bible import BibleWorkspaceService
 from source_aware_worldbuilding.services.jobs import JobService
+from source_aware_worldbuilding.settings import settings
+from source_aware_worldbuilding.storage.json_store import JsonListStore
 
 
 def wait_for_job(client: TestClient, job_id: str, *, attempts: int = 40) -> dict:
@@ -345,7 +345,9 @@ def test_setup_surfaces_boot_without_default_services(monkeypatch) -> None:
     assert workspace.status_code == 200
     body = workspace.json()
     assert body["project"] is None
-    postgres_action = next(item for item in body["next_actions"] if item["title"] == "Start Postgres")
+    postgres_action = next(
+        item for item in body["next_actions"] if item["title"] == "Start Postgres"
+    )
     qdrant_action = next(item for item in body["next_actions"] if item["title"] == "Start Qdrant")
     assert postgres_action["badge"] == "blocking"
     assert "blocking the default workspace path" in postgres_action["summary"].lower()
@@ -1095,14 +1097,18 @@ def test_job_routes_surface_retryable_failure_and_retry_flow(
         assert detail_body["retryable"] is True
         assert detail_body["error_detail"] == "Synthetic export failure."
         assert detail_body["operator_summary"] == "Attempt 1 of 2 failed. Synthetic export failure."
-        assert detail_body["operator_next_action"] == "Inspect the error, then use Retry job to queue a new attempt."
+        assert detail_body["operator_next_action"] == (
+            "Inspect the error, then use Retry job to queue a new attempt."
+        )
 
         retry = client.post(f"/v1/jobs/{queued.job_id}/retry")
         assert retry.status_code == 200
         retry_body = retry.json()
         assert retry_body["status_label"] == "queued"
         assert retry_body["retry_of_job_id"] == queued.job_id
-        assert retry_body["operator_summary"] == "Queued retry attempt 2 of 2 and waiting for the background worker."
+        assert retry_body["operator_summary"] == (
+            "Queued retry attempt 2 of 2 and waiting for the background worker."
+        )
 
         processed = job_service.process_pending_jobs()
         assert processed is True
@@ -1110,7 +1116,9 @@ def test_job_routes_surface_retryable_failure_and_retry_flow(
         retry_detail = client.get(f"/v1/jobs/{retry_body['job_id']}")
         assert retry_detail.status_code == 200
         assert retry_detail.json()["status"] == "completed"
-        assert retry_detail.json()["operator_summary"] == "Retry attempt 2 of 2 finished successfully."
+        assert retry_detail.json()["operator_summary"] == (
+            "Retry attempt 2 of 2 finished successfully."
+        )
 
         jobs = client.get("/v1/jobs")
         assert jobs.status_code == 200
@@ -1119,7 +1127,9 @@ def test_job_routes_surface_retryable_failure_and_retry_flow(
         assert status_by_id[retry_body["job_id"]] == "completed"
         failed_row = next(item for item in jobs.json() if item["job_id"] == queued.job_id)
         retry_row = next(item for item in jobs.json() if item["job_id"] == retry_body["job_id"])
-        assert failed_row["operator_next_action"] == "Inspect the error, then use Retry job to queue a new attempt."
+        assert failed_row["operator_next_action"] == (
+            "Inspect the error, then use Retry job to queue a new attempt."
+        )
         assert retry_row["operator_summary"] == "Retry attempt 2 of 2 finished successfully."
 
 

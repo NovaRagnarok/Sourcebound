@@ -17,7 +17,10 @@ def _operator_summary(job: dict) -> str:
     progress_message = job.get("progress_message") or ""
 
     if state == "partial":
-        return progress_message or "Completed with warnings. Review the warnings before trusting the result."
+        return (
+            progress_message
+            or "Completed with warnings. Review the warnings before trusting the result."
+        )
     if state == "stalled":
         return job.get("stalled_reason") or "Worker heartbeat expired before the job completed."
     if state == "failed":

@@ -4,8 +4,8 @@ from fastapi import APIRouter, Depends, HTTPException, status
 
 from source_aware_worldbuilding.api.dependencies import (
     get_bible_workspace_service,
-    require_writer_actor,
     require_operator_actor,
+    require_writer_actor,
 )
 from source_aware_worldbuilding.api.routes._job_runtime import (
     require_job_service,

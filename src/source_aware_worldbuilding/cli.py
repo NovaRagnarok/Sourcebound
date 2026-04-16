@@ -221,7 +221,11 @@ def _runtime_preflight_issues(*, strict_runtime_checks: bool) -> list[str]:
             issues.append(services[name].detail)
 
     projection = services["projection"]
-    if settings.qdrant_enabled and projection.ready is False and projection.mode != "qdrant:uninitialized":
+    if (
+        settings.qdrant_enabled
+        and projection.ready is False
+        and projection.mode != "qdrant:uninitialized"
+    ):
         issues.append(projection.detail)
 
     research_semantics = services["research_semantics"]

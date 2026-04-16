@@ -1,5 +1,6 @@
-import pytest
 import socket
+
+import pytest
 from fastapi.testclient import TestClient
 from typer.testing import CliRunner
 
@@ -393,7 +394,11 @@ def test_cli_serve_fails_fast_when_postgres_is_unavailable(monkeypatch) -> None:
     monkeypatch.setattr(settings, "app_job_worker_enabled", True)
     monkeypatch.setattr(
         "source_aware_worldbuilding.services.status._probe_postgres",
-        lambda dsn: (False, "Postgres connection failed: test. Start it with `docker compose up -d postgres`."),
+        lambda dsn: (
+            False,
+            "Postgres connection failed: test. Start it with "
+            "`docker compose up -d postgres`.",
+        ),
     )
 
     result = runner.invoke(cli_app, ["serve"])

@@ -419,7 +419,9 @@ def test_job_service_retries_failed_jobs_by_creating_a_new_attempt(temp_data_dir
     assert retry.retry_of_job_id == failed_job.job_id
     assert retry.attempt_count == failed_job.attempt_count + 1
     assert retry.status_label == "queued"
-    assert retry.progress_message == "Queued retry attempt 2 of 2 and waiting for the background worker."
+    assert retry.progress_message == (
+        "Queued retry attempt 2 of 2 and waiting for the background worker."
+    )
 
 
 def test_job_service_marks_retryable_failures_with_retry_guidance(temp_data_dir: Path) -> None:
@@ -458,7 +460,9 @@ def test_job_service_marks_retryable_failures_with_retry_guidance(temp_data_dir:
     assert processed is True
     assert completed is not None
     assert completed.status == JobStatus.FAILED
-    assert completed.progress_message == "Attempt 1 of 2 failed. Review the error and retry when ready."
+    assert completed.progress_message == (
+        "Attempt 1 of 2 failed. Review the error and retry when ready."
+    )
     assert completed.error_detail == "compose blew up"
 
 

@@ -113,7 +113,10 @@ def _require_configured_operator_token() -> str:
         return token
     raise HTTPException(
         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-        detail="Operator auth is not configured. Set APP_OPERATOR_TOKEN to enable operator-only routes.",
+        detail=(
+            "Operator auth is not configured. Set APP_OPERATOR_TOKEN to enable "
+            "operator-only routes."
+        ),
     )
 
 

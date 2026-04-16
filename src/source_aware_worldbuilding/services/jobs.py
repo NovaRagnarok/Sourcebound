@@ -485,7 +485,8 @@ class JobService:
         else:
             if job.retry_of_job_id:
                 job.progress_message = (
-                    f"Retry attempt {job.attempt_count} of {job.max_attempts} completed successfully."
+                    f"Retry attempt {job.attempt_count} of "
+                    f"{job.max_attempts} completed successfully."
                 )
             else:
                 job.progress_message = "Completed successfully."

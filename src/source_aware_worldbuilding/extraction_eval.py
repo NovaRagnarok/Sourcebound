@@ -1246,7 +1246,8 @@ def _build_suite_markdown_report(summary: dict[str, Any]) -> str:
         [
             "",
             "Use this grid as the lightweight over-time comparison artifact. "
-            "The per-dataset `summary.json` and `report.md` files remain the detailed drill-down source.",
+            "The per-dataset `summary.json` and `report.md` files remain the "
+            "detailed drill-down source.",
         ]
     )
     return "\n".join(lines).rstrip() + "\n"

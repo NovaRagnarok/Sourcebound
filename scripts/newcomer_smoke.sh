@@ -4,13 +4,19 @@ set -euo pipefail
 ROOT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 cd "$ROOT_DIR"
 
-if [[ ! -x .venv/bin/python ]]; then
-  echo "Missing .venv/bin/python. Run \`make bootstrap\` first." >&2
+if [[ -x .venv/bin/python && -x .venv/bin/saw ]]; then
+  PYTHON_BIN=.venv/bin/python
+  SAW_BIN=.venv/bin/saw
+elif command -v python >/dev/null 2>&1 && command -v saw >/dev/null 2>&1; then
+  PYTHON_BIN=$(command -v python)
+  SAW_BIN=$(command -v saw)
+else
+  echo "Missing a usable Python and saw CLI. Run \`make bootstrap\` or install the package first." >&2
   exit 1
 fi
 
 if ! command -v setsid >/dev/null 2>&1; then
-  echo "Missing \`setsid\`, which is required to manage the reload server process." >&2
+  echo "Missing \`setsid\`, which is required to manage the smoke server process." >&2
   exit 1
 fi
 
@@ -38,7 +44,7 @@ cleanup() {
 trap cleanup EXIT
 
 pick_free_port() {
-  .venv/bin/python - <<'PY'
+  "$PYTHON_BIN" - <<'PY'
 import socket
 
 with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
@@ -49,7 +55,7 @@ PY
 
 port_is_available() {
   local port="$1"
-  .venv/bin/python - "$port" <<'PY'
+  "$PYTHON_BIN" - "$port" <<'PY'
 import socket
 import sys
 
@@ -73,7 +79,7 @@ server_log_mentions_port() {
 }
 
 http_ready() {
-  .venv/bin/python - "$APP_BASE_URL/health" <<'PY'
+  "$PYTHON_BIN" - "$APP_BASE_URL/health" <<'PY'
 import sys
 from urllib.request import urlopen
 
@@ -101,7 +107,7 @@ elif ! port_is_available "$SMOKE_APP_PORT"; then
 fi
 APP_BASE_URL="http://127.0.0.1:${SMOKE_APP_PORT}"
 echo "[newcomer-smoke] using app port ${SMOKE_APP_PORT}"
-RUN_SUFFIX=$(.venv/bin/python - <<'PY'
+RUN_SUFFIX=$("$PYTHON_BIN" - <<'PY'
 from uuid import uuid4
 
 print(uuid4().hex[:10])
@@ -119,8 +125,8 @@ docker compose up -d postgres qdrant
 
 echo "[newcomer-smoke] waiting for default services to become reachable"
 for _ in $(seq 1 60); do
-  CURRENT_STATUS=$(.venv/bin/saw status --json-output || true)
-  if printf '%s' "$CURRENT_STATUS" | .venv/bin/python -c '
+  CURRENT_STATUS=$("$SAW_BIN" status --json-output || true)
+  if printf '%s' "$CURRENT_STATUS" | "$PYTHON_BIN" -c '
 import json
 import sys
 
@@ -143,8 +149,8 @@ sys.exit(0 if postgres_ready and projection_booted else 1)
 done
 
 echo "[newcomer-smoke] checking pre-seed runtime status"
-PRE_SEED_STATUS=$(.venv/bin/saw status --json-output)
-printf '%s' "$PRE_SEED_STATUS" | .venv/bin/python -c '
+PRE_SEED_STATUS=$("$SAW_BIN" status --json-output)
+printf '%s' "$PRE_SEED_STATUS" | "$PYTHON_BIN" -c '
 import json
 import sys
 
@@ -157,11 +163,11 @@ assert any("seed-dev-data" in step for step in status["next_steps"]), status["ne
 '
 
 echo "[newcomer-smoke] seeding default local data"
-.venv/bin/saw seed-dev-data
+"$SAW_BIN" seed-dev-data
 
 echo "[newcomer-smoke] validating post-seed runtime readiness"
-POST_SEED_STATUS=$(.venv/bin/saw status --json-output)
-printf '%s' "$POST_SEED_STATUS" | .venv/bin/python -c '
+POST_SEED_STATUS=$("$SAW_BIN" status --json-output)
+printf '%s' "$POST_SEED_STATUS" | "$PYTHON_BIN" -c '
 import json
 import sys
 
@@ -177,8 +183,8 @@ assert research["mode"] == "disabled", research
 assert research["ready"] is True, research
 '
 
-echo "[newcomer-smoke] starting reload server"
-setsid .venv/bin/saw serve --reload >"$SERVER_LOG" 2>&1 &
+echo "[newcomer-smoke] starting smoke server"
+setsid "$SAW_BIN" serve >"$SERVER_LOG" 2>&1 &
 SERVER_PID=$!
 
 for _ in $(seq 1 60); do
@@ -212,7 +218,7 @@ if ! server_log_mentions_port; then
 fi
 
 echo "[newcomer-smoke] validating HTTP surfaces"
-.venv/bin/python - "$APP_BASE_URL" <<'PY'
+"$PYTHON_BIN" - "$APP_BASE_URL" <<'PY'
 import json
 import sys
 from urllib.request import Request, urlopen
