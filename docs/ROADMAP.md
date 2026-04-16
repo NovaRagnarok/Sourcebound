@@ -6,6 +6,9 @@ The repo is well beyond the initial scaffold. The current work is mostly about
 hardening, reducing setup friction, and tightening the external story around
 what is already implemented.
 
+For a concrete execution order tied to the current readiness review, see
+[Implementation Backlog](IMPLEMENTATION_BACKLOG.md).
+
 ### Shipped now
 
 - writer workspace mounted at `/workspace/` with `/operator/` retained as an
