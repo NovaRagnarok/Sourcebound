@@ -43,6 +43,11 @@ Artifacts are written to `runtime/extraction_evals/wheatley-london-bread/`:
 The CLI prints one line per path and then a compact comparison summary when a
 dataset includes more than one path. The generated `report.md` includes the
 same per-path table plus a `Comparisons` section for easier diffs over time.
+The benchmark JSON artifacts are written with stable key ordering, and the
+suite rows are sorted by dataset and path so the output is easy to diff across
+runs. Dataset entries in `suite-summary.json` point to per-dataset artifact
+directories relative to the suite output root, so those references stay stable
+across machines.
 
 To compare every checked-in scenario in one pass:
 
@@ -58,6 +63,12 @@ Suite artifacts are written to `runtime/extraction_evals/`:
 The suite report is the lightweight over-time comparison view. The per-dataset
 `summary.json` and `report.md` files remain the drill-down source when one
 scenario needs deeper inspection.
+
+CI runs the suite on the checked-in catalog as a retrieval regression signal
+and uploads the full `runtime/extraction_evals/` tree, including
+`suite-summary.json`, `suite-report.md`, and the per-dataset drill-down
+artifacts. If that job fails, inspect the uploaded suite files together with
+the dataset-specific output under `runtime/extraction_evals/`.
 
 ## Current Snapshot
 

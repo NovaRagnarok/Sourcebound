@@ -87,11 +87,17 @@ def test_extraction_eval_suite_writes_comparison_artifacts(tmp_path: Path) -> No
 
     payload = json.loads(summary_path.read_text(encoding="utf-8"))
     assert payload["dataset_count"] == 3
-    assert {item["evaluation_id"] for item in payload["datasets"]} == {
-        "wheatley-london-bread-core-rules",
-        "wheatley-london-bread-compound-clauses",
+    dataset_ids = [item["evaluation_id"] for item in payload["datasets"]]
+    assert dataset_ids == sorted(dataset_ids)
+    assert dataset_ids == [
         "harbor-watch-proof-loop-comparison",
-    }
+        "wheatley-london-bread-compound-clauses",
+        "wheatley-london-bread-core-rules",
+    ]
+    assert [item["artifact_dir"] for item in payload["datasets"]] == dataset_ids
+
+    row_keys = [(item["evaluation_id"], item["path"]) for item in payload["rows"]]
+    assert row_keys == sorted(row_keys)
     assert {
         (item["evaluation_id"], item["path"])
         for item in payload["rows"]

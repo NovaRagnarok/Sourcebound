@@ -170,6 +170,7 @@ def evaluate_extraction_suite(
     selected_dataset_ids = (
         available_extraction_eval_datasets() if dataset_ids is None else list(dataset_ids)
     )
+    selected_dataset_ids = sorted(selected_dataset_ids)
     if not selected_dataset_ids:
         raise ValueError("No extraction evaluation datasets are available.")
 
@@ -191,14 +192,14 @@ def evaluate_extraction_suite(
                 "title": dataset_summary["title"],
                 "corpus_id": dataset_summary["corpus_id"],
                 "path_count": len(cast(list[dict[str, Any]], dataset_summary["paths"])),
-                "artifact_dir": str(output_root / cast(str, dataset_summary["evaluation_id"])),
+                "artifact_dir": cast(str, dataset_summary["evaluation_id"]),
             }
             for dataset_summary in dataset_summaries
         ],
         "rows": _build_suite_rows(dataset_summaries),
     }
     (output_root / "suite-summary.json").write_text(
-        json.dumps(summary, indent=2),
+        json.dumps(summary, indent=2, sort_keys=True),
         encoding="utf-8",
     )
     (output_root / "suite-report.md").write_text(
@@ -317,7 +318,10 @@ def _evaluate_dataset_with_prepared(
         "comparisons": _build_comparisons(path_reports),
         "skipped_paths": skipped_paths,
     }
-    (output_root / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
+    (output_root / "summary.json").write_text(
+        json.dumps(summary, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
     (output_root / "report.md").write_text(
         _build_markdown_report(summary),
         encoding="utf-8",

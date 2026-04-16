@@ -78,3 +78,35 @@ jobs:
       - name: Tear down default stack services
         if: always()
         run: docker compose down -v
+
+  retrieval-regression:
+    name: Retrieval Regression
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .[dev]
+
+      - name: Run extraction-eval regression benchmark
+        run: saw evaluate-extraction --dataset all --json-output
+
+      - name: Upload extraction-eval suite artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: extraction-eval-suite
+          path: |
+            runtime/extraction_evals/
+          if-no-files-found: ignore
