@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import socket
 import statistics
 from datetime import UTC, datetime
 from pathlib import Path
@@ -164,7 +165,8 @@ from source_aware_worldbuilding.services.normalization import NormalizationServi
 from source_aware_worldbuilding.services.research import ResearchService
 from source_aware_worldbuilding.services.status import (
     build_runtime_status,
-    enforce_runtime_startup_checks,
+    default_stack_verification_issues,
+    runtime_startup_issues,
 )
 from source_aware_worldbuilding.settings import settings
 
@@ -174,6 +176,61 @@ app = typer.Typer(help="Source-Aware Worldbuilding CLI")
 def _write_json(path: Path, payload: list[dict]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+
+def _format_startup_preflight_errors(issues: list[str]) -> str:
+    lines = ["Sourcebound cannot start `saw serve` with the current local runtime:"]
+    lines.extend(f"- {issue}" for issue in issues)
+    lines.append(
+        "Run `saw verify-default-stack` for the same default-stack setup guidance shown by "
+        "`/health/runtime`."
+    )
+    return "\n".join(lines)
+
+
+def _serve_port_preflight_issue() -> str | None:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            sock.bind((settings.app_host, settings.app_port))
+        except OSError as exc:
+            if exc.errno == 98:
+                return (
+                    f"App port {settings.app_port} on {settings.app_host} is already in use. "
+                    f"Stop the process using that port, or run "
+                    f"`APP_PORT={settings.app_port + 1} .venv/bin/saw serve --reload`."
+                )
+            return f"App port preflight failed for {settings.app_host}:{settings.app_port}: {exc}."
+    return None
+
+
+def _runtime_preflight_issues(*, strict_runtime_checks: bool) -> list[str]:
+    issues = runtime_startup_issues(strict_runtime_checks=strict_runtime_checks)
+
+    port_issue = _serve_port_preflight_issue()
+    if port_issue:
+        issues.append(port_issue)
+
+    runtime = build_runtime_status()
+    services = {service.name: service for service in runtime.services}
+
+    for name in ("app_state", "truth_store", "job_worker"):
+        if services[name].ready is False:
+            issues.append(services[name].detail)
+
+    projection = services["projection"]
+    if settings.qdrant_enabled and projection.ready is False and projection.mode != "qdrant:uninitialized":
+        issues.append(projection.detail)
+
+    research_semantics = services["research_semantics"]
+    if (
+        settings.research_semantic_enabled
+        and research_semantics.ready is False
+        and research_semantics.mode != "qdrant:uninitialized"
+    ):
+        issues.append(research_semantics.detail)
+
+    return list(dict.fromkeys(issues))
 
 
 class _BenchmarkCorpus:
@@ -1879,11 +1936,10 @@ def serve(
     ),
 ) -> None:
     effective_strict = strict_runtime_checks or settings.app_strict_startup_checks
-    try:
-        enforce_runtime_startup_checks(strict_runtime_checks=effective_strict)
-    except RuntimeError as exc:
-        typer.echo(str(exc), err=True)
-        raise typer.Exit(code=1) from exc
+    preflight_issues = _runtime_preflight_issues(strict_runtime_checks=effective_strict)
+    if preflight_issues:
+        typer.echo(_format_startup_preflight_errors(preflight_issues), err=True)
+        raise typer.Exit(code=1)
 
     uvicorn.run(
         "source_aware_worldbuilding.api.main:app",
@@ -2187,6 +2243,27 @@ def status(json_output: bool = False) -> None:
         return
 
     _print_runtime_status(runtime_status)
+
+
+@app.command("verify-default-stack")
+def verify_default_stack() -> None:
+    runtime_status = build_runtime_status()
+    issues = default_stack_verification_issues(runtime_status)
+
+    if not issues:
+        print("[green]Default stack verification passed.[/green]")
+        print("Sourcebound is ready on the recommended Postgres + Qdrant local path.")
+        return
+
+    print("[yellow]Default stack verification failed.[/yellow]")
+    print(
+        "Sourcebound is not yet ready on the recommended Postgres + Qdrant local path. "
+        f"Current runtime status: [cyan]{runtime_status.overall_status}[/cyan]"
+    )
+    print("[bold]Required Fixes[/bold]")
+    for issue in issues:
+        print(f"- {issue}")
+    raise typer.Exit(code=1)
 
 
 def _print_runtime_status(runtime_status: RuntimeStatus) -> None:
