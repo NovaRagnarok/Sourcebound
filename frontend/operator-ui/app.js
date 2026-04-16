@@ -397,6 +397,25 @@
         return;
       }
 
+      if (action === "refresh-live-data") {
+        await refreshLiveData();
+        return;
+      }
+
+      if (action === "copy-command") {
+        const command = actionButton.dataset.command || "";
+        const copied = await copyTextToClipboard(command);
+        setBanner(
+          copied ? "live" : "queued",
+          copied ? "Command copied" : "Command ready",
+          copied
+            ? `${command} is on your clipboard. Run it in the repo root, then refresh the workspace.`
+            : command
+        );
+        render();
+        return;
+      }
+
       if (action === "stage-research") {
         await stageResearchRun(state.selectedResearchRunId);
         return;
@@ -736,6 +755,32 @@
     renderBanner();
   }
 
+  async function copyTextToClipboard(text) {
+    if (!text) {
+      return false;
+    }
+
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+        return true;
+      }
+    } catch (error) {
+      // Fall back to a temporary textarea for browsers that reject clipboard writes.
+    }
+
+    const probe = document.createElement("textarea");
+    probe.value = text;
+    probe.setAttribute("readonly", "");
+    probe.style.position = "absolute";
+    probe.style.left = "-9999px";
+    document.body.appendChild(probe);
+    probe.select();
+    const copied = document.execCommand("copy");
+    document.body.removeChild(probe);
+    return copied;
+  }
+
   function renderBanner() {
     if (!state.banner) {
       nodes.banner.innerHTML = "";
@@ -970,7 +1015,12 @@
   }
 
   function renderRuntimeOverview() {
-    if (state.activeScreen !== "workspace" || state.workspaceMode !== "advanced") {
+    const runtimeNeedsAttention =
+      state.runtimeStatus && state.runtimeStatus.overall_status !== "ready";
+    if (
+      state.activeScreen !== "workspace"
+      || (state.workspaceMode !== "advanced" && !runtimeNeedsAttention)
+    ) {
       nodes.runtimePanel.innerHTML = "";
       return;
     }
@@ -1097,6 +1147,8 @@
   function renderWorkspaceScreen() {
     const advanced = state.workspaceMode === "advanced";
     const profile = state.workspaceSummary?.project || state.bible.profile;
+    const runtimeBlocked = state.runtimeStatus && state.runtimeStatus.overall_status !== "ready";
+    const setupMode = !profile && !!runtimeBlocked;
     const coverage = buildBibleCoverage(profile, state.bible.sections, state.claims);
     const fallbackSection =
       state.bible.sections.find((section) => section.section_id === state.bible.selectedSectionId) ??
@@ -1154,18 +1206,52 @@
     const projectPeriod =
       profile?.era || [profile?.time_start, profile?.time_end].filter(Boolean).join(" to ") || "Not set";
     const nextMove = visibleWriterActions[0];
+    const sampleProjectLoaded = isSeededSampleProject(profile);
+    const setupChecklist = buildWorkspaceSetupChecklist(profile);
+    const remainingSetupSteps = setupChecklist.filter((item) => !item.ready).length;
+    const workspaceTitle = setupMode
+      ? "Finish the local stack setup"
+      : (profile?.project_name || "Set up your first writing project");
+    const workspaceLead = setupMode
+      ? "Bring Postgres and Qdrant online, seed the sample project, and the workspace will shift into the normal research-review-compose loop."
+      : sampleProjectLoaded
+        ? (
+            profile?.narrative_focus ||
+            "The default Rouen Winter sample is live. Review canon, inspect the seeded bible, and use the workspace to learn the intended research-review-compose loop."
+          )
+      : (
+          profile?.narrative_focus ||
+          "Define the project focus, review canon, and turn evidence-backed material into usable notebook pages."
+        );
+    const heroEyebrow = setupMode
+      ? "First run"
+      : (sampleProjectLoaded ? "Sample project loaded" : "Active writing project");
+    const heroActionMarkup = renderWorkspaceHeroActions({
+      setupMode,
+      sampleProjectLoaded,
+      pendingCandidates,
+      thinCoverage,
+      selectedSection,
+      researchRunsNeedingAttention,
+    });
+    const actionHeading = setupMode ? "First-run checklist" : "Next actions";
+    const actionLead = setupMode
+      ? "Run these in order for the default Postgres + Qdrant stack. The workspace will settle into the normal loop once the sample project appears."
+      : "The shortest route to stronger pages is research, review, compose, then edit.";
+    const placeSummary = setupMode ? "Rouen sample project" : (profile?.geography || "Not set");
+    const eraSummary = setupMode ? "Postgres + Qdrant default path" : projectPeriod;
+    const attentionSummary = setupMode
+      ? `${remainingSetupSteps} ${remainingSetupSteps === 1 ? "step" : "steps"} left`
+      : (nextMove?.badge || `${state.workspaceSummary?.pending_review_count ?? pendingCandidates.length} waiting`);
 
     return `
       <article class="screen fade-in">
         <section class="workspace-hero">
           <div class="workspace-hero-copy">
-            <p class="eyebrow">Active writing project</p>
-            <h2 data-active-screen>${escapeHtml(profile?.project_name || "Set up your first writing project")}</h2>
+            <p class="eyebrow">${escapeHtml(heroEyebrow)}</p>
+            <h2 data-active-screen>${escapeHtml(workspaceTitle)}</h2>
             <p class="workspace-lead">
-              ${escapeHtml(
-                profile?.narrative_focus ||
-                  "Define the project focus, review canon, and turn evidence-backed material into usable notebook pages."
-              )}
+              ${escapeHtml(workspaceLead)}
             </p>
             ${
               nextMove
@@ -1178,21 +1264,17 @@
                 `
                 : ""
             }
-            <div class="workspace-hero-actions">
-              <a class="primary-button" href="#bible">Open Bible</a>
-              <a class="secondary-button" href="#review">Review</a>
-              <button class="secondary-button" type="button" data-action="launch-gap-research">Fill gap</button>
-              <a class="secondary-button" href="#ask">Ask canon</a>
-            </div>
+            <div class="workspace-hero-actions">${heroActionMarkup}</div>
+            ${setupMode ? renderWorkspaceSetupChecklist(setupChecklist) : ""}
           </div>
           <div class="workspace-hero-meta">
             <div class="workspace-keyline">
               <span>Place</span>
-              <strong>${escapeHtml(profile?.geography || "Not set")}</strong>
+              <strong>${escapeHtml(placeSummary)}</strong>
             </div>
             <div class="workspace-keyline">
               <span>Era</span>
-              <strong>${escapeHtml(projectPeriod)}</strong>
+              <strong>${escapeHtml(eraSummary)}</strong>
             </div>
             <div class="workspace-keyline">
               <span>Trust boundary</span>
@@ -1200,7 +1282,7 @@
             </div>
             <div class="workspace-keyline">
               <span>What needs attention</span>
-              <strong>${escapeHtml(nextMove?.badge || `${state.workspaceSummary?.pending_review_count ?? pendingCandidates.length} waiting`)}</strong>
+              <strong>${escapeHtml(attentionSummary)}</strong>
             </div>
           </div>
         </section>
@@ -1209,25 +1291,13 @@
           <div class="detail workspace-panel-primary">
             <div class="detail-head">
               <div>
-                <h3>Next actions</h3>
-                <div class="detail-note">The shortest route to stronger pages is research, review, compose, then edit.</div>
+                <h3>${escapeHtml(actionHeading)}</h3>
+                <div class="detail-note">${escapeHtml(actionLead)}</div>
               </div>
               <span class="pill probable">${escapeHtml(writerActions.length)}</span>
             </div>
             <div class="workspace-action-list">
-              ${visibleWriterActions
-                .map(
-                  (item) => `
-                    <a class="workspace-action" href="#${escapeHtml(item.screen)}">
-                      <div>
-                        <strong>${escapeHtml(item.title)}</strong>
-                        <div class="detail-note">${escapeHtml(item.summary)}</div>
-                      </div>
-                      <span class="pill ${escapeHtml(item.tone)}">${escapeHtml(item.badge || "open")}</span>
-                    </a>
-                  `
-                )
-                .join("")}
+              ${visibleWriterActions.map((item) => renderWorkspaceActionCard(item, { setupMode })).join("")}
             </div>
           </div>
 
@@ -1440,6 +1510,155 @@
       });
     }
     return actions.slice(0, 4);
+  }
+
+  function isSeededSampleProject(profile) {
+    return profile?.project_id === "project-rouen-winter";
+  }
+
+  function buildWorkspaceSetupChecklist(profile) {
+    const services = Object.fromEntries(
+      (state.runtimeStatus?.services || []).map((service) => [service.name, service])
+    );
+    const projectionMode = services.projection?.mode || "";
+    const postgresReady = Boolean(services.app_state?.ready) && Boolean(services.truth_store?.ready);
+    const qdrantReady = ["qdrant:uninitialized", "qdrant:ready"].includes(projectionMode);
+    const sampleReady = Boolean(profile) || projectionMode === "qdrant:ready";
+
+    return [
+      {
+        step: "1",
+        title: "Start Postgres",
+        summary: "Bring workflow state and reviewed canon online before the rest of the onboarding path.",
+        command: "docker compose up -d postgres",
+        ready: postgresReady,
+        tone: postgresReady ? "verified" : "queued",
+        badge: postgresReady ? "ready" : "required",
+      },
+      {
+        step: "2",
+        title: "Start Qdrant",
+        summary: "Boot the default retrieval service so Sourcebound can initialize the projection-backed path.",
+        command: "docker compose up -d qdrant",
+        ready: qdrantReady,
+        tone: qdrantReady ? "verified" : "queued",
+        badge: qdrantReady ? "ready" : (postgresReady ? "next" : "after Postgres"),
+      },
+      {
+        step: "3",
+        title: "Seed dev data",
+        summary: "Load the Rouen Winter sample project and initialize the default newcomer collections.",
+        command: ".venv/bin/saw seed-dev-data",
+        ready: sampleReady,
+        tone: sampleReady ? "verified" : "probable",
+        badge: sampleReady ? "loaded" : (qdrantReady ? "next" : "after Qdrant"),
+      },
+    ];
+  }
+
+  function renderWorkspaceSetupChecklist(checklist) {
+    return `
+      <div class="workspace-setup-strip">
+        ${checklist
+          .map(
+            (item) => `
+              <div class="setup-step">
+                <div class="toolbar">
+                  <strong>${escapeHtml(item.step)}. ${escapeHtml(item.title)}</strong>
+                  <span class="pill ${escapeHtml(item.tone)}">${escapeHtml(item.badge)}</span>
+                </div>
+                <div class="detail-note">${escapeHtml(item.summary)}</div>
+                <code class="inline-command">${escapeHtml(item.command)}</code>
+                <button
+                  class="secondary-button"
+                  type="button"
+                  data-action="copy-command"
+                  data-command="${escapeHtml(item.command)}"
+                >
+                  Copy command
+                </button>
+              </div>
+            `
+          )
+          .join("")}
+      </div>
+    `;
+  }
+
+  function renderWorkspaceHeroActions({
+    setupMode,
+    sampleProjectLoaded,
+    pendingCandidates,
+    thinCoverage,
+    selectedSection,
+    researchRunsNeedingAttention,
+  }) {
+    if (setupMode) {
+      return `
+        <button class="primary-button" type="button" data-action="refresh-live-data">Refresh setup status</button>
+        <a class="secondary-button" href="#workspace">View runtime checklist</a>
+      `;
+    }
+
+    const actions = [];
+    if (pendingCandidates.length) {
+      actions.push(`<a class="primary-button" href="#review">Review ${escapeHtml(String(pendingCandidates.length))} pending</a>`);
+    } else if (selectedSection) {
+      actions.push(`<a class="primary-button" href="#bible">${escapeHtml(sampleProjectLoaded ? "Open sample Bible" : "Open Bible")}</a>`);
+    } else {
+      actions.push('<a class="primary-button" href="#bible">Compose first section</a>');
+    }
+
+    if (thinCoverage.length || researchRunsNeedingAttention.length) {
+      actions.push('<button class="secondary-button" type="button" data-action="launch-gap-research">Fill gap</button>');
+    } else {
+      actions.push('<a class="secondary-button" href="#research">Open research</a>');
+    }
+
+    actions.push(`<a class="secondary-button" href="#ask">${escapeHtml(sampleProjectLoaded ? "Ask sample canon" : "Ask canon")}</a>`);
+
+    if (!pendingCandidates.length) {
+      actions.push('<a class="secondary-button" href="#review">Review</a>');
+    }
+
+    return actions.slice(0, 4).join("");
+  }
+
+  function renderWorkspaceActionCard(item, { setupMode = false } = {}) {
+    if (item.command) {
+      return `
+        <div class="workspace-action workspace-action-setup">
+          <div class="workspace-action-body">
+            <div class="toolbar">
+              <strong>${escapeHtml(item.title)}</strong>
+              <span class="pill ${escapeHtml(item.tone)}">${escapeHtml(item.badge || "setup")}</span>
+            </div>
+            <div class="detail-note">${escapeHtml(item.summary)}</div>
+            <code class="inline-command">${escapeHtml(item.command)}</code>
+          </div>
+          <div class="workspace-action-cta">
+            <button
+              class="secondary-button"
+              type="button"
+              data-action="copy-command"
+              data-command="${escapeHtml(item.command)}"
+            >
+              Copy command
+            </button>
+          </div>
+        </div>
+      `;
+    }
+
+    return `
+      <a class="workspace-action" href="#${escapeHtml(item.screen)}">
+        <div>
+          <strong>${escapeHtml(item.title)}</strong>
+          <div class="detail-note">${escapeHtml(item.summary)}</div>
+        </div>
+        <span class="pill ${escapeHtml(item.tone)}">${escapeHtml(item.badge || "open")}</span>
+      </a>
+    `;
   }
 
   function collectWorkspaceJobs() {

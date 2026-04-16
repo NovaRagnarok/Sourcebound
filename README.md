@@ -40,8 +40,8 @@ writer-first workspace UI.
 ## Current Product Boundary
 
 Sourcebound is currently a local-first or trusted-operator tool. It is usable
-today for technical users who can run Postgres, optional Qdrant, and the app
-worker themselves, but it does not yet ship a user auth or access-control
+today for technical users who can run Postgres, Qdrant, and the app worker
+themselves, but it does not yet ship a user auth or access-control
 layer. Deployment guidance is intentionally minimal and aimed at self-hosted
 technical operators rather than a polished multi-tenant product rollout.
 
@@ -52,16 +52,21 @@ For the recommended fresh-clone local path:
 ```bash
 cp .env.example .env
 make bootstrap
-docker compose up -d postgres
-docker compose up -d qdrant
+docker compose up -d postgres qdrant
 .venv/bin/saw status
 .venv/bin/saw seed-dev-data
 .venv/bin/saw serve --reload
 ```
 
-Expected result: Postgres is ready for app state and canon, Qdrant is ready or
-ready to be initialized for the default retrieval path, and the seeded sample
-project is visible in the UI.
+Expected progression:
+
+- after `docker compose up -d postgres qdrant`, `.venv/bin/saw status` should
+  report Postgres as ready and the projection as `qdrant:uninitialized`
+- after `.venv/bin/saw seed-dev-data`, `.venv/bin/saw status` should report the
+  overall runtime as `ready`
+- after `.venv/bin/saw serve --reload`, the seeded sample project should be
+  visible in the UI and query metadata should report projection-backed
+  retrieval
 
 Then open:
 
@@ -164,7 +169,7 @@ docker compose up -d postgres qdrant
 ```
 
 You should see Postgres-backed app state and truth storage as ready, plus
-Qdrant projection either ready or marked for initialization before seeding.
+Qdrant projection marked as `qdrant:uninitialized` before seeding.
 Zotero, GraphRAG, research semantics, and Wikibase should show up as optional
 or disabled, not as startup blockers for the default path.
 
@@ -194,7 +199,8 @@ This is the recommended newcomer and external-operator path. It gives you:
 
 ### Zero-infra local mode
 
-Use this when you want to work without Postgres, Qdrant, Zotero, or Wikibase:
+Use this only when you intentionally want a non-default local mode without
+Postgres, Qdrant, Zotero, or Wikibase:
 
 ```bash
 APP_STATE_BACKEND=file

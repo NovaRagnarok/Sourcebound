@@ -1,4 +1,4 @@
-.PHONY: bootstrap bootstrap-graphrag install lint typecheck test check format dev seed status newcomer-smoke
+.PHONY: bootstrap bootstrap-graphrag install lint typecheck test check format dev seed status newcomer-smoke default-stack-integration
 
 bootstrap:
 	python3 -m venv .venv
@@ -35,3 +35,6 @@ dev:
 
 newcomer-smoke: bootstrap
 	./scripts/newcomer_smoke.sh
+
+default-stack-integration: bootstrap
+	.venv/bin/pytest -m live_default_stack tests/test_postgres_integration.py

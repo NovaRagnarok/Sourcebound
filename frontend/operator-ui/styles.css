@@ -448,6 +448,12 @@ a {
   gap: 10px;
 }
 
+.workspace-setup-strip {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
 .workspace-next-move {
   display: grid;
   gap: 6px;
@@ -495,6 +501,41 @@ a {
     transform 160ms ease,
     border-color 160ms ease,
     background 160ms ease;
+}
+
+.workspace-action-setup,
+.setup-step {
+  display: grid;
+  gap: 10px;
+}
+
+.workspace-action-setup {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.workspace-action-body,
+.workspace-action-cta {
+  display: grid;
+  gap: 10px;
+}
+
+.setup-step {
+  padding: 14px 16px;
+  border: 1px solid rgba(41, 94, 89, 0.12);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.7);
+}
+
+.inline-command {
+  display: block;
+  padding: 10px 12px;
+  border: 1px solid rgba(25, 22, 20, 0.08);
+  border-radius: 12px;
+  background: rgba(25, 22, 20, 0.04);
+  color: var(--ink);
+  font-size: 0.9rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
 }
 
 .workspace-action:hover {
@@ -1314,6 +1355,7 @@ a {
   .runtime-shell,
   .service-grid,
   .workspace-hero,
+  .workspace-setup-strip,
   .workspace-grid,
   .hero-surface {
     grid-template-columns: 1fr;
@@ -1335,6 +1377,10 @@ a {
   .screen-actions {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .workspace-action-setup {
+    grid-template-columns: 1fr;
   }
 
   .nav {

@@ -58,6 +58,7 @@ markers = [
   "live_zotero: exercises the real Zotero API when configured",
   "live_wikibase: exercises the real Wikibase sync path when configured",
   "live_qdrant: exercises the real Qdrant projection/query path when configured",
+  "live_default_stack: exercises the full newcomer Postgres + Qdrant path with the real local stack",
 ]
 
 [tool.ruff]

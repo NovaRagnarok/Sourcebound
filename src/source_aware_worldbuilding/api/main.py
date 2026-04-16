@@ -21,19 +21,34 @@ from source_aware_worldbuilding.api.routes.research import router as research_ro
 from source_aware_worldbuilding.api.routes.runs import router as runs_router
 from source_aware_worldbuilding.api.routes.sources import router as sources_router
 from source_aware_worldbuilding.api.routes.workspace import router as workspace_router
-from source_aware_worldbuilding.services.status import enforce_runtime_startup_checks
+from source_aware_worldbuilding.services.status import (
+    build_runtime_status,
+    enforce_runtime_startup_checks,
+)
 from source_aware_worldbuilding.settings import settings
+
+
+def _can_start_background_worker() -> bool:
+    runtime = build_runtime_status()
+    services = {service.name: service for service in runtime.services}
+    return all(
+        services[name].ready
+        for name in ("app_state", "truth_store", "bible_workspace", "job_worker")
+    )
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     enforce_runtime_startup_checks()
-    if settings.app_job_worker_enabled:
+    worker_started = False
+    if settings.app_job_worker_enabled and _can_start_background_worker():
         get_job_service().start_worker()
+        worker_started = True
     try:
         yield
     finally:
-        get_job_service().stop_worker()
+        if worker_started:
+            get_job_service().stop_worker()
 
 
 app = FastAPI(title=settings.app_name, lifespan=lifespan)

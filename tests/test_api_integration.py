@@ -4,6 +4,7 @@ import time
 
 from fastapi.testclient import TestClient
 
+from source_aware_worldbuilding.adapters.qdrant_adapter import QdrantProjectionAdapter
 from source_aware_worldbuilding.api.dependencies import (
     get_ingestion_service,
     get_intake_service,
@@ -12,6 +13,7 @@ from source_aware_worldbuilding.api.dependencies import (
     get_review_service,
 )
 from source_aware_worldbuilding.api.main import app
+from source_aware_worldbuilding.api.routes import _job_runtime as job_runtime_routes
 from source_aware_worldbuilding.cli import seed_dev_data
 from source_aware_worldbuilding.domain.enums import (
     ClaimKind,
@@ -209,6 +211,34 @@ def test_root_redirects_to_writer_workspace_alias() -> None:
     assert response.headers["location"] == "/workspace/"
 
 
+def test_setup_surfaces_boot_without_default_services(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "app_state_backend", "postgres")
+    monkeypatch.setattr(settings, "app_truth_backend", "postgres")
+    monkeypatch.setattr(settings, "app_job_worker_enabled", True)
+    monkeypatch.setattr(settings, "app_strict_startup_checks", False)
+    monkeypatch.setattr(settings, "qdrant_enabled", True)
+    monkeypatch.setattr(settings, "research_semantic_enabled", False)
+    monkeypatch.setattr(settings, "graph_rag_enabled", False)
+    monkeypatch.setattr(settings, "zotero_library_id", None)
+
+    with TestClient(app) as client:
+        root = client.get("/", follow_redirects=False)
+        operator = client.get("/workspace/")
+        runtime = client.get("/health/runtime")
+        workspace = client.get("/v1/workspace/summary")
+
+    assert root.status_code in {302, 307}
+    assert root.headers["location"] == "/workspace/"
+    assert operator.status_code == 200
+    assert runtime.status_code == 200
+    assert runtime.json()["overall_status"] == "needs_setup"
+    assert workspace.status_code == 200
+    body = workspace.json()
+    assert body["project"] is None
+    assert any(item["title"] == "Start Postgres" for item in body["next_actions"])
+    assert any(item["title"] == "Start Qdrant" for item in body["next_actions"])
+
+
 def test_runtime_health_route_reports_degraded_when_quality_layers_are_missing(monkeypatch) -> None:
     monkeypatch.setattr(settings, "app_state_backend", "file")
     monkeypatch.setattr(settings, "app_truth_backend", "file")
@@ -307,6 +337,33 @@ def test_operator_flow_routes_share_file_backed_state(temp_data_dir) -> None:
         assert "answer_sections" in query_response.json()
         assert isinstance(query_response.json()["claim_clusters"], list)
         assert isinstance(query_response.json()["answer_sections"], list)
+
+
+def test_workspace_summary_guides_unseeded_default_style_runtime(
+    temp_data_dir,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(settings, "qdrant_enabled", True)
+    monkeypatch.setattr(
+        QdrantProjectionAdapter,
+        "runtime_probe",
+        lambda self: (
+            "qdrant:uninitialized",
+            True,
+            False,
+            "Qdrant is reachable, but collection 'approved_claims' is not initialized.",
+        ),
+    )
+
+    with TestClient(app) as client:
+        workspace_summary = client.get("/v1/workspace/summary")
+
+    assert workspace_summary.status_code == 200
+    body = workspace_summary.json()
+    assert body["project"] is None
+    assert body["reviewed_canon_count"] == 0
+    assert any(item["title"] == "Seed dev data" for item in body["next_actions"])
+    assert any(item["badge"] == "seed" for item in body["next_actions"])
 
 
 def test_review_queue_route_returns_enriched_cards(temp_data_dir) -> None:
@@ -642,6 +699,93 @@ def test_long_running_routes_return_503_when_worker_disabled(temp_data_dir, monk
         )
         assert research.status_code == 503
         assert "Background worker is disabled" in research.json()["detail"]
+
+
+def test_job_backed_reads_stay_usable_when_job_service_cannot_boot(
+    temp_data_dir, monkeypatch
+) -> None:
+    populate_lore_packet_fixtures(temp_data_dir)
+
+    with TestClient(app) as client:
+        profile = client.put(
+            "/v1/bible/profiles/project-greyport",
+            json={"project_name": "Greyport Bible", "geography": "Greyport"},
+        )
+        assert profile.status_code == 200
+
+        section_job = client.post(
+            "/v1/bible/sections",
+            json={"project_id": "project-greyport", "section_type": "setting_overview"},
+        )
+        assert section_job.status_code == 202
+        wait_for_job(client, section_job.json()["job_id"])
+
+        research_job = client.post(
+            "/v1/research/runs",
+            json={"brief": {"topic": "Greyport docks", "adapter_id": "curated_inputs"}},
+        )
+        assert research_job.status_code == 202
+        completed_job = wait_for_job(client, research_job.json()["job_id"])
+        assert completed_job["status"] in {"completed", "partial"}
+
+    def explode():
+        raise RuntimeError("job service init failed")
+
+    monkeypatch.setattr(job_runtime_routes, "get_job_service", explode)
+
+    with TestClient(app) as client:
+        sections = client.get("/v1/bible/sections", params={"project_id": "project-greyport"})
+        assert sections.status_code == 200
+        assert sections.json()
+        assert all(item["latest_job"] is None for item in sections.json())
+
+        section = client.get(f"/v1/bible/sections/{sections.json()[0]['section_id']}")
+        assert section.status_code == 200
+        assert section.json()["latest_job"] is None
+
+        exported = client.get("/v1/bible/exports/project-greyport")
+        assert exported.status_code == 200
+        assert exported.json()["profile"]["project_name"] == "Greyport Bible"
+
+        research_runs = client.get("/v1/research/runs")
+        assert research_runs.status_code == 200
+        assert research_runs.json()
+        assert all(item["latest_job"] is None for item in research_runs.json())
+
+        run_detail = client.get(f"/v1/research/runs/{research_runs.json()[0]['run_id']}")
+        assert run_detail.status_code == 200
+        assert run_detail.json()["run"]["latest_job"] is None
+
+
+def test_job_backed_routes_return_setup_guidance_when_job_service_cannot_boot(
+    temp_data_dir, monkeypatch
+) -> None:
+    populate_lore_packet_fixtures(temp_data_dir)
+
+    def explode():
+        raise RuntimeError("job service init failed")
+
+    monkeypatch.setattr(job_runtime_routes, "get_job_service", explode)
+
+    with TestClient(app) as client:
+        jobs = client.get("/v1/jobs")
+        assert jobs.status_code == 503
+        assert "Background job support is not ready" in jobs.json()["detail"]
+        assert "/health/runtime" in jobs.json()["detail"]
+
+        section = client.post(
+            "/v1/bible/sections",
+            json={"project_id": "project-greyport", "section_type": "setting_overview"},
+        )
+        assert section.status_code == 503
+        assert "Background job support is not ready" in section.json()["detail"]
+
+        research = client.post(
+            "/v1/research/runs",
+            json={"brief": {"topic": "Greyport docks", "adapter_id": "curated_inputs"}},
+        )
+        assert research.status_code == 503
+        assert "Background job support is not ready" in research.json()["detail"]
 
 
 def test_async_author_flow_uses_background_jobs_end_to_end(temp_data_dir) -> None:

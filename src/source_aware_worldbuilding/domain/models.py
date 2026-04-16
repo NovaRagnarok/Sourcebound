@@ -765,6 +765,7 @@ class WorkspaceAction(BaseModel):
     screen: Literal["workspace", "bible", "research", "review", "ask", "sources", "runs", "claims"]
     tone: Literal["verified", "probable", "contested", "queued", "author_choice"] = "queued"
     badge: str | None = None
+    command: str | None = None
 
 
 class WorkspaceBackgroundItem(BaseModel):

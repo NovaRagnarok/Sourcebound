@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -383,3 +384,29 @@ def test_postgres_newcomer_path_reaches_ready_operator_ui(
         workspace_summary = client.get("/v1/workspace/summary")
         assert workspace_summary.status_code == 200
         assert workspace_summary.json()["project"]["project_id"] == "project-rouen-winter"
+
+        query = client.post(
+            "/v1/query",
+            json={"question": "Rouen bread prices", "mode": "strict_facts"},
+        )
+        assert query.status_code == 200
+        assert query.json()["metadata"]["retrieval_backend"] == "qdrant"
+        assert query.json()["metadata"]["retrieval_quality_tier"] == "projection"
+
+
+@pytest.mark.live_default_stack
+def test_newcomer_smoke_script_exercises_default_stack() -> None:
+    root_dir = Path(__file__).resolve().parents[1]
+    script = root_dir / "scripts" / "newcomer_smoke.sh"
+
+    completed = subprocess.run(
+        [str(script)],
+        cwd=root_dir,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, (
+        f"stdout:\n{completed.stdout}\n\nstderr:\n{completed.stderr}"
+    )

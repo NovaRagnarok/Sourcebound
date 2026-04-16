@@ -153,6 +153,40 @@ def test_runtime_health_marks_qdrant_uninitialized_when_collection_is_missing(mo
     assert any("saw seed-dev-data" in step.lower() for step in body["next_steps"])
 
 
+def test_runtime_health_reports_default_stack_as_degraded_before_seed(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "app_state_backend", "postgres")
+    monkeypatch.setattr(settings, "app_truth_backend", "postgres")
+    monkeypatch.setattr(settings, "graph_rag_enabled", False)
+    monkeypatch.setattr(settings, "qdrant_enabled", True)
+    monkeypatch.setattr(settings, "research_semantic_enabled", False)
+    monkeypatch.setattr(
+        "source_aware_worldbuilding.services.status._probe_postgres",
+        lambda dsn: (True, "Postgres connection succeeded."),
+    )
+    monkeypatch.setattr(
+        QdrantProjectionAdapter,
+        "runtime_probe",
+        lambda self: (
+            "qdrant:uninitialized",
+            True,
+            False,
+            "Qdrant is reachable, but collection 'approved_claims' is not initialized.",
+        ),
+    )
+
+    client = TestClient(app)
+    response = client.get("/health/runtime")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["overall_status"] == "degraded"
+    assert body["state_backend"] == "postgres"
+    assert body["truth_backend"] == "postgres"
+    projection = next(service for service in body["services"] if service["name"] == "projection")
+    assert projection["mode"] == "qdrant:uninitialized"
+    assert any("seed-dev-data" in step for step in body["next_steps"])
+
+
 def test_runtime_health_reports_needs_setup_when_worker_is_disabled(monkeypatch) -> None:
     monkeypatch.setattr(settings, "app_state_backend", "file")
     monkeypatch.setattr(settings, "app_truth_backend", "file")

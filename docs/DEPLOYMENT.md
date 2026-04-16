@@ -48,7 +48,7 @@ Smallest supported self-host deployment:
 - one app process serving the FastAPI API and static UI
 - the in-process job worker enabled in that same process
 - persistent Postgres for app state and canon
-- optional but recommended Qdrant for the default retrieval path
+- Qdrant for the default retrieval path
 
 This is intentionally not a multi-service production blueprint. It is the
 minimum self-host shape that matches the current docs and runtime assumptions.
@@ -83,11 +83,12 @@ Optional integrations remain opt-in:
 Before expecting the app to be healthy:
 
 1. bring up Postgres
-2. bring up Qdrant if `QDRANT_ENABLED=true`
+2. bring up Qdrant
 3. run `.venv/bin/saw status`
-4. if Qdrant is enabled but uninitialized, run `.venv/bin/saw seed-dev-data`
-   or `.venv/bin/saw qdrant-rebuild`
-5. verify `/health/runtime` reports `ready` or an understood `degraded` mode
+4. expect `.venv/bin/saw status` to report a `degraded` runtime with
+   `qdrant:uninitialized` before seeding
+5. run `.venv/bin/saw seed-dev-data`
+6. verify `/health/runtime` reports `ready`
 
 `APP_STRICT_STARTUP_CHECKS=true` is recommended when you want boot to fail
 instead of silently accepting an uninitialized default retrieval path.

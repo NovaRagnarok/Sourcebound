@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter
 
 from source_aware_worldbuilding.api.dependencies import (
     get_bible_workspace_service,
@@ -18,21 +18,23 @@ from source_aware_worldbuilding.domain.models import (
     WorkspaceSectionSnapshot,
     WorkspaceSummary,
 )
-from source_aware_worldbuilding.services.bible import BibleWorkspaceService
-from source_aware_worldbuilding.services.jobs import JobService
+from source_aware_worldbuilding.services.status import build_runtime_status
 
 router = APIRouter(prefix="/v1/workspace", tags=["workspace"])
 
 
 @router.get("/summary")
-def get_workspace_summary(
-    project_id: str | None = None,
-    bible_service: BibleWorkspaceService = Depends(get_bible_workspace_service),
-    candidate_store=Depends(get_candidate_store),
-    evidence_store=Depends(get_evidence_store),
-    truth_store=Depends(get_truth_store),
-    job_service: JobService = Depends(get_job_service),
-) -> dict:
+def get_workspace_summary(project_id: str | None = None) -> dict:
+    runtime_status = build_runtime_status()
+    if _workspace_requires_setup(runtime_status):
+        return _build_setup_summary(runtime_status).model_dump(mode="json")
+
+    bible_service = get_bible_workspace_service()
+    candidate_store = get_candidate_store()
+    evidence_store = get_evidence_store()
+    truth_store = get_truth_store()
+    job_service = get_job_service()
+
     profiles = bible_service.list_profiles()
     profile = None
     if project_id:
@@ -66,9 +68,11 @@ def get_workspace_summary(
         project=profile,
         current_section=current_snapshot,
         next_actions=_build_actions(
+            runtime_status=runtime_status,
             profile=profile,
             pending_review_count=len(pending_candidates),
             reviewed_canon_count=len(claims),
+            evidence_count=len(evidence_store.list_evidence()),
             sections=sections,
             current_section=current_snapshot,
             background_items=background_items,
@@ -88,6 +92,109 @@ def get_workspace_summary(
         thin_section_count=len(thin_sections),
     )
     return summary.model_dump(mode="json")
+
+
+def _workspace_requires_setup(runtime_status) -> bool:
+    services = {service.name: service for service in runtime_status.services}
+    return any(
+        services[name].ready is False
+        for name in ("app_state", "truth_store", "bible_workspace", "job_worker")
+    )
+
+
+def _build_setup_summary(runtime_status) -> WorkspaceSummary:
+    return WorkspaceSummary(
+        next_actions=_build_setup_actions(runtime_status),
+    )
+
+
+def _build_setup_actions(runtime_status) -> list[WorkspaceAction]:
+    services = {service.name: service for service in runtime_status.services}
+    actions: list[WorkspaceAction] = []
+
+    if any(
+        services[name].ready is False
+        for name in ("app_state", "truth_store")
+        if name in services
+    ):
+        actions.append(
+            WorkspaceAction(
+                action_id="start-postgres",
+                title="Start Postgres",
+                summary=(
+                    "Run `docker compose up -d postgres` so Sourcebound can persist workflow "
+                    "state and canonical claims."
+                ),
+                screen="workspace",
+                tone="queued",
+                badge="postgres",
+                command="docker compose up -d postgres",
+            )
+        )
+
+    projection = services.get("projection")
+    if projection is not None and projection.ready is False:
+        if projection.mode == "qdrant:uninitialized":
+            actions.append(
+                WorkspaceAction(
+                    action_id="seed-dev-data",
+                    title="Seed dev data",
+                    summary=(
+                        "Run `.venv/bin/saw seed-dev-data` to load the sample project and "
+                        "initialize the default Qdrant projection."
+                    ),
+                    screen="workspace",
+                    tone="queued",
+                    badge="seed",
+                    command=".venv/bin/saw seed-dev-data",
+                )
+            )
+        else:
+            actions.append(
+                WorkspaceAction(
+                    action_id="start-qdrant",
+                    title="Start Qdrant",
+                    summary=(
+                        "Run `docker compose up -d qdrant` so query and composition can use "
+                        "the default projection-backed retrieval path."
+                    ),
+                    screen="workspace",
+                    tone="queued",
+                    badge="qdrant",
+                    command="docker compose up -d qdrant",
+                )
+            )
+
+    if services["job_worker"].ready is False:
+        actions.append(
+            WorkspaceAction(
+                action_id="enable-worker",
+                title="Enable the job worker",
+                summary=(
+                    "Set `APP_JOB_WORKER_ENABLED=true` so research, bible regeneration, and "
+                    "export jobs complete without manual intervention."
+                ),
+                screen="workspace",
+                tone="queued",
+                badge="worker",
+                command="APP_JOB_WORKER_ENABLED=true .venv/bin/saw serve --reload",
+            )
+        )
+
+    if not actions:
+        actions.extend(
+            WorkspaceAction(
+                action_id=f"runtime-step-{index}",
+                title="Follow the runtime checklist",
+                summary=step,
+                screen="workspace",
+                tone="queued",
+                badge="runtime",
+            )
+            for index, step in enumerate(runtime_status.next_steps[:3], start=1)
+        )
+
+    return actions[:4]
 
 
 def _select_current_section(sections: list[BibleSection]) -> BibleSection | None:
@@ -136,14 +243,23 @@ def _section_snapshot(
 
 def _build_actions(
     *,
+    runtime_status,
     profile,
     pending_review_count: int,
     reviewed_canon_count: int,
+    evidence_count: int,
     sections: list[BibleSection],
     current_section: WorkspaceSectionSnapshot | None,
     background_items: list[WorkspaceBackgroundItem],
 ) -> list[WorkspaceAction]:
     actions: list[WorkspaceAction] = []
+    if (
+        profile is None
+        and reviewed_canon_count == 0
+        and evidence_count == 0
+        and not sections
+    ):
+        actions.extend(_build_setup_actions(runtime_status))
     if profile is None:
         actions.append(
             WorkspaceAction(

@@ -406,12 +406,42 @@ def _next_steps(services: list[RuntimeDependencyStatus]) -> list[str]:
             "Required for local startup: set APP_JOB_WORKER_ENABLED=true "
             "so research, Bible regeneration, and export jobs run without manual intervention."
         )
+    postgres_state_needed = (
+        settings.app_state_backend == "postgres" and by_name["app_state"].ready is False
+    )
+    postgres_truth_needed = (
+        settings.app_truth_backend == "postgres" and by_name["truth_store"].ready is False
+    )
+    if postgres_state_needed and postgres_truth_needed:
+        steps.append(
+            "Required because Postgres backs both app state and canonical truth: run "
+            "`docker compose up -d postgres` and ensure APP_POSTGRES_DSN points at that database."
+        )
+    elif postgres_state_needed:
+        steps.append(
+            "Required because the Postgres app-state store is enabled: run "
+            "`docker compose up -d postgres` "
+            "and ensure APP_POSTGRES_DSN points at that database."
+        )
+    elif postgres_truth_needed:
+        steps.append(
+            "Required because the Postgres truth store is enabled: run "
+            "`docker compose up -d postgres` "
+            "and ensure APP_POSTGRES_DSN points at that database."
+        )
+    if settings.app_truth_backend == "wikibase" and by_name["truth_store"].ready is False:
+        steps.append(
+            "Required because APP_TRUTH_BACKEND=wikibase: configure WIKIBASE_API_URL, "
+            "WIKIBASE_USERNAME, WIKIBASE_PASSWORD, and "
+            "WIKIBASE_PROPERTY_MAP, or switch back to Postgres or file-backed truth for "
+            "local startup."
+        )
     if settings.qdrant_enabled and by_name["projection"].ready is False:
         if by_name["projection"].mode == "qdrant:uninitialized":
             steps.append(
-                "Required because QDRANT_ENABLED=true: run `saw seed-dev-data` to "
-                "initialize and backfill Qdrant, or run `saw qdrant-rebuild` if you "
-                "need to repair the projection manually."
+                "Required because QDRANT_ENABLED=true: run `saw seed-dev-data` to load the "
+                "sample project and initialize Qdrant, or run `saw qdrant-rebuild` if you "
+                "only need to repair the projection manually."
             )
         else:
             steps.append(
@@ -440,19 +470,6 @@ def _next_steps(services: list[RuntimeDependencyStatus]) -> list[str]:
         steps.append(
             "Optional after first run: enable RESEARCH_SEMANTIC_ENABLED if you want "
             "Qdrant-backed duplicate detection and reranking for research findings."
-        )
-    if settings.app_truth_backend == "postgres" and by_name["truth_store"].ready is False:
-        steps.append(
-            "Required because the Postgres truth store is enabled: run "
-            "`docker compose up -d postgres` "
-            "and ensure APP_POSTGRES_DSN points at that database."
-        )
-    if settings.app_truth_backend == "wikibase" and by_name["truth_store"].ready is False:
-        steps.append(
-            "Required because APP_TRUTH_BACKEND=wikibase: configure WIKIBASE_API_URL, "
-            "WIKIBASE_USERNAME, WIKIBASE_PASSWORD, and "
-            "WIKIBASE_PROPERTY_MAP, or switch back to Postgres or file-backed truth for "
-            "local startup."
         )
     if by_name["extraction"].mode == "heuristic":
         steps.append(
