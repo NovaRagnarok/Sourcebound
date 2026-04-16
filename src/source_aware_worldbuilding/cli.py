@@ -2318,10 +2318,13 @@ def _source_document_rollup(source_documents: list[SourceDocumentRecord]) -> dic
             error for document in source_documents for error in document.stage_errors if error
         )
     )
+    blocked_stage = _blocked_stage_for_documents(source_documents)
     return {
         "source_document_count": len(source_documents),
         "stage_breakdown": summarize_source_documents(source_documents),
         "document_warnings": document_warnings,
+        "blocked_stage": blocked_stage,
+        "next_action": _next_action_for_documents(source_documents),
         "failed_document_count": sum(
             1
             for document in source_documents
@@ -2389,6 +2392,20 @@ def _print_source_document_rollup(source_documents: list[SourceDocumentRecord]) 
         print(f"[yellow]{warning}[/yellow]")
 
 
+def _zotero_write_path_detail() -> tuple[bool, str]:
+    if not settings.zotero_library_id:
+        return False, "Write path is unavailable until ZOTERO_LIBRARY_ID is set."
+    if not settings.zotero_api_key:
+        return False, "Write path is unavailable until ZOTERO_API_KEY is set."
+    if not settings.zotero_collection_key:
+        return (
+            True,
+            "Write path is ready. New items can still be created, but they will use the library "
+            "root unless you pass an explicit collection key.",
+        )
+    return True, "Write path is ready for live Zotero item creation in the configured collection."
+
+
 @app.command("zotero-check")
 def zotero_check(
     json_output: bool = False,
@@ -2410,9 +2427,13 @@ def _build_zotero_report(*, source_limit: int, include_text_units: bool) -> dict
     missing: list[str] = []
     if not settings.zotero_library_id:
         missing.append("ZOTERO_LIBRARY_ID")
+    write_path_ready, write_path_detail = _zotero_write_path_detail()
 
     report: dict = {
         "configured": not missing,
+        "read_path_ready": not missing,
+        "write_path_ready": write_path_ready,
+        "write_path_detail": write_path_detail,
         "library_type": settings.zotero_library_type,
         "library_id_present": bool(settings.zotero_library_id),
         "collection_key_present": bool(settings.zotero_collection_key),
@@ -2429,13 +2450,18 @@ def _build_zotero_report(*, source_limit: int, include_text_units: bool) -> dict
         "source_document_count": 0,
         "source_documents_preview": [],
         "stage_breakdown": {},
+        "blocked_stage": None,
+        "next_action": None,
         "document_warnings": [],
         "failed_document_count": 0,
         "text_units_preview": [],
         "live_smoke": {"status": "skipped", "detail": "Zotero is not configured yet."},
     }
     if missing:
-        report["detail"] = "Zotero is not configured yet."
+        report["detail"] = (
+            "Zotero read path is unavailable until ZOTERO_LIBRARY_ID is set. "
+            "Set ZOTERO_API_KEY too if you want live write-back."
+        )
         return report
 
     adapter = ZoteroCorpusAdapter()
@@ -2503,6 +2529,12 @@ def _print_zotero_report(report: dict) -> None:
         print(missing_line)
 
     print(report["detail"])
+    print(
+        "Read path: "
+        f"{'ready' if report['read_path_ready'] else 'not ready'} | "
+        f"Write path: {'ready' if report['write_path_ready'] else 'not ready'}"
+    )
+    print(report["write_path_detail"])
 
     if report["success"]:
         print(
@@ -2515,6 +2547,12 @@ def _print_zotero_report(report: dict) -> None:
             f"{json.dumps(report['stage_breakdown'], sort_keys=True)} | "
             f"Failed documents: {report['failed_document_count']}"
         )
+        if report["blocked_stage"] and report["next_action"]:
+            print(
+                "Blocked stage: "
+                f"{report['blocked_stage']} | "
+                f"Next action: {report['next_action']}"
+            )
         preview_table = Table(title="Zotero Source Preview")
         preview_table.add_column("Source ID")
         preview_table.add_column("Title")

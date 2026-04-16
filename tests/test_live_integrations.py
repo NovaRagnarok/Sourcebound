@@ -11,9 +11,69 @@ from source_aware_worldbuilding.adapters.qdrant_adapter import QdrantProjectionA
 from source_aware_worldbuilding.adapters.wikibase_adapter import WikibaseTruthStore
 from source_aware_worldbuilding.adapters.zotero_adapter import ZoteroCorpusAdapter
 from source_aware_worldbuilding.api.main import app
+from source_aware_worldbuilding.cli import _build_zotero_report
 from source_aware_worldbuilding.domain.enums import ClaimKind, ClaimStatus, ReviewState
-from source_aware_worldbuilding.domain.models import ApprovedClaim, CandidateClaim, EvidenceSnippet
+from source_aware_worldbuilding.domain.models import (
+    ApprovedClaim,
+    CandidateClaim,
+    EvidenceSnippet,
+    SourceDocumentRecord,
+    SourceRecord,
+)
 from source_aware_worldbuilding.settings import settings
+
+
+def test_zotero_check_report_flags_missing_write_path_configuration(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "zotero_library_id", "12345")
+    monkeypatch.setattr(settings, "zotero_collection_key", None)
+    monkeypatch.setattr(settings, "zotero_api_key", None)
+    monkeypatch.setattr(settings, "zotero_base_url", "https://example.test/api")
+    monkeypatch.setattr(ZoteroCorpusAdapter, "pull_sources", lambda self: [])
+
+    report = _build_zotero_report(source_limit=1, include_text_units=False)
+
+    assert report["configured"] is True
+    assert report["read_path_ready"] is True
+    assert report["write_path_ready"] is False
+    assert "ZOTERO_API_KEY" in report["write_path_detail"]
+
+
+def test_zotero_check_report_surfaces_blocked_document_stage(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "zotero_library_id", "12345")
+    monkeypatch.setattr(settings, "zotero_collection_key", "COLL-1")
+    monkeypatch.setattr(settings, "zotero_api_key", "test-api-key")
+    monkeypatch.setattr(settings, "zotero_base_url", "https://example.test/api")
+    monkeypatch.setattr(
+        ZoteroCorpusAdapter,
+        "pull_sources",
+        lambda self: [
+            SourceRecord(
+                source_id="zotero-item-1",
+                title="Blocked attachment source",
+                zotero_item_key="ITEM-1",
+            )
+        ],
+    )
+    monkeypatch.setattr(
+        ZoteroCorpusAdapter,
+        "discover_source_documents",
+        lambda self, sources, existing_documents=None, force_refresh=False: [
+            SourceDocumentRecord(
+                document_id="doc-1",
+                source_id=sources[0].source_id,
+                document_kind="attachment",
+                attachment_discovery_status="missing",
+                stage_errors=["Attachment or note was not present in the latest Zotero pull."],
+            )
+        ],
+    )
+
+    report = _build_zotero_report(source_limit=1, include_text_units=False)
+
+    assert report["success"] is True
+    assert report["blocked_stage"] == "discovery"
+    assert "text-bearing attachment" in report["next_action"]
+    assert report["failed_document_count"] == 0
 
 
 @pytest.mark.live_zotero
