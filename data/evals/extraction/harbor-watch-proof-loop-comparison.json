@@ -1,0 +1,130 @@
+{
+  "evaluation_id": "harbor-watch-proof-loop-comparison",
+  "title": "Harbor watch comparison extraction evaluation",
+  "corpus_id": "harbor-watch-proof-loop",
+  "gold_claims": [
+    {
+      "gold_claim_id": "gold-harbor-rumor",
+      "label": "Ferrymen rumor about the tide bell",
+      "importance": "high",
+      "target_subject": "Night ferrymen",
+      "target_predicate": "rumored_that",
+      "target_value": "the tide bell answered back from the east pier market stairs during fog banks",
+      "subject_patterns": [
+        "Night ferrymen"
+      ],
+      "predicate_patterns": [
+        "rumored_that"
+      ],
+      "value_patterns": [
+        "the tide bell answered back from the east pier market stairs during fog banks"
+      ],
+      "evidence_patterns": [
+        "Night ferrymen whispered that the tide bell answered back from the east pier market stairs during fog banks."
+      ]
+    },
+    {
+      "gold_claim_id": "gold-lantern-issue",
+      "label": "Ferrymen issued oilcloth lanterns",
+      "importance": "high",
+      "target_subject": "Night ferrymen",
+      "target_predicate": "described_as",
+      "target_value": "Night ferrymen were assigned oilcloth lanterns for flood tide patrols along the east pier.",
+      "subject_patterns": [
+        "Night ferrymen"
+      ],
+      "predicate_patterns": [
+        "described_as"
+      ],
+      "value_patterns": [
+        "Night ferrymen were assigned oilcloth lanterns for flood tide patrols along the east pier."
+      ],
+      "evidence_patterns": [
+        "Night ferrymen were assigned oilcloth lanterns for flood tide patrols along the east pier."
+      ]
+    },
+    {
+      "gold_claim_id": "gold-quay-tolls",
+      "label": "Ledger records dawn sack tolls",
+      "importance": "high",
+      "target_subject": "Quay toll ledger",
+      "target_predicate": "described_as",
+      "target_value": "Quay toll ledger record shows tolls stood at two brass tokens for each dawn grain sack at first bell.",
+      "subject_patterns": [
+        "Quay toll ledger"
+      ],
+      "predicate_patterns": [
+        "described_as"
+      ],
+      "value_patterns": [
+        "Quay toll ledger record shows tolls stood at two brass tokens for each dawn grain sack at first bell."
+      ],
+      "evidence_patterns": [
+        "Quay toll ledger record shows tolls stood at two brass tokens for each dawn grain sack at first bell."
+      ]
+    },
+    {
+      "gold_claim_id": "gold-basket-cues",
+      "label": "Tarred baskets stacked at the scales",
+      "importance": "high",
+      "target_subject": "Tarred grain baskets",
+      "target_predicate": "described_as",
+      "target_value": "Tarred grain baskets were stacked beside the quay scales before sunrise and left a resin smell in the loading lane.",
+      "subject_patterns": [
+        "Tarred grain baskets"
+      ],
+      "predicate_patterns": [
+        "described_as"
+      ],
+      "value_patterns": [
+        "Tarred grain baskets were stacked beside the quay scales before sunrise and left a resin smell in the loading lane."
+      ],
+      "evidence_patterns": [
+        "Tarred grain baskets were stacked beside the quay scales before sunrise and left a resin smell in the loading lane."
+      ]
+    }
+  ],
+  "contradiction_groups": [],
+  "graphrag_fixture_claims": [
+    {
+      "claim_id": "fixture-harbor-rumor",
+      "type": "Rumored That",
+      "description": "Night ferrymen rumored that the tide bell answered back from the east pier market stairs during fog banks.",
+      "subject_id": "Night ferrymen",
+      "object_id": "the tide bell answered back from the east pier market stairs during fog banks",
+      "status": "TRUE",
+      "source_text": "Night ferrymen whispered that the tide bell answered back from the east pier market stairs during fog banks.",
+      "text_unit_locator": "watch note"
+    },
+    {
+      "claim_id": "fixture-lantern-issue",
+      "type": "Described As",
+      "description": "Night ferrymen were assigned oilcloth lanterns for flood tide patrols along the east pier.",
+      "subject_id": "Night ferrymen",
+      "object_id": "Night ferrymen were assigned oilcloth lanterns for flood tide patrols along the east pier.",
+      "status": "TRUE",
+      "source_text": "Night ferrymen were assigned oilcloth lanterns for flood tide patrols along the east pier.",
+      "text_unit_locator": "watch attachment"
+    },
+    {
+      "claim_id": "fixture-quay-tolls",
+      "type": "Described As",
+      "description": "Quay toll ledger record shows tolls stood at two brass tokens for each dawn grain sack at first bell.",
+      "subject_id": "Quay toll ledger",
+      "object_id": "Quay toll ledger record shows tolls stood at two brass tokens for each dawn grain sack at first bell.",
+      "status": "TRUE",
+      "source_text": "Quay toll ledger record shows tolls stood at two brass tokens for each dawn grain sack at first bell.",
+      "text_unit_locator": "manual text"
+    },
+    {
+      "claim_id": "fixture-basket-cues",
+      "type": "Described As",
+      "description": "Tarred grain baskets were stacked beside the quay scales before sunrise and left a resin smell in the loading lane.",
+      "subject_id": "Tarred grain baskets",
+      "object_id": "Tarred grain baskets were stacked beside the quay scales before sunrise and left a resin smell in the loading lane.",
+      "status": "TRUE",
+      "source_text": "Tarred grain baskets were stacked beside the quay scales before sunrise and left a resin smell in the loading lane.",
+      "text_unit_locator": "manual inventory file"
+    }
+  ]
+}

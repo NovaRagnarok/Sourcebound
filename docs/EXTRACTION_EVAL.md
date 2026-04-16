@@ -6,13 +6,23 @@ the review workflow?
 
 ## Corpus And Scope
 
-- Dataset: `wheatley-london-bread`
-- Real corpus: the checked-in Henry B. Wheatley bread-market excerpt from the
-  demo corpus
-- Gold set size: 6 atomic reviewable claims
-- Compared paths:
-  - `heuristic`
-  - `graphrag_mapping_fixture`
+The checked-in scenario catalog now covers five extraction-eval datasets:
+
+- `wheatley-london-bread`
+- `wheatley-london-bread-core-rules`
+- `wheatley-london-bread-compound-clauses`
+- `harbor-watch-proof-loop`
+- `harbor-watch-proof-loop-comparison`
+
+These datasets deliberately reuse the shipped demo and pilot corpora in
+different slices so we can compare progress across more than one narrow
+scenario without pretending we already have a huge benchmark library.
+
+The default path comparison is still:
+
+- `heuristic`
+- `graphrag_mapping_fixture` when a fixture-backed GraphRAG mapping dataset is
+  available
 
 `graphrag_mapping_fixture` is a reproducible fixture-backed GraphRAG mapping
 check. It exercises the GraphRAG-to-Sourcebound mapping path on the same corpus
@@ -29,6 +39,25 @@ Artifacts are written to `runtime/extraction_evals/wheatley-london-bread/`:
 
 - `summary.json`
 - `report.md`
+
+The CLI prints one line per path and then a compact comparison summary when a
+dataset includes more than one path. The generated `report.md` includes the
+same per-path table plus a `Comparisons` section for easier diffs over time.
+
+To compare every checked-in scenario in one pass:
+
+```bash
+.venv/bin/saw evaluate-extraction --dataset all --json-output
+```
+
+Suite artifacts are written to `runtime/extraction_evals/`:
+
+- `suite-summary.json`
+- `suite-report.md`
+
+The suite report is the lightweight over-time comparison view. The per-dataset
+`summary.json` and `report.md` files remain the drill-down source when one
+scenario needs deeper inspection.
 
 ## Current Snapshot
 

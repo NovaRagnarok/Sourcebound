@@ -1,0 +1,140 @@
+{
+  "evaluation_id": "wheatley-london-bread-core-rules",
+  "title": "Henry B. Wheatley core bread-rule extraction evaluation",
+  "corpus_id": "wheatley-london-bread",
+  "gold_claims": [
+    {
+      "gold_claim_id": "gold-bakers-dozen",
+      "label": "Bread dealers received a baker's dozen allowance",
+      "importance": "high",
+      "target_subject": "London bread regratresses",
+      "target_predicate": "received",
+      "target_value": "thirteen batches for every twelve purchased",
+      "subject_patterns": [
+        "these dealers",
+        "bread regratresses"
+      ],
+      "predicate_patterns": [
+        "received",
+        "described_as"
+      ],
+      "value_patterns": [
+        "thirteen batches for twelve",
+        "thirteen batches for every twelve"
+      ],
+      "evidence_patterns": [
+        "receive thirteen batches for twelve"
+      ]
+    },
+    {
+      "gold_claim_id": "gold-pannier-alley",
+      "label": "Pannier Alley was the standing place for bread panniers",
+      "importance": "medium",
+      "target_subject": "Pannier Alley",
+      "target_predicate": "was_standing_place_for",
+      "target_value": "bakers with their bread panniers",
+      "subject_patterns": [
+        "pannier alley"
+      ],
+      "predicate_patterns": [
+        "was_standing_place_for",
+        "described_as"
+      ],
+      "value_patterns": [
+        "standing place for bakers with their bread panniers",
+        "bakers with their bread panniers"
+      ],
+      "evidence_patterns": [
+        "standing place for bakers with their bread panniers"
+      ]
+    },
+    {
+      "gold_claim_id": "gold-white-bakers-tourte",
+      "label": "White bread bakers were barred from making tourte bread",
+      "importance": "high",
+      "target_subject": "London white bakers",
+      "target_predicate": "were_barred_from",
+      "target_value": "making tourte bread",
+      "subject_patterns": [
+        "maker of white bread",
+        "white bakers"
+      ],
+      "predicate_patterns": [
+        "were_barred_from",
+        "described_as"
+      ],
+      "value_patterns": [
+        "make tourte",
+        "making tourte bread"
+      ],
+      "evidence_patterns": [
+        "No maker of white bread was allowed to make tourte"
+      ]
+    },
+    {
+      "gold_claim_id": "gold-house-bread-prepared",
+      "label": "House bread was prepared by dedicated bakers",
+      "importance": "high",
+      "target_subject": "House bread",
+      "target_predicate": "was_prepared_by",
+      "target_value": "the bakers of household bread",
+      "subject_patterns": [
+        "house bread"
+      ],
+      "predicate_patterns": [
+        "was_prepared_by",
+        "described_as"
+      ],
+      "value_patterns": [
+        "prepared by the bakers of household bread",
+        "the bakers of household bread"
+      ],
+      "evidence_patterns": [
+        "House bread was prepared by the bakers of household bread"
+      ]
+    }
+  ],
+  "contradiction_groups": [],
+  "graphrag_fixture_claims": [
+    {
+      "claim_id": "fixture-bakers-dozen",
+      "type": "Received",
+      "description": "London bread regratresses received thirteen batches for every twelve purchased.",
+      "subject_id": "London bread regratresses",
+      "object_id": "thirteen batches for every twelve purchased",
+      "status": "TRUE",
+      "source_text": "receive thirteen batches for twelve",
+      "text_unit_locator": "bread-market excerpt"
+    },
+    {
+      "claim_id": "fixture-pannier-alley",
+      "type": "Was Standing Place For",
+      "description": "Pannier Alley was the standing place for bakers with their bread panniers.",
+      "subject_id": "Pannier Alley",
+      "object_id": "bakers with their bread panniers",
+      "status": "TRUE",
+      "source_text": "standing place for bakers with their bread panniers",
+      "text_unit_locator": "bread-market excerpt"
+    },
+    {
+      "claim_id": "fixture-white-bakers-tourte",
+      "type": "Were Barred From",
+      "description": "London white bakers were barred from making tourte bread.",
+      "subject_id": "London white bakers",
+      "object_id": "making tourte bread",
+      "status": "TRUE",
+      "source_text": "No maker of white bread was allowed to make tourte",
+      "text_unit_locator": "bread-market excerpt"
+    },
+    {
+      "claim_id": "fixture-house-bread-prepared",
+      "type": "Was Prepared By",
+      "description": "House bread was prepared by the bakers of household bread.",
+      "subject_id": "House bread",
+      "object_id": "the bakers of household bread",
+      "status": "TRUE",
+      "source_text": "House bread was prepared by the bakers of household bread",
+      "text_unit_locator": "bread-market excerpt"
+    }
+  ]
+}

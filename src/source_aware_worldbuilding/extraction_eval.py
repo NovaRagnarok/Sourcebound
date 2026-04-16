@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from hashlib import sha1
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from pydantic import BaseModel, Field
 
@@ -157,6 +157,55 @@ def evaluate_extraction_dataset(
         output_root=output_root,
         repeat=repeat,
     )
+
+
+def evaluate_extraction_suite(
+    *,
+    output_root: Path,
+    dataset_ids: list[str] | None = None,
+    repeat: int = 3,
+) -> dict[str, object]:
+    if repeat < 1:
+        raise ValueError("repeat must be >= 1.")
+    selected_dataset_ids = (
+        available_extraction_eval_datasets() if dataset_ids is None else list(dataset_ids)
+    )
+    if not selected_dataset_ids:
+        raise ValueError("No extraction evaluation datasets are available.")
+
+    output_root.mkdir(parents=True, exist_ok=True)
+    dataset_summaries = [
+        evaluate_extraction_dataset(
+            dataset_id,
+            output_root=output_root / dataset_id,
+            repeat=repeat,
+        )
+        for dataset_id in selected_dataset_ids
+    ]
+    summary: dict[str, Any] = {
+        "dataset_count": len(dataset_summaries),
+        "repeat": repeat,
+        "datasets": [
+            {
+                "evaluation_id": dataset_summary["evaluation_id"],
+                "title": dataset_summary["title"],
+                "corpus_id": dataset_summary["corpus_id"],
+                "path_count": len(cast(list[dict[str, Any]], dataset_summary["paths"])),
+                "artifact_dir": str(output_root / cast(str, dataset_summary["evaluation_id"])),
+            }
+            for dataset_summary in dataset_summaries
+        ],
+        "rows": _build_suite_rows(dataset_summaries),
+    }
+    (output_root / "suite-summary.json").write_text(
+        json.dumps(summary, indent=2),
+        encoding="utf-8",
+    )
+    (output_root / "suite-report.md").write_text(
+        _build_suite_markdown_report(summary),
+        encoding="utf-8",
+    )
+    return summary
 
 
 def evaluate_prepared_extraction_dataset(
@@ -895,6 +944,35 @@ def _build_comparisons(path_reports: list[dict[str, Any]]) -> list[dict[str, Any
     return comparisons
 
 
+def _build_suite_rows(dataset_summaries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for dataset_summary in dataset_summaries:
+        evaluation_id = cast(str, dataset_summary["evaluation_id"])
+        title = cast(str, dataset_summary["title"])
+        corpus_id = cast(str, dataset_summary["corpus_id"])
+        for path_report in cast(list[dict[str, Any]], dataset_summary["paths"]):
+            rows.append(
+                {
+                    "evaluation_id": evaluation_id,
+                    "title": title,
+                    "corpus_id": corpus_id,
+                    "path": path_report["path"],
+                    "path_kind": path_report["path_kind"],
+                    "claim_precision": path_report["metrics"]["claim_precision"],
+                    "important_fact_recall": path_report["metrics"]["important_fact_recall"],
+                    "avg_anchor_focus": path_report["evidence_span_quality"][
+                        "avg_anchor_focus"
+                    ],
+                    "avg_reviewer_actions": path_report["reviewer_edit_burden"][
+                        "avg_actions_per_matched_candidate"
+                    ],
+                    "stability": path_report["stability"]["exact_match_rate"],
+                }
+            )
+    rows.sort(key=lambda item: (item["evaluation_id"], item["path"]))
+    return rows
+
+
 def _rank_failure_modes(
     candidates: list[CandidateClaim],
     assigned_by_candidate: dict[str, _MatchRecord],
@@ -1119,4 +1197,52 @@ def _build_markdown_report(summary: dict[str, Any]) -> str:
             )
         lines.append("")
 
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def _build_suite_markdown_report(summary: dict[str, Any]) -> str:
+    lines = [
+        "# Extraction Evaluation Suite",
+        "",
+        f"- Dataset count: `{summary['dataset_count']}`",
+        f"- Repeat count: `{summary['repeat']}`",
+        "",
+        "## Dataset Catalog",
+        "",
+    ]
+    for dataset in summary["datasets"]:
+        lines.append(
+            f"- `{dataset['evaluation_id']}`: {dataset['title']} "
+            f"(corpus=`{dataset['corpus_id']}`, paths=`{dataset['path_count']}`)"
+        )
+
+    lines.extend(
+        [
+            "",
+            "## Comparison Grid",
+            "",
+            "| Dataset | Path | Kind | Claim Precision | Important Fact Recall | "
+            "Avg Anchor Focus | Avg Reviewer Actions | Stability |",
+            "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: |",
+        ]
+    )
+    for row in summary["rows"]:
+        lines.append(
+            "| "
+            f"{row['evaluation_id']} | "
+            f"{row['path']} | "
+            f"{row['path_kind']} | "
+            f"{row['claim_precision']:.4f} | "
+            f"{row['important_fact_recall']:.4f} | "
+            f"{row['avg_anchor_focus']:.4f} | "
+            f"{row['avg_reviewer_actions']:.4f} | "
+            f"{row['stability']:.4f} |"
+        )
+    lines.extend(
+        [
+            "",
+            "Use this grid as the lightweight over-time comparison artifact. "
+            "The per-dataset `summary.json` and `report.md` files remain the detailed drill-down source.",
+        ]
+    )
     return "\n".join(lines).rstrip() + "\n"

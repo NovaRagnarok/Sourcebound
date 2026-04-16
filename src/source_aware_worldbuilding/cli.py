@@ -145,6 +145,7 @@ from source_aware_worldbuilding.domain.models import (
 from source_aware_worldbuilding.extraction_eval import (
     available_extraction_eval_datasets,
     evaluate_extraction_dataset,
+    evaluate_extraction_suite,
 )
 from source_aware_worldbuilding.pilot_corpus import (
     available_pilot_corpora,
@@ -3599,6 +3600,31 @@ def evaluate_extraction(
 ) -> None:
     if repeat < 1:
         raise typer.BadParameter("repeat must be >= 1.")
+    if dataset == "all":
+        report = evaluate_extraction_suite(
+            output_root=output_root,
+            repeat=repeat,
+        )
+
+        if json_output:
+            typer.echo(json.dumps(report, indent=2))
+            return
+
+        print("[bold]Extraction Evaluation Suite[/bold]")
+        print(f"Datasets: {report['dataset_count']}")
+        print(f"Artifacts: {output_root}")
+        for row in cast(list[dict[str, Any]], report["rows"]):
+            print(
+                f"{row['evaluation_id']}/{row['path']}: "
+                f"kind={row['path_kind']}, "
+                f"precision={row['claim_precision']:.4f}, "
+                f"recall={row['important_fact_recall']:.4f}, "
+                f"anchor_focus={row['avg_anchor_focus']:.4f}, "
+                "reviewer_actions="
+                f"{row['avg_reviewer_actions']:.4f}, "
+                f"stability={row['stability']:.4f}"
+            )
+        return
     try:
         report = evaluate_extraction_dataset(
             dataset,
@@ -3628,6 +3654,20 @@ def evaluate_extraction(
             f"{path_report['reviewer_edit_burden']['avg_actions_per_matched_candidate']:.4f}, "
             f"stability={path_report['stability']['exact_match_rate']:.4f}"
         )
+    comparisons = cast(list[dict[str, Any]], report.get("comparisons") or [])
+    if comparisons:
+        print("Comparisons:")
+        for comparison in comparisons:
+            paths = " vs ".join(comparison["paths"])
+            print(
+                f"- {comparison['comparison_kind']} {paths}: "
+                f"claim_precision_delta={comparison['claim_precision_delta']:.4f}, "
+                f"important_fact_recall_delta={comparison['important_fact_recall_delta']:.4f}, "
+                f"anchor_focus_delta={comparison['anchor_focus_delta']:.4f}, "
+                f"reviewer_action_delta={comparison['reviewer_action_delta']:.4f}"
+            )
+            if comparison.get("notes"):
+                print(f"  Note: {comparison['notes']}")
 
 
 if __name__ == "__main__":

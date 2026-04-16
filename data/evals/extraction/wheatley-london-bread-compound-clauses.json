@@ -1,0 +1,76 @@
+{
+  "evaluation_id": "wheatley-london-bread-compound-clauses",
+  "title": "Henry B. Wheatley compound-clause split extraction evaluation",
+  "corpus_id": "wheatley-london-bread",
+  "gold_claims": [
+    {
+      "gold_claim_id": "gold-tourte-bakers-white",
+      "label": "Tourte bakers were barred from making white bread",
+      "importance": "medium",
+      "target_subject": "London tourte bakers",
+      "target_predicate": "were_barred_from",
+      "target_value": "making white bread",
+      "subject_patterns": [
+        "tourte baker",
+        "tourte bakers"
+      ],
+      "predicate_patterns": [
+        "were_barred_from",
+        "described_as"
+      ],
+      "value_patterns": [
+        "make white bread",
+        "making white bread"
+      ],
+      "evidence_patterns": [
+        "a tourte baker to make white bread"
+      ]
+    },
+    {
+      "gold_claim_id": "gold-hostellers-forbidden",
+      "label": "Hostellers were forbidden to make house bread",
+      "importance": "high",
+      "target_subject": "Hostellers",
+      "target_predicate": "were_forbidden_to_make",
+      "target_value": "house bread",
+      "subject_patterns": [
+        "hostellers"
+      ],
+      "predicate_patterns": [
+        "were_forbidden_to_make",
+        "described_as"
+      ],
+      "value_patterns": [
+        "forbidden to make it",
+        "forbidden to make house bread",
+        "house bread"
+      ],
+      "evidence_patterns": [
+        "hostellers, by whom it was exclusively used, were forbidden to make it"
+      ]
+    }
+  ],
+  "contradiction_groups": [],
+  "graphrag_fixture_claims": [
+    {
+      "claim_id": "fixture-tourte-bakers-white",
+      "type": "Were Barred From",
+      "description": "London tourte bakers were barred from making white bread.",
+      "subject_id": "London tourte bakers",
+      "object_id": "making white bread",
+      "status": "TRUE",
+      "source_text": "a tourte baker to make white bread",
+      "text_unit_locator": "bread-market excerpt"
+    },
+    {
+      "claim_id": "fixture-hostellers-forbidden",
+      "type": "Were Forbidden To Make",
+      "description": "Hostellers were forbidden to make house bread.",
+      "subject_id": "Hostellers",
+      "object_id": "house bread",
+      "status": "TRUE",
+      "source_text": "hostellers, by whom it was exclusively used, were forbidden to make it",
+      "text_unit_locator": "bread-market excerpt"
+    }
+  ]
+}
