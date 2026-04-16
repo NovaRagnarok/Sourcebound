@@ -87,6 +87,11 @@ rebuildable projection rather than the source of truth.
 Optional and disabled by default: Zotero, GraphRAG, research semantics, and
 Wikibase.
 
+For one supported single-host deployment shape with a reverse proxy in front of
+the app container, see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md). That path uses
+Docker Compose for Postgres, Qdrant, the app container with the in-process job
+worker enabled, and an HTTP reverse proxy on `http://localhost:8080/`.
+
 ## How It Works
 
 The main source-to-canon flow looks like this:
@@ -201,6 +206,26 @@ This is the recommended newcomer and external-operator path. It gives you:
 - the browser UI
 - the in-process job worker
 - heuristic extraction with no GraphRAG setup required
+
+### Supported Single-Host Deployment
+
+For the current supported self-host deployment path:
+
+```bash
+docker compose up -d postgres qdrant
+docker compose run --rm app saw seed-dev-data
+docker compose run --rm app saw verify-default-stack
+docker compose up -d app proxy
+```
+
+Then open:
+
+- `http://localhost:8080/workspace/`
+- `http://localhost:8080/operator/`
+- `http://localhost:8080/health/runtime`
+
+This is still a trusted-operator deployment for one self-hosted instance, not
+a public multi-user hosting story.
 
 ### Zero-infra local mode
 

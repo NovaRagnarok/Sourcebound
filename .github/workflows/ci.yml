@@ -110,3 +110,90 @@ jobs:
           path: |
             runtime/extraction_evals/
           if-no-files-found: ignore
+
+  single-host-compose:
+    name: Single-Host Compose
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Validate compose config
+        run: docker compose config
+
+      - name: Start Postgres and Qdrant
+        run: docker compose up -d postgres qdrant
+
+      - name: Wait for Qdrant HTTP readiness
+        run: |
+          python - <<'PY'
+          import time
+          import urllib.request
+
+          deadline = time.time() + 60
+          url = "http://127.0.0.1:6333/collections"
+          while time.time() < deadline:
+              try:
+                  with urllib.request.urlopen(url, timeout=5) as response:
+                      if response.status == 200:
+                          break
+              except Exception:
+                  time.sleep(1)
+          else:
+              raise SystemExit("Qdrant did not become ready in time")
+          PY
+
+      - name: Seed the supported compose stack
+        run: docker compose run --rm app saw seed-dev-data
+
+      - name: Verify the supported compose stack
+        run: docker compose run --rm app saw verify-default-stack
+
+      - name: Start app and proxy
+        run: docker compose up -d app proxy
+
+      - name: Show compose service state
+        run: docker compose ps
+
+      - name: Wait for proxy health endpoint
+        run: |
+          python - <<'PY'
+          import json
+          import time
+          import urllib.request
+
+          deadline = time.time() + 90
+          url = "http://127.0.0.1:8080/health/runtime"
+          while time.time() < deadline:
+              try:
+                  with urllib.request.urlopen(url, timeout=5) as response:
+                      if response.status != 200:
+                          raise RuntimeError(f"unexpected status {response.status}")
+                      body = json.load(response)
+                      if body.get("overall_status") == "ready":
+                          break
+              except Exception:
+                  time.sleep(2)
+          else:
+              raise SystemExit("Proxy-backed runtime health did not become ready in time")
+          PY
+
+      - name: Check workspace entrypoint through proxy
+        run: |
+          python - <<'PY'
+          import urllib.request
+
+          with urllib.request.urlopen("http://127.0.0.1:8080/workspace/", timeout=10) as response:
+              if response.status != 200:
+                  raise SystemExit(f"unexpected workspace status {response.status}")
+          PY
+
+      - name: Dump compose logs on failure
+        if: failure()
+        run: docker compose logs --no-color postgres qdrant app proxy
+
+      - name: Tear down compose stack
+        if: always()
+        run: docker compose down -v

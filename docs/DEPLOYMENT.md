@@ -50,13 +50,38 @@ application:
 
 Smallest supported self-host deployment:
 
-- one app process serving the FastAPI API and static UI
-- the in-process job worker enabled in that same process
+- one reverse proxy container publishing the trusted-operator entrypoint
+- one app container serving the FastAPI API and static UI
+- the in-process job worker enabled in that same app container
 - persistent Postgres for app state and canon
 - Qdrant for the default retrieval path
 
 This is intentionally not a multi-service production blueprint. It is the
 minimum self-host shape that matches the current docs and runtime assumptions.
+
+## Supported Single-Host Compose Path
+
+The supported single-host path in this repo is the Compose stack defined in
+`docker-compose.yml` plus the proxy config under `infra/nginx/`.
+
+Startup flow:
+
+```bash
+docker compose up -d postgres qdrant
+docker compose run --rm app saw seed-dev-data
+docker compose run --rm app saw verify-default-stack
+docker compose up -d app proxy
+```
+
+Expected endpoints after startup:
+
+- writer workspace: `http://localhost:8080/workspace/`
+- operator view: `http://localhost:8080/operator/`
+- runtime health: `http://localhost:8080/health/runtime`
+
+This compose path is the current supported self-host deployment for a single
+trusted deployment. It is not a public-internet hardening guide and does not
+claim TLS, secret-management, or public multi-user readiness.
 
 ## Baseline Environment
 
@@ -76,6 +101,12 @@ RESEARCH_SEMANTIC_ENABLED=false
 GRAPH_RAG_ENABLED=false
 ```
 
+The compose-backed app container sets the same trusted-operator defaults, but
+uses service-local addresses for Postgres and Qdrant:
+
+- `APP_POSTGRES_DSN=postgresql://saw:saw@postgres:5432/saw`
+- `QDRANT_URL=http://qdrant:6333`
+
 Optional integrations remain opt-in:
 
 - Zotero for live library pull and write-back
@@ -87,13 +118,11 @@ Optional integrations remain opt-in:
 
 Before expecting the app to be healthy:
 
-1. bring up Postgres
-2. bring up Qdrant
-3. run `.venv/bin/saw status`
-4. expect `.venv/bin/saw status` to report a `degraded` runtime with
-   `qdrant:uninitialized` before seeding
-5. run `.venv/bin/saw seed-dev-data`
-6. verify `/health/runtime` reports `ready`
+1. bring up Postgres and Qdrant with `docker compose up -d postgres qdrant`
+2. run `docker compose run --rm app saw seed-dev-data`
+3. run `docker compose run --rm app saw verify-default-stack`
+4. bring up the app and reverse proxy with `docker compose up -d app proxy`
+5. verify `http://localhost:8080/health/runtime` reports `ready`
 
 `APP_STRICT_STARTUP_CHECKS=true` is recommended when you want boot to fail
 instead of silently accepting an uninitialized default retrieval path.
@@ -102,8 +131,9 @@ instead of silently accepting an uninitialized default retrieval path.
 
 Use these checks as the operator truth source:
 
-- `.venv/bin/saw status`
-- `.venv/bin/saw status --json-output`
+- `docker compose run --rm app saw status`
+- `docker compose run --rm app saw status --json-output`
+- `docker compose run --rm app saw verify-default-stack`
 - `GET /health`
 - `GET /health/runtime`
 
@@ -111,7 +141,7 @@ Healthy default-stack signals:
 
 - Postgres app state is ready
 - Postgres truth store is ready
-- job worker is ready
+- in-process job worker is ready
 - projection is ready, or clearly marked as needing initialization
 - optional integrations appear as optional or disabled, not as blockers
 
