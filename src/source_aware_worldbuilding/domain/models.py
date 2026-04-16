@@ -1466,8 +1466,8 @@ class ResearchFacetCoverage(BaseModel):
 
 
 class AuthenticatedActor(BaseModel):
-    actor_id: str = "trusted-operator"
-    role: Literal["operator"] = "operator"
+    actor_id: str
+    role: Literal["writer", "operator"]
 
 
 class RuntimeDependencyStatus(BaseModel):

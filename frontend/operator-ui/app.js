@@ -57,6 +57,9 @@
     lastSync: "Idle",
     banner: null,
     loading: false,
+    auth: {
+      apiToken: "",
+    },
     workspaceSummary: null,
     runtimeStatus: null,
     jobs: [],
@@ -582,6 +585,9 @@
       if (saved.query) {
         state.query = { ...state.query, ...saved.query };
       }
+      if (saved.auth) {
+        state.auth = { ...state.auth, ...saved.auth };
+      }
       if (saved.workspaceMode) {
         state.workspaceMode = saved.workspaceMode;
       }
@@ -617,6 +623,7 @@
       localStorage.setItem(
         STORAGE_KEY,
         JSON.stringify({
+          auth: state.auth,
           query: state.query,
           workspaceMode: state.workspaceMode,
           filters: state.filters,
@@ -3984,8 +3991,9 @@
   async function pullSources({ sourceIds = [], itemKeys = [], forceRefresh = false } = {}) {
     applyLoading(true);
     try {
-      const payload = await fetchJson(API.pullSources, {
+      const payload = await fetchProtectedJson(API.pullSources, {
         method: "POST",
+        requiredRole: "operator",
         body: {
           source_ids: sourceIds,
           item_keys: itemKeys,
@@ -4060,8 +4068,9 @@
 
       let intakeResult;
       if (mode === "text") {
-        intakeResult = await fetchJson(API.intakeText, {
+        intakeResult = await fetchProtectedJson(API.intakeText, {
           method: "POST",
+          requiredRole: "operator",
           body: {
             title,
             text,
@@ -4073,8 +4082,9 @@
           },
         });
       } else if (mode === "url") {
-        intakeResult = await fetchJson(API.intakeUrl, {
+        intakeResult = await fetchProtectedJson(API.intakeUrl, {
           method: "POST",
+          requiredRole: "operator",
           body: {
             url,
             title: nullableString(title),
@@ -4083,8 +4093,9 @@
           },
         });
       } else {
-        intakeResult = await fetchJson(API.intakeFile, {
+        intakeResult = await fetchProtectedJson(API.intakeFile, {
           method: "POST",
+          requiredRole: "operator",
           body: buildIntakeFileFormData({
             file,
             title,
@@ -4133,8 +4144,9 @@
         return;
       }
 
-      const normalization = await fetchJson(API.normalizeDocuments, {
+      const normalization = await fetchProtectedJson(API.normalizeDocuments, {
         method: "POST",
+        requiredRole: "operator",
         body: {
           source_ids: sourceIds,
           retry_failed: false,
@@ -4189,8 +4201,9 @@
     }
     applyLoading(true);
     try {
-      const payload = await fetchJson(API.normalizeDocuments, {
+      const payload = await fetchProtectedJson(API.normalizeDocuments, {
         method: "POST",
+        requiredRole: "operator",
         body: {
           source_ids: [sourceId],
           retry_failed: true,
@@ -4219,8 +4232,9 @@
   } = {}) {
     applyLoading(true);
     try {
-      const payload = await fetchJson(API.extractCandidates, {
+      const payload = await fetchProtectedJson(API.extractCandidates, {
         method: "POST",
+        requiredRole: "operator",
         body: { source_ids: sourceIds },
       });
       if (Array.isArray(payload.candidates)) {
@@ -4343,8 +4357,9 @@
 
     applyLoading(true);
     try {
-      const payload = await fetchJson(API.reviewCandidate(candidateId), {
+      const payload = await fetchProtectedJson(API.reviewCandidate(candidateId), {
         method: "POST",
+        requiredRole: "writer",
         body: reviewBody,
       });
 
@@ -4560,8 +4575,9 @@
 
     applyLoading(true);
     try {
-      const job = await fetchJson(API.researchRuns, {
+      const job = await fetchProtectedJson(API.researchRuns, {
         method: "POST",
+        requiredRole: "operator",
         body: request,
       });
       state.selectedResearchRunId = job.result_ref?.run_id || state.selectedResearchRunId;
@@ -4674,8 +4690,9 @@
 
     applyLoading(true);
     try {
-      const payload = await fetchJson(API.bibleProfile(state.bible.projectId), {
+      const payload = await fetchProtectedJson(API.bibleProfile(state.bible.projectId), {
         method: "PUT",
+        requiredRole: "writer",
         body: request,
       });
       state.bible.profile = payload;
@@ -4722,8 +4739,9 @@
 
     applyLoading(true);
     try {
-      const job = await fetchJson(API.bibleSections, {
+      const job = await fetchProtectedJson(API.bibleSections, {
         method: "POST",
+        requiredRole: "writer",
         body: request,
       });
       state.bible.selectedSectionId = job.result_ref?.section_id || state.bible.selectedSectionId;
@@ -4769,8 +4787,9 @@
     }
     applyLoading(true);
     try {
-      const payload = await fetchJson(API.bibleSection(sectionId), {
+      const payload = await fetchProtectedJson(API.bibleSection(sectionId), {
         method: "PUT",
+        requiredRole: "writer",
         body: {
           title: String(formData.get("title") || "").trim() || null,
           content: String(formData.get("content") || ""),
@@ -4799,8 +4818,9 @@
     const section = state.bible.sections.find((item) => item.section_id === sectionId);
     applyLoading(true);
     try {
-      const job = await fetchJson(API.regenerateBibleSection(sectionId), {
+      const job = await fetchProtectedJson(API.regenerateBibleSection(sectionId), {
         method: "POST",
+        requiredRole: "operator",
         body: {
           filters: section?.generation_filters || {},
         },
@@ -4841,7 +4861,10 @@
     }
     applyLoading(true);
     try {
-      const job = await fetchJson(API.queueBibleExport(state.bible.projectId), { method: "POST" });
+      const job = await fetchProtectedJson(API.queueBibleExport(state.bible.projectId), {
+        method: "POST",
+        requiredRole: "operator",
+      });
       state.bible.exportJobId = job.job_id;
       setBanner("queued", "Bible export queued", `Queued job ${job.job_id} for ${state.bible.projectId}.`);
       render();
@@ -4890,7 +4913,10 @@
       return;
     }
     try {
-      const job = await fetchJson(API.cancelJob(jobId), { method: "POST" });
+      const job = await fetchProtectedJson(API.cancelJob(jobId), {
+        method: "POST",
+        requiredRole: "operator",
+      });
       state.jobs = [job, ...state.jobs.filter((item) => item.job_id !== job.job_id)];
       await refreshLiveData({ quiet: true });
       if (state.bible.projectId) {
@@ -4912,7 +4938,10 @@
       return;
     }
     try {
-      const job = await fetchJson(API.retryJob(jobId), { method: "POST" });
+      const job = await fetchProtectedJson(API.retryJob(jobId), {
+        method: "POST",
+        requiredRole: "operator",
+      });
       setBanner("queued", "Retry queued", `Queued retry job ${job.job_id}.`);
       const settledJob = await pollJobUntilSettled(job.job_id, {
         onProgress: async (activeJob) => {
@@ -4984,7 +5013,10 @@
 
     applyLoading(true);
     try {
-      const job = await fetchJson(API.stageResearchRun(runId), { method: "POST" });
+      const job = await fetchProtectedJson(API.stageResearchRun(runId), {
+        method: "POST",
+        requiredRole: "operator",
+      });
       setBanner("queued", "Research staging queued", `Queued job ${job.job_id} for ${runId}.`);
       const settledJob = await pollJobUntilSettled(job.job_id, {
         onProgress: async (activeJob) => {
@@ -5023,7 +5055,10 @@
 
     applyLoading(true);
     try {
-      const job = await fetchJson(API.extractResearchRun(runId), { method: "POST" });
+      const job = await fetchProtectedJson(API.extractResearchRun(runId), {
+        method: "POST",
+        requiredRole: "operator",
+      });
       setBanner("queued", "Research extraction queued", `Queued job ${job.job_id} for ${runId}.`);
       const settledJob = await pollJobUntilSettled(job.job_id, {
         onProgress: async (activeJob) => {
@@ -5433,6 +5468,27 @@
     return brief.focal_year || "n/a";
   }
 
+  function authPromptLabel(requiredRole = "writer") {
+    return requiredRole === "operator" ? "operator" : "writer or operator";
+  }
+
+  function decorateProtectedError(error, requiredRole = "writer") {
+    const message = String(error?.message || "");
+    if (message.startsWith("401 ")) {
+      return new Error(`${message} Add a ${authPromptLabel(requiredRole)} API token and retry.`);
+    }
+    if (message.startsWith("403 ")) {
+      return new Error(
+        `${message} ${
+          requiredRole === "operator"
+            ? "Switch to an operator token and retry."
+            : "Use a writer or operator token and retry."
+        }`
+      );
+    }
+    return error instanceof Error ? error : new Error(message || "Request failed.");
+  }
+
   async function fetchJson(path, options = {}) {
     const url = `${state.apiBase}${path}`;
     const isFormData = options.body instanceof FormData;
@@ -5464,6 +5520,40 @@
     }
 
     return response.json();
+  }
+
+  async function fetchProtectedJson(path, options = {}) {
+    const {
+      requiredRole = "writer",
+      retryOnPrompt = true,
+      ...requestOptions
+    } = options;
+    const headers = { ...(requestOptions.headers || {}) };
+    if (state.auth.apiToken && !headers.Authorization) {
+      headers.Authorization = `Bearer ${state.auth.apiToken}`;
+    }
+    try {
+      return await fetchJson(path, { ...requestOptions, headers });
+    } catch (error) {
+      const message = String(error?.message || "");
+      const authError = message.startsWith("401 ") || message.startsWith("403 ");
+      if (authError && retryOnPrompt) {
+        const token = window.prompt(
+          `Enter a ${authPromptLabel(requiredRole)} API token for this action.`,
+          state.auth.apiToken || ""
+        );
+        if (token && token.trim()) {
+          state.auth.apiToken = token.trim();
+          persistState();
+          return fetchProtectedJson(path, {
+            ...requestOptions,
+            requiredRole,
+            retryOnPrompt: false,
+          });
+        }
+      }
+      throw decorateProtectedError(error, requiredRole);
+    }
   }
 
   async function refreshRuntimeStatus() {

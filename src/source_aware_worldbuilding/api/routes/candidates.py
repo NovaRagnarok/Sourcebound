@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from source_aware_worldbuilding.api.dependencies import (
     get_candidate_store,
     get_review_service,
-    require_operator_actor,
+    require_writer_actor,
 )
 from source_aware_worldbuilding.domain.errors import (
     CanonUnavailableError,
@@ -46,7 +46,7 @@ def review_candidate(
     candidate_id: str,
     payload: ReviewRequest,
     service: ReviewService = Depends(get_review_service),
-    _actor=Depends(require_operator_actor),
+    _actor=Depends(require_writer_actor),
 ) -> dict:
     try:
         approved = service.review_candidate(candidate_id, payload)

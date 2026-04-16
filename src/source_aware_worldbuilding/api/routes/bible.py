@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 
 from source_aware_worldbuilding.api.dependencies import (
     get_bible_workspace_service,
+    require_writer_actor,
     require_operator_actor,
 )
 from source_aware_worldbuilding.api.routes._job_runtime import (
@@ -45,7 +46,7 @@ def save_profile(
     project_id: str,
     payload: BibleProjectProfileUpdateRequest,
     service: BibleWorkspaceService = Depends(get_bible_workspace_service),
-    _actor=Depends(require_operator_actor),
+    _actor=Depends(require_writer_actor),
 ) -> dict:
     return service.save_profile(project_id, payload).model_dump(mode="json")
 
@@ -66,7 +67,7 @@ def list_sections(
 @router.post("/sections", status_code=status.HTTP_202_ACCEPTED)
 def create_section(
     payload: BibleSectionCreateRequest,
-    _actor=Depends(require_operator_actor),
+    _actor=Depends(require_writer_actor),
 ) -> dict:
     service = require_job_service(action="queueing Bible composition")
     try:
@@ -94,7 +95,7 @@ def update_section(
     section_id: str,
     payload: BibleSectionUpdateRequest,
     service: BibleWorkspaceService = Depends(get_bible_workspace_service),
-    _actor=Depends(require_operator_actor),
+    _actor=Depends(require_writer_actor),
 ) -> dict:
     try:
         return service.update_section(section_id, payload).model_dump(mode="json")

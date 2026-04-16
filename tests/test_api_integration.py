@@ -233,8 +233,8 @@ def test_root_redirects_to_writer_workspace_alias() -> None:
     assert response.headers["location"] == "/workspace/"
 
 
-def test_protected_mutations_require_operator_auth(
-    temp_data_dir, operator_auth_headers
+def test_writer_and_operator_routes_require_intended_role(
+    temp_data_dir, writer_auth_headers, operator_auth_headers
 ) -> None:
     calls: list[str] = []
 
@@ -251,6 +251,7 @@ def test_protected_mutations_require_operator_auth(
                 source_documents=[],
             )
 
+    seed_dev_data()
     app.dependency_overrides[get_intake_service] = lambda: FakeIntakeService()
     try:
         with TestClient(app) as client:
@@ -258,16 +259,22 @@ def test_protected_mutations_require_operator_auth(
                 "/v1/intake/text",
                 json={"title": "Protected source", "text": "body"},
             )
-            unauthorized = client.post(
+            wrong_role = client.post(
                 "/v1/intake/text",
                 json={"title": "Protected source", "text": "body"},
-                headers={"Authorization": "Bearer wrong-token"},
+                headers=writer_auth_headers,
             )
             health = client.get("/health")
-            client.headers.update(operator_auth_headers)
-            authenticated = client.post(
+            claims = client.get("/v1/claims")
+            operator_allowed = client.post(
                 "/v1/intake/text",
                 json={"title": "Protected source", "text": "body"},
+                headers=operator_auth_headers,
+            )
+            writer_allowed = client.post(
+                "/v1/candidates/cand-grain-bell-beadles/review",
+                json={"decision": "reject", "defer_state": "needs_edit"},
+                headers=writer_auth_headers,
             )
     finally:
         app.dependency_overrides.pop(get_intake_service, None)
@@ -275,10 +282,13 @@ def test_protected_mutations_require_operator_auth(
     assert unauthenticated.status_code == 401
     assert unauthenticated.headers["www-authenticate"] == "Bearer"
     assert "Authentication required" in unauthenticated.json()["detail"]
-    assert unauthorized.status_code == 403
-    assert "not authorized" in unauthorized.json()["detail"]
+    assert wrong_role.status_code == 403
+    assert "operator token" in wrong_role.json()["detail"]
     assert health.status_code == 200
-    assert authenticated.status_code == 200
+    assert claims.status_code == 200
+    assert operator_allowed.status_code == 200
+    assert writer_allowed.status_code == 200
+    assert writer_allowed.json()["status"] == "rejected"
     assert calls == ["Protected source"]
 
 
