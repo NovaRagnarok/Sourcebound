@@ -27,6 +27,7 @@ from source_aware_worldbuilding.domain.enums import (
     ReviewDecision,
 )
 from source_aware_worldbuilding.domain.models import (
+    AuthenticatedActor,
     BibleProjectProfileUpdateRequest,
     BibleSectionCreateRequest,
     BibleSectionFilters,
@@ -261,6 +262,7 @@ def run_demo_corpus(corpus_id: str, *, data_dir: Path) -> DemoCorpusRunSummary:
                 claim_patch=approval.claim_patch,
                 notes=approval.notes,
             ),
+            actor=AuthenticatedActor(actor_id="system-demo-corpus", role="operator"),
         )
         if approved is not None:
             consumed_candidate_ids.add(candidate.candidate_id)

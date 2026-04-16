@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 
-from source_aware_worldbuilding.api.dependencies import get_truth_store
+from source_aware_worldbuilding.api.dependencies import get_truth_store, require_writer_actor
 from source_aware_worldbuilding.domain.errors import CanonUnavailableError, WikibaseSyncError
 from source_aware_worldbuilding.domain.models import ClaimRelationshipRequest
 
@@ -49,6 +49,7 @@ def create_claim_relationship(
     claim_id: str,
     payload: ClaimRelationshipRequest,
     store=Depends(get_truth_store),
+    _actor=Depends(require_writer_actor),
 ) -> dict:
     try:
         relationship = store.upsert_relationship(

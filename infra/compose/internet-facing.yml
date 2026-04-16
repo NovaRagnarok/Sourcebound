@@ -1,0 +1,21 @@
+services:
+  app:
+    environment:
+      APP_WRITER_TOKEN: ${APP_WRITER_TOKEN:?Set APP_WRITER_TOKEN before starting the internet-facing stack}
+      APP_OPERATOR_TOKEN: ${APP_OPERATOR_TOKEN:?Set APP_OPERATOR_TOKEN before starting the internet-facing stack}
+
+  proxy:
+    environment:
+      SOURCEBOUND_PUBLIC_HOST: ${SOURCEBOUND_PUBLIC_HOST:?Set SOURCEBOUND_PUBLIC_HOST to the public hostname for the internet-facing stack}
+      SOURCEBOUND_HTTPS_PORT: ${SOURCEBOUND_HTTPS_PORT:-443}
+    command:
+      - /bin/sh
+      - -c
+      - envsubst '$$SOURCEBOUND_PUBLIC_HOST $$SOURCEBOUND_HTTPS_PORT' < /etc/nginx/sourcebound.internet-facing.conf > /tmp/sourcebound-nginx.conf && exec nginx -g 'daemon off;' -c /tmp/sourcebound-nginx.conf
+    ports:
+      - "${SOURCEBOUND_HTTP_PORT:-80}:80"
+      - "${SOURCEBOUND_HTTPS_PORT:-443}:443"
+    volumes:
+      - ./infra/nginx/sourcebound.internet-facing.conf:/etc/nginx/sourcebound.internet-facing.conf:ro
+      - ${SOURCEBOUND_TLS_CERT_PATH:?Set SOURCEBOUND_TLS_CERT_PATH to the mounted TLS certificate path}:/etc/nginx/tls/sourcebound.crt:ro
+      - ${SOURCEBOUND_TLS_KEY_PATH:?Set SOURCEBOUND_TLS_KEY_PATH to the mounted TLS private key path}:/etc/nginx/tls/sourcebound.key:ro

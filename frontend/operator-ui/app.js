@@ -57,6 +57,9 @@
     lastSync: "Idle",
     banner: null,
     loading: false,
+    auth: {
+      apiToken: "",
+    },
     workspaceSummary: null,
     runtimeStatus: null,
     jobs: [],
@@ -582,6 +585,9 @@
       if (saved.query) {
         state.query = { ...state.query, ...saved.query };
       }
+      if (saved.auth) {
+        state.auth = { ...state.auth, ...saved.auth };
+      }
       if (saved.workspaceMode) {
         state.workspaceMode = saved.workspaceMode;
       }
@@ -617,6 +623,7 @@
       localStorage.setItem(
         STORAGE_KEY,
         JSON.stringify({
+          auth: state.auth,
           query: state.query,
           workspaceMode: state.workspaceMode,
           filters: state.filters,
@@ -1041,6 +1048,7 @@
     const readyCount = state.runtimeStatus.services.filter((service) => service.ready).length;
     const overallTone = runtimeStatusTone(state.runtimeStatus.overall_status);
     const summaryLine = summarizeRuntime() || "Runtime details are available.";
+    const runtimeSteps = partitionRuntimeSteps(state.runtimeStatus.next_steps || []);
 
     nodes.runtimePanel.innerHTML = `
       <div class="runtime-shell">
@@ -1057,16 +1065,56 @@
           ${
             state.runtimeStatus.next_steps.length
               ? `
-                <div class="field">
-                  <label>Next steps</label>
-                  <ol class="next-step-list">
-                    ${state.runtimeStatus.next_steps
-                      .map((step) => `<li>${escapeHtml(step)}</li>`)
-                      .join("")}
-                  </ol>
-                </div>
+                ${runtimeSteps.blocking.length
+                  ? `
+                    <div class="field runtime-step-group">
+                      <label>Blocking the default path</label>
+                      <ol class="next-step-list next-step-list-blocking">
+                        ${runtimeSteps.blocking
+                          .map((step) => `<li>${escapeHtml(step)}</li>`)
+                          .join("")}
+                      </ol>
+                    </div>
+                  `
+                  : ""
+                }
+                ${runtimeSteps.optional.length
+                  ? `
+                    <div class="field runtime-step-group runtime-step-group-optional">
+                      <label>Optional later</label>
+                      <ol class="next-step-list next-step-list-optional">
+                        ${runtimeSteps.optional
+                          .map((step) => `<li>${escapeHtml(step)}</li>`)
+                          .join("")}
+                      </ol>
+                    </div>
+                  `
+                  : ""
+                }
+                ${runtimeSteps.other.length
+                  ? `
+                    <div class="field runtime-step-group">
+                      <label>Additional follow-up</label>
+                      <ol class="next-step-list">
+                        ${runtimeSteps.other
+                          .map((step) => `<li>${escapeHtml(step)}</li>`)
+                          .join("")}
+                      </ol>
+                    </div>
+                  `
+                  : ""
+                }
               `
               : "<div class='helper'>No follow-up steps are reported.</div>"
+          }
+          ${
+            runtimeSteps.optional.length
+              ? `
+                <div class="helper runtime-helper-note">
+                  Optional integrations can wait until the default Postgres + Qdrant path is stable.
+                </div>
+              `
+              : ""
           }
         </div>
         <div class="service-grid">
@@ -1208,12 +1256,13 @@
     const nextMove = visibleWriterActions[0];
     const sampleProjectLoaded = isSeededSampleProject(profile);
     const setupChecklist = buildWorkspaceSetupChecklist(profile);
+    const runtimeSteps = partitionRuntimeSteps(state.runtimeStatus?.next_steps || []);
     const remainingSetupSteps = setupChecklist.filter((item) => !item.ready).length;
     const workspaceTitle = setupMode
       ? "Finish the local stack setup"
       : (profile?.project_name || "Set up your first writing project");
     const workspaceLead = setupMode
-      ? "Bring Postgres and Qdrant online, seed the sample project, and the workspace will shift into the normal research-review-compose loop."
+      ? "Finish the blocking setup steps first. Optional integrations can wait until the default Postgres + Qdrant workspace is live."
       : sampleProjectLoaded
         ? (
             profile?.narrative_focus ||
@@ -1236,12 +1285,12 @@
     });
     const actionHeading = setupMode ? "First-run checklist" : "Next actions";
     const actionLead = setupMode
-      ? "Run these in order for the default Postgres + Qdrant stack. The workspace will settle into the normal loop once the sample project appears."
-      : "The shortest route to stronger pages is research, review, compose, then edit.";
+      ? "Run these blocking steps in order for the default Postgres + Qdrant stack. Optional integrations stay below the line until the sample project appears."
+      : "In the supported loop, review canon, shape the Bible section, then hand it to an operator.";
     const placeSummary = setupMode ? "Rouen sample project" : (profile?.geography || "Not set");
     const eraSummary = setupMode ? "Postgres + Qdrant default path" : projectPeriod;
     const attentionSummary = setupMode
-      ? `${remainingSetupSteps} ${remainingSetupSteps === 1 ? "step" : "steps"} left`
+      ? `${remainingSetupSteps} ${remainingSetupSteps === 1 ? "blocking step" : "blocking steps"} left`
       : (nextMove?.badge || `${state.workspaceSummary?.pending_review_count ?? pendingCandidates.length} waiting`);
 
     return `
@@ -1265,7 +1314,7 @@
                 : ""
             }
             <div class="workspace-hero-actions">${heroActionMarkup}</div>
-            ${setupMode ? renderWorkspaceSetupChecklist(setupChecklist) : ""}
+            ${setupMode ? renderWorkspaceSetupChecklist(setupChecklist, runtimeSteps.optional) : ""}
           </div>
           <div class="workspace-hero-meta">
             <div class="workspace-keyline">
@@ -1411,8 +1460,8 @@
           <div class="detail">
             <div class="detail-head">
               <div>
-                <h3>Source Intake Loop</h3>
-                <div class="detail-note">A real onboarding path should end in review, not in a dead-end import log.</div>
+                <h3>Source intake support</h3>
+                <div class="detail-note">This prep work feeds the Bible handoff. It is not a second supported collaboration loop.</div>
               </div>
               <span class="pill probable">${escapeHtml((state.reviewQueue || []).length || state.candidates.length)}</span>
             </div>
@@ -1447,10 +1496,11 @@
 
   function buildWorkspaceActions({ profile, pendingCandidates, thinCoverage, selectedSection, researchRunsNeedingAttention }) {
     const actions = [];
+    const handoffReadySection = state.bible.sections.find((section) => section.has_manual_edits && section.ready_for_writer);
     if (!profile?.project_name) {
       actions.push({
         title: "Set the active project profile",
-        summary: "Add place, era, and narrative focus so research and composition aim at the same book.",
+        summary: "Writer step: add place, era, and narrative focus so the writer and operator stay aimed at the same book.",
         href: "bible",
         tone: "queued",
         badge: "setup",
@@ -1459,7 +1509,7 @@
     if (pendingCandidates.length) {
       actions.push({
         title: "Review pending canon candidates",
-        summary: `${pendingCandidates.length} extracted claims are waiting at the trust boundary before they can feed the bible.`,
+        summary: `${pendingCandidates.length} extracted claims are waiting at the trust boundary before they can feed Bible drafting.`,
         href: "review",
         tone: "probable",
         badge: `${pendingCandidates.length} pending`,
@@ -1474,18 +1524,38 @@
         badge: `${thinCoverage.length} thin`,
       });
     }
-    if (selectedSection) {
+    if (handoffReadySection) {
       actions.push({
-        title: "Regenerate or edit the live bible section",
-        summary: `${selectedSection.title} already has canon attached. Refresh the generated draft or continue manual shaping without losing provenance.`,
+        title: "Hand off the live section",
+        summary: `${handoffReadySection.title} already has writer edits in place. An operator can regenerate the canon-backed draft or queue an export without overwriting manual text.`,
         href: "bible",
-        tone: selectedSection.has_manual_edits ? "author_choice" : "verified",
-        badge: selectedSection.has_manual_edits ? "manual text" : "ready",
+        tone: "author_choice",
+        badge: "operator handoff",
       });
-    } else {
+    }
+    if (selectedSection && (!handoffReadySection || handoffReadySection.section_id !== selectedSection.section_id)) {
+      const operatorHandoffReady = Boolean(selectedSection.has_manual_edits && selectedSection.ready_for_writer);
+      const handoffTitle = operatorHandoffReady
+        ? "Hand off the live section"
+        : selectedSection.ready_for_writer
+          ? "Shape the live section"
+          : "Strengthen the live section";
+      const handoffSummary = operatorHandoffReady
+        ? `${selectedSection.title} already has writer edits in place. An operator can regenerate the canon-backed draft or queue an export without overwriting manual text.`
+        : selectedSection.ready_for_writer
+          ? `${selectedSection.title} has a dependable generated baseline. Writer can refine it now, then hand it to an operator for regeneration or export.`
+          : `${selectedSection.title} is still too thin for a dependable writer-to-operator handoff.`
+      actions.push({
+        title: handoffTitle,
+        summary: handoffSummary,
+        href: "bible",
+        tone: operatorHandoffReady ? "author_choice" : selectedSection.ready_for_writer ? "verified" : "contested",
+        badge: operatorHandoffReady ? "operator handoff" : selectedSection.ready_for_writer ? "writer step" : "needs support",
+      });
+    } else if (!selectedSection) {
       actions.push({
         title: "Compose the first bible section",
-        summary: "Turn reviewed canon into a writer-facing section with visible uncertainty and provenance.",
+        summary: "Writer step: turn reviewed canon into a writer-facing section with visible uncertainty and provenance.",
         href: "bible",
         tone: "queued",
         badge: "compose",
@@ -1533,7 +1603,7 @@
         command: "docker compose up -d postgres",
         ready: postgresReady,
         tone: postgresReady ? "verified" : "queued",
-        badge: postgresReady ? "ready" : "required",
+        badge: postgresReady ? "ready" : "required now",
       },
       {
         step: "2",
@@ -1542,7 +1612,7 @@
         command: "docker compose up -d qdrant",
         ready: qdrantReady,
         tone: qdrantReady ? "verified" : "queued",
-        badge: qdrantReady ? "ready" : (postgresReady ? "next" : "after Postgres"),
+        badge: qdrantReady ? "ready" : (postgresReady ? "required next" : "after Postgres"),
       },
       {
         step: "3",
@@ -1551,12 +1621,12 @@
         command: ".venv/bin/saw seed-dev-data",
         ready: sampleReady,
         tone: sampleReady ? "verified" : "probable",
-        badge: sampleReady ? "loaded" : (qdrantReady ? "next" : "after Qdrant"),
+        badge: sampleReady ? "loaded" : (qdrantReady ? "required next" : "after Qdrant"),
       },
     ];
   }
 
-  function renderWorkspaceSetupChecklist(checklist) {
+  function renderWorkspaceSetupChecklist(checklist, optionalSteps = []) {
     return `
       <div class="workspace-setup-strip">
         ${checklist
@@ -1582,6 +1652,21 @@
           )
           .join("")}
       </div>
+      ${
+        optionalSteps.length
+          ? `
+            <div class="setup-follow-up-note">
+              <span class="rail-label">Optional later</span>
+              <ul class="setup-follow-up-list">
+                ${optionalSteps
+                  .slice(0, 3)
+                  .map((step) => `<li>${escapeHtml(step)}</li>`)
+                  .join("")}
+              </ul>
+            </div>
+          `
+          : ""
+      }
     `;
   }
 
@@ -2474,26 +2559,65 @@
   function renderBibleScreen() {
     const profile = state.bible.profile;
     const selected = state.bible.sections.find((section) => section.section_id === state.bible.selectedSectionId) ?? state.bible.sections[0];
+    const projectHandoffSection = state.bible.sections.find((section) => section.has_manual_edits && section.ready_for_writer) ?? null;
+    const projectOperatorReady = Boolean(projectHandoffSection);
     const coverage = buildBibleCoverage(profile, state.bible.sections, state.claims);
     const readyForBible = state.claims.filter((claim) => claim.status !== "rumor" && claim.status !== "legend").length;
     const nonReadyCount = coverage.filter((item) => item.summary !== "ready").length;
     const advanced = state.workspaceMode === "advanced";
+    const selectedOperatorReady = Boolean(selected && selected.has_manual_edits && selected.ready_for_writer);
+    const handoffState = selected
+      ? selectedOperatorReady
+        ? {
+            title: "Operator handoff ready",
+            tone: "author_choice",
+            detail: "Writer edits are in place. An operator can regenerate the canon-backed draft or queue an export while the manual text stays intact.",
+          }
+        : selected.has_manual_edits
+          ? {
+              title: "Writer edits saved",
+              tone: "probable",
+              detail: "Manual text is in place, but the section still needs stronger support before the operator handoff unlocks.",
+            }
+        : selected.ready_for_writer
+          ? {
+              title: "Writer shaping step",
+              tone: "verified",
+              detail: "The generated baseline is dependable enough for the writer to refine before handing the section to an operator.",
+            }
+          : {
+              title: "Research before handoff",
+              tone: "contested",
+              detail: "This section still needs stronger support before the writer-to-operator handoff feels dependable.",
+            }
+      : profile
+        ? {
+            title: "Compose a shared section",
+            tone: "queued",
+            detail: "Create the first section so the writer has something concrete to shape and hand off.",
+          }
+        : {
+            title: "Writer sets the frame",
+            tone: "queued",
+            detail: "Start with the project profile so the writer and operator are working against the same historical frame.",
+          };
 
     return `
       <article class="screen fade-in">
         <div class="screen-head">
           <div>
             <h2 data-active-screen>Bible</h2>
-            <p>The bible workspace turns reviewed canon into writer-facing sections. Every section keeps its provenance visible, keeps uncertainty explicit, and can be regenerated without silently overwriting manual edits.</p>
+            <p>The Bible workspace is the supported writer-to-operator handoff loop. The writer shapes profile and manual text here, then the operator regenerates or exports without silently overwriting those edits.</p>
           </div>
           <div class="screen-actions">
-            <button class="secondary-button" type="button" data-action="export-bible">Export saved bible</button>
+            <button class="secondary-button" type="button" data-action="export-bible" ${projectOperatorReady ? "" : "disabled"}>Queue export (operator)</button>
+            ${projectOperatorReady ? "" : `<span class="helper">Operator export unlocks after the writer saves manual text on a handoff-ready section.</span>`}
           </div>
         </div>
 
         <section class="hero-surface bible-hero">
           <div>
-            <p class="eyebrow">Solo author workflow</p>
+            <p class="eyebrow">Writer -> operator handoff</p>
             <h3>${escapeHtml(profile?.project_name || "No bible profile yet")}</h3>
             <p>${escapeHtml(profile?.narrative_focus || "Anchor the period, track what is true, and keep rumors and author choices visibly separate.")}</p>
           </div>
@@ -2501,6 +2625,30 @@
             <div><strong>${state.candidates.filter((candidate) => isUnresolvedReviewState(candidate.review_state)).length}</strong><span>Needs review</span></div>
             <div><strong>${readyForBible}</strong><span>Eligible canon</span></div>
             <div><strong>${nonReadyCount}</strong><span>Sections not ready</span></div>
+          </div>
+        </section>
+
+        <section class="detail">
+          <div class="detail-head">
+            <div>
+              <h3>Bible handoff loop</h3>
+              <div class="detail-note">One clean collaboration loop: writer shapes the section, operator refreshes or exports it, and the manual text remains the writable source.</div>
+            </div>
+            <span class="pill ${escapeHtml(handoffState.tone)}">${escapeHtml(handoffState.title)}</span>
+          </div>
+          <div class="detail-list">
+            <div class="mini">
+              <strong>1. Writer frames and shapes</strong>
+              <div class="detail-note">Save the project profile, compose a section, and refine the manual text with a writer token.</div>
+            </div>
+            <div class="mini">
+              <strong>2. Operator refreshes or exports</strong>
+              <div class="detail-note">Use an operator token for regeneration and export once the section is ready for handoff.</div>
+            </div>
+            <div class="mini">
+              <strong>Current step</strong>
+              <div class="detail-note">${escapeHtml(handoffState.detail)}</div>
+            </div>
           </div>
         </section>
 
@@ -2534,7 +2682,7 @@
               <div class="detail-head">
                 <div>
                   <h3>Project profile</h3>
-                  <div class="detail-note">This drives section defaults, tone, and coverage expectations for one active historical-fiction project.</div>
+                  <div class="detail-note">Writer-owned setup for the shared project frame. This drives section defaults, tone, and coverage expectations before the operator handoff begins.</div>
                 </div>
                 <span class="pill probable">profile</span>
               </div>
@@ -2596,7 +2744,7 @@
                 </div>
               </div>
               <div class="toolbar">
-                <button class="primary-button" type="submit">Save project profile</button>
+                <button class="primary-button" type="submit">Save project profile (writer)</button>
               </div>
             </form>
 
@@ -2625,7 +2773,7 @@
               <div class="detail-head">
                 <div>
                   <h3>Compose section</h3>
-                  <div class="detail-note">Use section type, certainty, and source filters to generate a writer-facing draft from approved claims.</div>
+                  <div class="detail-note">Writer step: use section type, certainty, and source filters to generate a canon-backed draft before manual shaping.</div>
                 </div>
                 <span class="pill queued">compose</span>
               </div>
@@ -2675,8 +2823,8 @@
                 </div>
               </div>
               <div class="toolbar">
-                <button class="primary-button" type="submit">Compose section</button>
-                <span class="helper">Approved canon only. Rumor, contested material, and author choices stay visibly labeled.</span>
+                <button class="primary-button" type="submit">Compose section (writer)</button>
+                <span class="helper">Approved canon only. Rumor, contested material, and author choices stay visibly labeled before the operator handoff.</span>
               </div>
             </form>
 
@@ -2716,6 +2864,7 @@
       provenance?.paragraphs?.find((item) => (item.paragraph?.claim_ids || []).length) ||
       null;
     const manualMode = section.has_manual_edits ? "manual override active" : "generated working copy";
+    const operatorHandoffReady = Boolean(section.ready_for_writer && section.has_manual_edits);
     const manualCallout = section.has_manual_edits
       ? "The editable text below is the author's working override. Regeneration refreshes the generated draft above and preserves this manual text."
       : "The editable text below currently mirrors the generated draft. Once you change it, the editor becomes a manual override that can diverge from regenerated canon synthesis.";
@@ -2741,9 +2890,10 @@
       </div>
       <div class="toolbar">
         <button class="secondary-button" type="button" data-action="launch-gap-research">Fill a gap</button>
-        <button class="secondary-button" type="button" data-action="regenerate-bible-section">Regenerate section</button>
+        <button class="secondary-button" type="button" data-action="regenerate-bible-section" ${operatorHandoffReady ? "" : "disabled"}>Regenerate section (operator)</button>
         ${advanced ? renderJobControls(section.latest_job) : ""}
       </div>
+      ${operatorHandoffReady ? "" : "<div class='helper'>Operator regeneration unlocks after the writer saves manual text on a handoff-ready section.</div>"}
       ${advanced ? renderJobDiagnostic(section.latest_job) : ""}
       <div class="field">
         <label>Generation posture</label>
@@ -2808,8 +2958,8 @@
             <textarea name="content" class="bible-editor">${escapeHtml(section.content)}</textarea>
           </div>
           <div class="toolbar">
-            <button class="primary-button" type="submit">Save edits</button>
-            <span class="helper">${section.has_manual_edits ? `Manual edits are preserved even when the generated draft refreshes. Current state: ${renderBibleManualState(section)}.` : "Saving here creates an explicit manual override."}</span>
+            <button class="primary-button" type="submit">Save edits (writer)</button>
+            <span class="helper">${section.has_manual_edits ? operatorHandoffReady ? `Manual edits are preserved even when the generated draft refreshes. Current state: ${renderBibleManualState(section)}. The section is ready for operator regeneration or export.` : `Manual edits are preserved even when the generated draft refreshes. Current state: ${renderBibleManualState(section)}. Strengthen the section before handing it to an operator.` : "Saving here creates an explicit manual override that becomes the writer-owned handoff surface."}</span>
           </div>
         </form>
       </section>
@@ -3126,8 +3276,28 @@
     }
     const warnings = job.warnings || [];
     const diagnostic = [];
+    const state = job.worker_state || job.status_label || job.status;
+    if (job.retry_of_job_id) {
+      diagnostic.push(
+        `<div class="mini"><strong>Retry lineage</strong><div class="detail-note">Retrying ${escapeHtml(job.retry_of_job_id)} as attempt ${escapeHtml(job.attempt_count || 1)} of ${escapeHtml(job.max_attempts || job.attempt_count || 1)}.</div></div>`
+      );
+    } else if ((Number(job.max_attempts || 1) > 1 || Number(job.attempt_count || 1) > 1)) {
+      diagnostic.push(
+        `<div class="mini"><strong>Attempt</strong><div class="detail-note">Attempt ${escapeHtml(job.attempt_count || 1)} of ${escapeHtml(job.max_attempts || job.attempt_count || 1)}.</div></div>`
+      );
+    }
     if (job.progress_message) {
       diagnostic.push(`<div class="mini"><strong>Stage</strong><div class="detail-note">${escapeHtml(job.progress_message)}</div></div>`);
+    }
+    if (state === "partial") {
+      diagnostic.push(
+        "<div class='warning'>Partial completion: review the warnings before treating this job as done.</div>"
+      );
+    }
+    if (state === "failed" && job.retryable) {
+      diagnostic.push(
+        "<div class='warning'>This failed job can be retried from the job controls after you inspect the error.</div>"
+      );
     }
     if (job.stalled_reason) {
       diagnostic.push(`<div class="warning">${escapeHtml(job.stalled_reason)}</div>`);
@@ -3137,6 +3307,11 @@
     }
     if ((job.status_label || job.status) === "failed") {
       diagnostic.push(`<div class="warning">${escapeHtml(job.error_detail || job.error || "Background job failed.")}</div>`);
+    }
+    if (job.operator_next_action) {
+      diagnostic.push(
+        `<div class="mini"><strong>Next step</strong><div class="detail-note">${escapeHtml(job.operator_next_action)}</div></div>`
+      );
     }
     if (warnings.length) {
       diagnostic.push(...warnings.map((warning) => `<div class="warning">${escapeHtml(warning)}</div>`));
@@ -3902,8 +4077,9 @@
   async function pullSources({ sourceIds = [], itemKeys = [], forceRefresh = false } = {}) {
     applyLoading(true);
     try {
-      const payload = await fetchJson(API.pullSources, {
+      const payload = await fetchProtectedJson(API.pullSources, {
         method: "POST",
+        requiredRole: "operator",
         body: {
           source_ids: sourceIds,
           item_keys: itemKeys,
@@ -3978,8 +4154,9 @@
 
       let intakeResult;
       if (mode === "text") {
-        intakeResult = await fetchJson(API.intakeText, {
+        intakeResult = await fetchProtectedJson(API.intakeText, {
           method: "POST",
+          requiredRole: "operator",
           body: {
             title,
             text,
@@ -3991,8 +4168,9 @@
           },
         });
       } else if (mode === "url") {
-        intakeResult = await fetchJson(API.intakeUrl, {
+        intakeResult = await fetchProtectedJson(API.intakeUrl, {
           method: "POST",
+          requiredRole: "operator",
           body: {
             url,
             title: nullableString(title),
@@ -4001,8 +4179,9 @@
           },
         });
       } else {
-        intakeResult = await fetchJson(API.intakeFile, {
+        intakeResult = await fetchProtectedJson(API.intakeFile, {
           method: "POST",
+          requiredRole: "operator",
           body: buildIntakeFileFormData({
             file,
             title,
@@ -4051,8 +4230,9 @@
         return;
       }
 
-      const normalization = await fetchJson(API.normalizeDocuments, {
+      const normalization = await fetchProtectedJson(API.normalizeDocuments, {
         method: "POST",
+        requiredRole: "operator",
         body: {
           source_ids: sourceIds,
           retry_failed: false,
@@ -4107,8 +4287,9 @@
     }
     applyLoading(true);
     try {
-      const payload = await fetchJson(API.normalizeDocuments, {
+      const payload = await fetchProtectedJson(API.normalizeDocuments, {
         method: "POST",
+        requiredRole: "operator",
         body: {
           source_ids: [sourceId],
           retry_failed: true,
@@ -4137,8 +4318,9 @@
   } = {}) {
     applyLoading(true);
     try {
-      const payload = await fetchJson(API.extractCandidates, {
+      const payload = await fetchProtectedJson(API.extractCandidates, {
         method: "POST",
+        requiredRole: "operator",
         body: { source_ids: sourceIds },
       });
       if (Array.isArray(payload.candidates)) {
@@ -4261,8 +4443,9 @@
 
     applyLoading(true);
     try {
-      const payload = await fetchJson(API.reviewCandidate(candidateId), {
+      const payload = await fetchProtectedJson(API.reviewCandidate(candidateId), {
         method: "POST",
+        requiredRole: "writer",
         body: reviewBody,
       });
 
@@ -4478,8 +4661,9 @@
 
     applyLoading(true);
     try {
-      const job = await fetchJson(API.researchRuns, {
+      const job = await fetchProtectedJson(API.researchRuns, {
         method: "POST",
+        requiredRole: "operator",
         body: request,
       });
       state.selectedResearchRunId = job.result_ref?.run_id || state.selectedResearchRunId;
@@ -4536,11 +4720,7 @@
       if (state.bible.selectedSectionId) {
         await loadBibleProvenance(state.bible.selectedSectionId);
       }
-      try {
-        state.workspaceSummary = await fetchJson(`${API.workspaceSummary}?project_id=${encodeURIComponent(activeProjectId)}`);
-      } catch (error) {
-        console.warn("Could not refresh workspace summary from bible refresh", error);
-      }
+      await refreshBibleWorkspaceSummary(activeProjectId);
       if (!quiet) {
         setBanner("live", "Bible refreshed", `Loaded ${sections.length} saved bible sections for ${profile.project_name}.`);
       }
@@ -4551,6 +4731,17 @@
     } finally {
       persistState();
       render();
+    }
+  }
+
+  async function refreshBibleWorkspaceSummary(projectId = state.bible.projectId) {
+    if (!projectId) {
+      return;
+    }
+    try {
+      state.workspaceSummary = await fetchJson(`${API.workspaceSummary}?project_id=${encodeURIComponent(projectId)}`);
+    } catch (error) {
+      console.warn("Could not refresh workspace summary from bible refresh", error);
     }
   }
 
@@ -4592,14 +4783,17 @@
 
     applyLoading(true);
     try {
-      const payload = await fetchJson(API.bibleProfile(state.bible.projectId), {
+      const payload = await fetchProtectedJson(API.bibleProfile(state.bible.projectId), {
         method: "PUT",
+        requiredRole: "writer",
         body: request,
       });
       state.bible.profile = payload;
+      state.bible.projectId = payload.project_id || state.bible.projectId;
       state.bible.draft.place = payload.geography || state.bible.draft.place;
       state.bible.draft.time_start = payload.time_start || state.bible.draft.time_start;
       state.bible.draft.time_end = payload.time_end || state.bible.draft.time_end;
+      await refreshBibleWorkspaceSummary(state.bible.projectId);
       setBanner("live", "Bible profile saved", `Updated ${payload.project_name}.`);
       render();
     } catch (error) {
@@ -4640,8 +4834,9 @@
 
     applyLoading(true);
     try {
-      const job = await fetchJson(API.bibleSections, {
+      const job = await fetchProtectedJson(API.bibleSections, {
         method: "POST",
+        requiredRole: "writer",
         body: request,
       });
       state.bible.selectedSectionId = job.result_ref?.section_id || state.bible.selectedSectionId;
@@ -4687,8 +4882,9 @@
     }
     applyLoading(true);
     try {
-      const payload = await fetchJson(API.bibleSection(sectionId), {
+      const payload = await fetchProtectedJson(API.bibleSection(sectionId), {
         method: "PUT",
+        requiredRole: "writer",
         body: {
           title: String(formData.get("title") || "").trim() || null,
           content: String(formData.get("content") || ""),
@@ -4698,6 +4894,7 @@
         section.section_id === sectionId ? payload : section
       );
       state.bible.selectedSectionId = sectionId;
+      await refreshBibleWorkspaceSummary(state.bible.projectId);
       setBanner("live", "Bible edits saved", `Manual edits were saved for ${payload.title}.`);
       render();
     } catch (error) {
@@ -4717,8 +4914,9 @@
     const section = state.bible.sections.find((item) => item.section_id === sectionId);
     applyLoading(true);
     try {
-      const job = await fetchJson(API.regenerateBibleSection(sectionId), {
+      const job = await fetchProtectedJson(API.regenerateBibleSection(sectionId), {
         method: "POST",
+        requiredRole: "operator",
         body: {
           filters: section?.generation_filters || {},
         },
@@ -4759,7 +4957,10 @@
     }
     applyLoading(true);
     try {
-      const job = await fetchJson(API.queueBibleExport(state.bible.projectId), { method: "POST" });
+      const job = await fetchProtectedJson(API.queueBibleExport(state.bible.projectId), {
+        method: "POST",
+        requiredRole: "operator",
+      });
       state.bible.exportJobId = job.job_id;
       setBanner("queued", "Bible export queued", `Queued job ${job.job_id} for ${state.bible.projectId}.`);
       render();
@@ -4808,7 +5009,10 @@
       return;
     }
     try {
-      const job = await fetchJson(API.cancelJob(jobId), { method: "POST" });
+      const job = await fetchProtectedJson(API.cancelJob(jobId), {
+        method: "POST",
+        requiredRole: "operator",
+      });
       state.jobs = [job, ...state.jobs.filter((item) => item.job_id !== job.job_id)];
       await refreshLiveData({ quiet: true });
       if (state.bible.projectId) {
@@ -4830,7 +5034,10 @@
       return;
     }
     try {
-      const job = await fetchJson(API.retryJob(jobId), { method: "POST" });
+      const job = await fetchProtectedJson(API.retryJob(jobId), {
+        method: "POST",
+        requiredRole: "operator",
+      });
       setBanner("queued", "Retry queued", `Queued retry job ${job.job_id}.`);
       const settledJob = await pollJobUntilSettled(job.job_id, {
         onProgress: async (activeJob) => {
@@ -4902,7 +5109,10 @@
 
     applyLoading(true);
     try {
-      const job = await fetchJson(API.stageResearchRun(runId), { method: "POST" });
+      const job = await fetchProtectedJson(API.stageResearchRun(runId), {
+        method: "POST",
+        requiredRole: "operator",
+      });
       setBanner("queued", "Research staging queued", `Queued job ${job.job_id} for ${runId}.`);
       const settledJob = await pollJobUntilSettled(job.job_id, {
         onProgress: async (activeJob) => {
@@ -4941,7 +5151,10 @@
 
     applyLoading(true);
     try {
-      const job = await fetchJson(API.extractResearchRun(runId), { method: "POST" });
+      const job = await fetchProtectedJson(API.extractResearchRun(runId), {
+        method: "POST",
+        requiredRole: "operator",
+      });
       setBanner("queued", "Research extraction queued", `Queued job ${job.job_id} for ${runId}.`);
       const settledJob = await pollJobUntilSettled(job.job_id, {
         onProgress: async (activeJob) => {
@@ -5009,8 +5222,28 @@
     const total = Number(job.progress_total || 100);
     const current = Number(job.progress_current || 0);
     const percent = total > 0 ? Math.max(0, Math.min(100, Math.round((current / total) * 100))) : 0;
-    const label = (job.worker_state || job.status_label || job.status || "queued").replaceAll("_", " ");
-    return `${label}${job.progress_stage ? ` · ${job.progress_stage.replaceAll("_", " ")}` : ""}${["running", "queued", "cancel_requested"].includes(job.worker_state || job.status_label || job.status) ? ` · ${percent}%` : ""}`;
+    const state = job.worker_state || job.status_label || job.status || "queued";
+    const label = state.replaceAll("_", " ");
+    const qualifiers = [];
+    const attemptCount = Number(job.attempt_count || 1);
+    const maxAttempts = Number(job.max_attempts || Math.max(1, attemptCount));
+    if (maxAttempts > 1 || attemptCount > 1) {
+      qualifiers.push(`attempt ${attemptCount} of ${maxAttempts}`);
+    }
+    if (state === "partial") {
+      qualifiers.push("review warnings");
+    } else if (state === "stalled") {
+      qualifiers.push("worker stalled");
+    } else if (state === "failed" && job.retryable) {
+      qualifiers.push("retry available");
+    }
+    if (["running", "queued", "cancel_requested"].includes(state)) {
+      if (job.progress_stage) {
+        qualifiers.push(job.progress_stage.replaceAll("_", " "));
+      }
+      qualifiers.push(`${percent}%`);
+    }
+    return [label, ...qualifiers].join(" · ");
   }
 
   function renderJobPill(job) {
@@ -5038,6 +5271,7 @@
       return "Background workflow status is available.";
     }
     return (
+      job.operator_summary ||
       job.progress_message ||
       job.stalled_reason ||
       job.degraded_reason ||
@@ -5330,6 +5564,27 @@
     return brief.focal_year || "n/a";
   }
 
+  function authPromptLabel(requiredRole = "writer") {
+    return requiredRole === "operator" ? "operator" : "writer or operator";
+  }
+
+  function decorateProtectedError(error, requiredRole = "writer") {
+    const message = String(error?.message || "");
+    if (message.startsWith("401 ")) {
+      return new Error(`${message} Add a ${authPromptLabel(requiredRole)} API token and retry.`);
+    }
+    if (message.startsWith("403 ")) {
+      return new Error(
+        `${message} ${
+          requiredRole === "operator"
+            ? "Switch to an operator token and retry."
+            : "Use a writer or operator token and retry."
+        }`
+      );
+    }
+    return error instanceof Error ? error : new Error(message || "Request failed.");
+  }
+
   async function fetchJson(path, options = {}) {
     const url = `${state.apiBase}${path}`;
     const isFormData = options.body instanceof FormData;
@@ -5361,6 +5616,40 @@
     }
 
     return response.json();
+  }
+
+  async function fetchProtectedJson(path, options = {}) {
+    const {
+      requiredRole = "writer",
+      retryOnPrompt = true,
+      ...requestOptions
+    } = options;
+    const headers = { ...(requestOptions.headers || {}) };
+    if (state.auth.apiToken && !headers.Authorization) {
+      headers.Authorization = `Bearer ${state.auth.apiToken}`;
+    }
+    try {
+      return await fetchJson(path, { ...requestOptions, headers });
+    } catch (error) {
+      const message = String(error?.message || "");
+      const authError = message.startsWith("401 ") || message.startsWith("403 ");
+      if (authError && retryOnPrompt) {
+        const token = window.prompt(
+          `Enter a ${authPromptLabel(requiredRole)} API token for this action.`,
+          state.auth.apiToken || ""
+        );
+        if (token && token.trim()) {
+          state.auth.apiToken = token.trim();
+          persistState();
+          return fetchProtectedJson(path, {
+            ...requestOptions,
+            requiredRole,
+            retryOnPrompt: false,
+          });
+        }
+      }
+      throw decorateProtectedError(error, requiredRole);
+    }
   }
 
   async function refreshRuntimeStatus() {
@@ -5421,6 +5710,22 @@
       return "uninitialized";
     }
     return service.ready ? "healthy" : "attention";
+  }
+
+  function partitionRuntimeSteps(steps) {
+    return (steps || []).reduce(
+      (groups, step) => {
+        if (step.startsWith("Optional after first run")) {
+          groups.optional.push(step);
+        } else if (step.startsWith("Required") || step.startsWith("Non-default local mode detected")) {
+          groups.blocking.push(step);
+        } else {
+          groups.other.push(step);
+        }
+        return groups;
+      },
+      { blocking: [], optional: [], other: [] }
+    );
   }
 
   function renderReachability(value) {

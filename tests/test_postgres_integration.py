@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import json
+import os
+import socket
 import subprocess
 from pathlib import Path
 
@@ -7,9 +10,11 @@ import pytest
 from fastapi.testclient import TestClient
 from psycopg import connect
 from psycopg.sql import SQL, Identifier
+from typer.testing import CliRunner
 
 from source_aware_worldbuilding.adapters.postgres_backed import PostgresTruthStore
 from source_aware_worldbuilding.api.main import app
+from source_aware_worldbuilding.cli import app as cli_app
 from source_aware_worldbuilding.cli import seed_dev_data
 from source_aware_worldbuilding.domain.enums import ClaimKind, ClaimStatus, ReviewDecision
 from source_aware_worldbuilding.domain.models import ApprovedClaim, EvidenceSnippet, ReviewEvent
@@ -28,8 +33,12 @@ def _table_count(dsn: str, schema: str, table_name: str) -> int:
     return int(count[0])
 
 
+runner = CliRunner()
+
+
 def test_operator_flow_routes_share_postgres_backed_state(
     postgres_app_state: dict[str, str | Path],
+    operator_auth_headers: dict[str, str],
 ) -> None:
     dsn = str(postgres_app_state["dsn"])
     schema = str(postgres_app_state["schema"])
@@ -57,6 +66,7 @@ def test_operator_flow_routes_share_postgres_backed_state(
     assert _table_count(dsn, schema, "source_chunks") == 8
 
     with TestClient(app) as client:
+        client.headers.update(operator_auth_headers)
         sources_before = client.get("/v1/sources")
         assert sources_before.status_code == 200
         assert len(sources_before.json()) == 10
@@ -349,6 +359,50 @@ def test_postgres_truth_store_supports_manual_relationship_curation(
     )
 
 
+def test_upgrade_check_reports_supported_postgres_schema_version(
+    postgres_app_state: dict[str, str | Path],
+) -> None:
+    seed_dev_data()
+
+    result = runner.invoke(cli_app, ["upgrade-check", "--json-output"])
+
+    assert result.exit_code == 0
+    body = json.loads(result.stdout)
+    assert body["postgres_enabled"] is True
+    assert body["schema"] == str(postgres_app_state["schema"])
+    assert body["schema_version"] == 1
+    assert body["expected_schema_version"] == 1
+    assert body["compatible"] is True
+
+
+def test_upgrade_check_reports_uninitialized_schema_without_bootstrapping(
+    postgres_app_state: dict[str, str | Path],
+) -> None:
+    dsn = str(postgres_app_state["dsn"])
+    schema = str(postgres_app_state["schema"])
+
+    result = runner.invoke(cli_app, ["upgrade-check", "--json-output"])
+
+    assert result.exit_code == 0
+    body = json.loads(result.stdout)
+    assert body["postgres_enabled"] is True
+    assert body["schema"] == schema
+    assert body["schema_version"] is None
+    assert body["compatible"] is False
+    assert "does not exist" in body["detail"].lower()
+
+    with connect(dsn, autocommit=True) as connection:
+        exists_row = connection.execute(
+            """
+            SELECT 1
+            FROM information_schema.schemata
+            WHERE schema_name = %s
+            """,
+            (schema,),
+        ).fetchone()
+    assert exists_row is None
+
+
 @pytest.mark.live_qdrant
 def test_postgres_newcomer_path_reaches_ready_operator_ui(
     postgres_app_state: dict[str, str | Path],
@@ -410,3 +464,29 @@ def test_newcomer_smoke_script_exercises_default_stack() -> None:
     assert completed.returncode == 0, (
         f"stdout:\n{completed.stdout}\n\nstderr:\n{completed.stderr}"
     )
+
+
+def test_newcomer_smoke_script_fails_fast_when_configured_port_is_occupied() -> None:
+    root_dir = Path(__file__).resolve().parents[1]
+    script = root_dir / "scripts" / "newcomer_smoke.sh"
+    env = os.environ.copy()
+
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
+        listener.bind(("127.0.0.1", 0))
+        listener.listen(1)
+        env["SOURCEBOUND_SMOKE_APP_PORT"] = str(listener.getsockname()[1])
+
+        completed = subprocess.run(
+            [str(script)],
+            cwd=root_dir,
+            capture_output=True,
+            text=True,
+            check=False,
+            env=env,
+        )
+
+    assert completed.returncode == 1, (
+        f"stdout:\n{completed.stdout}\n\nstderr:\n{completed.stderr}"
+    )
+    assert "configured smoke app port" in completed.stderr
+    assert "SOURCEBOUND_SMOKE_APP_PORT" in completed.stderr

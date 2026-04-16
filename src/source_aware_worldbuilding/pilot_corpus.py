@@ -31,6 +31,7 @@ from source_aware_worldbuilding.domain.enums import (
 )
 from source_aware_worldbuilding.domain.errors import ZoteroConfigError
 from source_aware_worldbuilding.domain.models import (
+    AuthenticatedActor,
     BibleProjectProfileUpdateRequest,
     BibleSectionCreateRequest,
     BibleSectionFilters,
@@ -424,6 +425,7 @@ def run_pilot_corpus(
                 defer_state=review_spec.defer_state,
                 notes=review_spec.notes,
             ),
+            actor=AuthenticatedActor(actor_id="system-pilot-corpus", role="operator"),
         )
         consumed_candidate_ids.add(candidate.candidate_id)
 

@@ -13,6 +13,13 @@ from source_aware_worldbuilding.adapters.qdrant_adapter import (
 from source_aware_worldbuilding.domain.models import RuntimeDependencyStatus, RuntimeStatus
 from source_aware_worldbuilding.settings import settings
 
+_DEFAULT_STACK_BLOCKER_PREFIXES = (
+    "Required because",
+    "Required for local startup",
+    "Required for the recommended default stack",
+    "Non-default local mode detected",
+)
+
 
 def build_runtime_status() -> RuntimeStatus:
     services = [
@@ -43,9 +50,13 @@ def build_runtime_status() -> RuntimeStatus:
 
 
 def enforce_runtime_startup_checks(*, strict_runtime_checks: bool | None = None) -> None:
-    issues = _startup_validation_errors()
+    issues = runtime_startup_issues(strict_runtime_checks=strict_runtime_checks)
     if issues:
         raise RuntimeError(_format_startup_validation_errors(issues))
+
+
+def runtime_startup_issues(*, strict_runtime_checks: bool | None = None) -> list[str]:
+    issues = _startup_validation_errors()
 
     strict = (
         settings.app_strict_startup_checks
@@ -53,11 +64,11 @@ def enforce_runtime_startup_checks(*, strict_runtime_checks: bool | None = None)
         else strict_runtime_checks
     )
     if not strict or not settings.qdrant_enabled:
-        return
+        return issues
 
     mode, _reachable, ready, detail = QdrantProjectionAdapter().runtime_probe()
     if ready:
-        return
+        return issues
 
     next_step = (
         "Run `saw seed-dev-data` for the default newcomer path, or "
@@ -65,9 +76,27 @@ def enforce_runtime_startup_checks(*, strict_runtime_checks: bool | None = None)
         if mode == "qdrant:uninitialized"
         else "Bring Qdrant online or disable strict startup checks for non-retrieval environments."
     )
-    raise RuntimeError(
+    issues.append(
         f"{detail} Strict startup checks are enabled, so Sourcebound refused to start. {next_step}"
     )
+    return issues
+
+
+def default_stack_verification_issues(
+    runtime_status: RuntimeStatus | None = None,
+) -> list[str]:
+    runtime = build_runtime_status() if runtime_status is None else runtime_status
+    issues = [
+        step
+        for step in runtime.next_steps
+        if step.startswith(_DEFAULT_STACK_BLOCKER_PREFIXES)
+    ]
+    if runtime.overall_status != "ready" and not issues:
+        issues.append(
+            "Current runtime status is not `ready`. Review `/health/runtime` and fix the "
+            "remaining degraded service before treating the default stack as usable."
+        )
+    return issues
 
 
 def _startup_validation_errors() -> list[str]:
@@ -341,6 +370,21 @@ def _research_semantics_status() -> RuntimeDependencyStatus:
 
 
 def _job_worker_status() -> RuntimeDependencyStatus:
+    if settings.app_job_worker_enabled:
+        detail = (
+            "In-process worker enabled with "
+            f"{settings.app_job_poll_interval_seconds}s polling."
+        )
+    elif settings.app_allow_queued_jobs_without_worker:
+        detail = (
+            "Background job worker is disabled; long-running routes will queue "
+            "without auto-processing."
+        )
+    else:
+        detail = (
+            "Background job worker is disabled; long-running routes are blocked "
+            "until APP_JOB_WORKER_ENABLED=true."
+        )
     return RuntimeDependencyStatus(
         name="job_worker",
         role="Persisted background research and bible jobs",
@@ -348,12 +392,7 @@ def _job_worker_status() -> RuntimeDependencyStatus:
         configured=settings.app_job_worker_enabled,
         reachable=None,
         ready=settings.app_job_worker_enabled,
-        detail=(
-            f"In-process worker enabled with {settings.app_job_poll_interval_seconds}s polling."
-            if settings.app_job_worker_enabled
-            else "Background job worker is disabled; long-running routes will queue "
-            "without auto-processing."
-        ),
+        detail=detail,
     )
 
 
@@ -386,6 +425,16 @@ def _next_steps(services: list[RuntimeDependencyStatus]) -> list[str]:
     steps: list[str] = []
     by_name = {service.name: service for service in services}
 
+    if settings.app_state_backend != "postgres":
+        steps.append(
+            "Non-default local mode detected: set `APP_STATE_BACKEND=postgres` and ensure "
+            "`APP_POSTGRES_DSN` points at the default Postgres service."
+        )
+    if settings.app_truth_backend != "postgres":
+        steps.append(
+            "Non-default local mode detected: set `APP_TRUTH_BACKEND=postgres` so canonical "
+            "truth follows the documented default stack."
+        )
     if by_name["corpus"].ready is False:
         steps.append(
             "Optional after first run: verify ZOTERO_BASE_URL, ZOTERO_LIBRARY_ID, and "

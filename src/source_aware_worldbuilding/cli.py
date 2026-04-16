@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import socket
 import statistics
 from datetime import UTC, datetime
 from pathlib import Path
@@ -144,6 +145,7 @@ from source_aware_worldbuilding.domain.models import (
 from source_aware_worldbuilding.extraction_eval import (
     available_extraction_eval_datasets,
     evaluate_extraction_dataset,
+    evaluate_extraction_suite,
 )
 from source_aware_worldbuilding.pilot_corpus import (
     available_pilot_corpora,
@@ -164,9 +166,11 @@ from source_aware_worldbuilding.services.normalization import NormalizationServi
 from source_aware_worldbuilding.services.research import ResearchService
 from source_aware_worldbuilding.services.status import (
     build_runtime_status,
-    enforce_runtime_startup_checks,
+    default_stack_verification_issues,
+    runtime_startup_issues,
 )
 from source_aware_worldbuilding.settings import settings
+from source_aware_worldbuilding.storage.postgres_app_state import PostgresAppStateStore
 
 app = typer.Typer(help="Source-Aware Worldbuilding CLI")
 
@@ -174,6 +178,65 @@ app = typer.Typer(help="Source-Aware Worldbuilding CLI")
 def _write_json(path: Path, payload: list[dict]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+
+def _format_startup_preflight_errors(issues: list[str]) -> str:
+    lines = ["Sourcebound cannot start `saw serve` with the current local runtime:"]
+    lines.extend(f"- {issue}" for issue in issues)
+    lines.append(
+        "Run `saw verify-default-stack` for the same default-stack setup guidance shown by "
+        "`/health/runtime`."
+    )
+    return "\n".join(lines)
+
+
+def _serve_port_preflight_issue() -> str | None:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            sock.bind((settings.app_host, settings.app_port))
+        except OSError as exc:
+            if exc.errno == 98:
+                return (
+                    f"App port {settings.app_port} on {settings.app_host} is already in use. "
+                    f"Stop the process using that port, or run "
+                    f"`APP_PORT={settings.app_port + 1} .venv/bin/saw serve --reload`."
+                )
+            return f"App port preflight failed for {settings.app_host}:{settings.app_port}: {exc}."
+    return None
+
+
+def _runtime_preflight_issues(*, strict_runtime_checks: bool) -> list[str]:
+    issues = runtime_startup_issues(strict_runtime_checks=strict_runtime_checks)
+
+    port_issue = _serve_port_preflight_issue()
+    if port_issue:
+        issues.append(port_issue)
+
+    runtime = build_runtime_status()
+    services = {service.name: service for service in runtime.services}
+
+    for name in ("app_state", "truth_store", "job_worker"):
+        if services[name].ready is False:
+            issues.append(services[name].detail)
+
+    projection = services["projection"]
+    if (
+        settings.qdrant_enabled
+        and projection.ready is False
+        and projection.mode != "qdrant:uninitialized"
+    ):
+        issues.append(projection.detail)
+
+    research_semantics = services["research_semantics"]
+    if (
+        settings.research_semantic_enabled
+        and research_semantics.ready is False
+        and research_semantics.mode != "qdrant:uninitialized"
+    ):
+        issues.append(research_semantics.detail)
+
+    return list(dict.fromkeys(issues))
 
 
 class _BenchmarkCorpus:
@@ -1833,6 +1896,33 @@ def _rebuild_qdrant_projection() -> dict[str, object]:
     }
 
 
+def _upgrade_check_report() -> dict[str, object]:
+    postgres_enabled = settings.postgres_enabled
+    report: dict[str, object] = {
+        "postgres_enabled": postgres_enabled,
+        "state_backend": settings.app_state_backend,
+        "truth_backend": settings.app_truth_backend,
+        "projection_rebuild_command": ".venv/bin/saw qdrant-rebuild --json-output",
+        "status_command": ".venv/bin/saw status --json-output",
+    }
+    if not postgres_enabled:
+        report.update(
+            {
+                "compatible": True,
+                "detail": "Postgres is not enabled for the current app state or truth store.",
+            }
+        )
+        return report
+
+    report.update(
+        PostgresAppStateStore.inspect_schema_compatibility(
+            settings.app_postgres_dsn,
+            settings.app_postgres_schema,
+        )
+    )
+    return report
+
+
 def _ensure_seed_prerequisites() -> dict[str, object] | None:
     startup_issues = settings.startup_validation_issues()
     if startup_issues:
@@ -1879,11 +1969,10 @@ def serve(
     ),
 ) -> None:
     effective_strict = strict_runtime_checks or settings.app_strict_startup_checks
-    try:
-        enforce_runtime_startup_checks(strict_runtime_checks=effective_strict)
-    except RuntimeError as exc:
-        typer.echo(str(exc), err=True)
-        raise typer.Exit(code=1) from exc
+    preflight_issues = _runtime_preflight_issues(strict_runtime_checks=effective_strict)
+    if preflight_issues:
+        typer.echo(_format_startup_preflight_errors(preflight_issues), err=True)
+        raise typer.Exit(code=1)
 
     uvicorn.run(
         "source_aware_worldbuilding.api.main:app",
@@ -1934,6 +2023,31 @@ def qdrant_rebuild(json_output: bool = False) -> None:
         f"with {report['claim_count']} claims and {report['evidence_count']} evidence snippets "
         f"(created={'yes' if report['projection_created'] else 'no'})."
     )
+
+
+@app.command("upgrade-check")
+def upgrade_check(json_output: bool = False) -> None:
+    try:
+        report = _upgrade_check_report()
+    except RuntimeError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    if json_output:
+        typer.echo(json.dumps(report, indent=2))
+        return
+
+    if not report["postgres_enabled"]:
+        print(f"[yellow]Upgrade check skipped:[/yellow] {report['detail']}")
+        return
+
+    compatibility = "compatible" if report["compatible"] else "incompatible"
+    print(
+        f"[green]Postgres schema check:[/green] {compatibility} "
+        f"(schema={report['schema']}, version={report['schema_version']}, "
+        f"expected={report['expected_schema_version']})"
+    )
+    print(f"[cyan]Projection rebuild command:[/cyan] {report['projection_rebuild_command']}")
+    print(f"[cyan]Status verification command:[/cyan] {report['status_command']}")
 
 
 @app.command()
@@ -2189,6 +2303,27 @@ def status(json_output: bool = False) -> None:
     _print_runtime_status(runtime_status)
 
 
+@app.command("verify-default-stack")
+def verify_default_stack() -> None:
+    runtime_status = build_runtime_status()
+    issues = default_stack_verification_issues(runtime_status)
+
+    if not issues:
+        print("[green]Default stack verification passed.[/green]")
+        print("Sourcebound is ready on the recommended Postgres + Qdrant local path.")
+        return
+
+    print("[yellow]Default stack verification failed.[/yellow]")
+    print(
+        "Sourcebound is not yet ready on the recommended Postgres + Qdrant local path. "
+        f"Current runtime status: [cyan]{runtime_status.overall_status}[/cyan]"
+    )
+    print("[bold]Required Fixes[/bold]")
+    for issue in issues:
+        print(f"- {issue}")
+    raise typer.Exit(code=1)
+
+
 def _print_runtime_status(runtime_status: RuntimeStatus) -> None:
     print(
         f"[bold]{runtime_status.app_name}[/bold] "
@@ -2241,10 +2376,13 @@ def _source_document_rollup(source_documents: list[SourceDocumentRecord]) -> dic
             error for document in source_documents for error in document.stage_errors if error
         )
     )
+    blocked_stage = _blocked_stage_for_documents(source_documents)
     return {
         "source_document_count": len(source_documents),
         "stage_breakdown": summarize_source_documents(source_documents),
         "document_warnings": document_warnings,
+        "blocked_stage": blocked_stage,
+        "next_action": _next_action_for_documents(source_documents),
         "failed_document_count": sum(
             1
             for document in source_documents
@@ -2312,6 +2450,20 @@ def _print_source_document_rollup(source_documents: list[SourceDocumentRecord]) 
         print(f"[yellow]{warning}[/yellow]")
 
 
+def _zotero_write_path_detail() -> tuple[bool, str]:
+    if not settings.zotero_library_id:
+        return False, "Write path is unavailable until ZOTERO_LIBRARY_ID is set."
+    if not settings.zotero_api_key:
+        return False, "Write path is unavailable until ZOTERO_API_KEY is set."
+    if not settings.zotero_collection_key:
+        return (
+            True,
+            "Write path is ready. New items can still be created, but they will use the library "
+            "root unless you pass an explicit collection key.",
+        )
+    return True, "Write path is ready for live Zotero item creation in the configured collection."
+
+
 @app.command("zotero-check")
 def zotero_check(
     json_output: bool = False,
@@ -2333,9 +2485,16 @@ def _build_zotero_report(*, source_limit: int, include_text_units: bool) -> dict
     missing: list[str] = []
     if not settings.zotero_library_id:
         missing.append("ZOTERO_LIBRARY_ID")
+    write_path_ready, write_path_detail = _zotero_write_path_detail()
+    verification_command = ".venv/bin/saw zotero-check --json-output"
 
     report: dict = {
         "configured": not missing,
+        "read_path_ready": not missing,
+        "write_path_ready": write_path_ready,
+        "write_path_detail": write_path_detail,
+        "routine_ready": False,
+        "verification_command": verification_command,
         "library_type": settings.zotero_library_type,
         "library_id_present": bool(settings.zotero_library_id),
         "collection_key_present": bool(settings.zotero_collection_key),
@@ -2352,13 +2511,23 @@ def _build_zotero_report(*, source_limit: int, include_text_units: bool) -> dict
         "source_document_count": 0,
         "source_documents_preview": [],
         "stage_breakdown": {},
+        "blocked_stage": None,
+        "next_action": None,
         "document_warnings": [],
         "failed_document_count": 0,
         "text_units_preview": [],
         "live_smoke": {"status": "skipped", "detail": "Zotero is not configured yet."},
     }
     if missing:
-        report["detail"] = "Zotero is not configured yet."
+        report["detail"] = (
+            "Zotero read path is unavailable until ZOTERO_LIBRARY_ID is set. "
+            "Set ZOTERO_API_KEY too if you want live write-back."
+        )
+        report["blocked_stage"] = "configuration"
+        report["next_action"] = (
+            "Set ZOTERO_LIBRARY_ID for live pulls and ZOTERO_API_KEY for write-back, "
+            f"then rerun `{verification_command}`."
+        )
         return report
 
     adapter = ZoteroCorpusAdapter()
@@ -2388,6 +2557,12 @@ def _build_zotero_report(*, source_limit: int, include_text_units: bool) -> dict
             ]
 
         report["success"] = True
+        report["routine_ready"] = report["read_path_ready"] and report["write_path_ready"]
+        if report["routine_ready"] and not report["next_action"]:
+            report["next_action"] = (
+                "Zotero is ready for routine pull and write-back checks. "
+                f"Rerun `{verification_command}` after library or collection changes."
+            )
         report["detail"] = "Zotero pull succeeded."
         return report
     except ZoteroError as exc:
@@ -2426,6 +2601,17 @@ def _print_zotero_report(report: dict) -> None:
         print(missing_line)
 
     print(report["detail"])
+    print(
+        "Read path: "
+        f"{'ready' if report['read_path_ready'] else 'not ready'} | "
+        f"Write path: {'ready' if report['write_path_ready'] else 'not ready'} | "
+        f"Routine ready: {'yes' if report['routine_ready'] else 'no'}"
+    )
+    print(report["write_path_detail"])
+    print(f"Verification command: {report['verification_command']}")
+
+    if report["next_action"]:
+        print(f"Next action: {report['next_action']}")
 
     if report["success"]:
         print(
@@ -2438,6 +2624,12 @@ def _print_zotero_report(report: dict) -> None:
             f"{json.dumps(report['stage_breakdown'], sort_keys=True)} | "
             f"Failed documents: {report['failed_document_count']}"
         )
+        if report["blocked_stage"]:
+            print(
+                "Blocked stage: "
+                f"{report['blocked_stage']} | "
+                f"Next action: {report['next_action']}"
+            )
         preview_table = Table(title="Zotero Source Preview")
         preview_table.add_column("Source ID")
         preview_table.add_column("Title")
@@ -3484,6 +3676,31 @@ def evaluate_extraction(
 ) -> None:
     if repeat < 1:
         raise typer.BadParameter("repeat must be >= 1.")
+    if dataset == "all":
+        report = evaluate_extraction_suite(
+            output_root=output_root,
+            repeat=repeat,
+        )
+
+        if json_output:
+            typer.echo(json.dumps(report, indent=2))
+            return
+
+        print("[bold]Extraction Evaluation Suite[/bold]")
+        print(f"Datasets: {report['dataset_count']}")
+        print(f"Artifacts: {output_root}")
+        for row in cast(list[dict[str, Any]], report["rows"]):
+            print(
+                f"{row['evaluation_id']}/{row['path']}: "
+                f"kind={row['path_kind']}, "
+                f"precision={row['claim_precision']:.4f}, "
+                f"recall={row['important_fact_recall']:.4f}, "
+                f"anchor_focus={row['avg_anchor_focus']:.4f}, "
+                "reviewer_actions="
+                f"{row['avg_reviewer_actions']:.4f}, "
+                f"stability={row['stability']:.4f}"
+            )
+        return
     try:
         report = evaluate_extraction_dataset(
             dataset,
@@ -3513,6 +3730,20 @@ def evaluate_extraction(
             f"{path_report['reviewer_edit_burden']['avg_actions_per_matched_candidate']:.4f}, "
             f"stability={path_report['stability']['exact_match_rate']:.4f}"
         )
+    comparisons = cast(list[dict[str, Any]], report.get("comparisons") or [])
+    if comparisons:
+        print("Comparisons:")
+        for comparison in comparisons:
+            paths = " vs ".join(comparison["paths"])
+            print(
+                f"- {comparison['comparison_kind']} {paths}: "
+                f"claim_precision_delta={comparison['claim_precision_delta']:.4f}, "
+                f"important_fact_recall_delta={comparison['important_fact_recall_delta']:.4f}, "
+                f"anchor_focus_delta={comparison['anchor_focus_delta']:.4f}, "
+                f"reviewer_action_delta={comparison['reviewer_action_delta']:.4f}"
+            )
+            if comparison.get("notes"):
+                print(f"  Note: {comparison['notes']}")
 
 
 if __name__ == "__main__":

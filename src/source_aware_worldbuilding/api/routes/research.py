@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from source_aware_worldbuilding.api.dependencies import get_research_service
+from source_aware_worldbuilding.api.dependencies import get_research_service, require_operator_actor
 from source_aware_worldbuilding.api.routes._job_runtime import (
     require_job_service,
     try_get_job_service,
@@ -20,6 +20,7 @@ router = APIRouter(prefix="/v1/research", tags=["research"])
 @router.post("/runs", status_code=status.HTTP_202_ACCEPTED)
 def create_research_run(
     payload: ResearchRunRequest,
+    _actor=Depends(require_operator_actor),
 ) -> dict:
     service = require_job_service(action="queueing research runs")
     try:
@@ -59,6 +60,7 @@ def get_research_run(
 @router.post("/runs/{run_id}/stage", status_code=status.HTTP_202_ACCEPTED)
 def stage_research_run(
     run_id: str,
+    _actor=Depends(require_operator_actor),
 ) -> dict:
     service = require_job_service(action="staging research findings")
     try:
@@ -72,6 +74,7 @@ def stage_research_run(
 @router.post("/runs/{run_id}/extract", status_code=status.HTTP_202_ACCEPTED)
 def extract_research_run(
     run_id: str,
+    _actor=Depends(require_operator_actor),
 ) -> dict:
     service = require_job_service(action="extracting staged research findings")
     try:
@@ -86,6 +89,7 @@ def extract_research_run(
 def create_research_program(
     payload: ResearchProgramCreateRequest,
     service: ResearchService = Depends(get_research_service),
+    _actor=Depends(require_operator_actor),
 ) -> dict:
     return service.create_program(payload).model_dump(mode="json")
 

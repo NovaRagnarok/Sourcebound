@@ -10,6 +10,7 @@ from source_aware_worldbuilding.domain.enums import (
 from source_aware_worldbuilding.domain.errors import ReviewConflictError
 from source_aware_worldbuilding.domain.models import (
     ApprovedClaim,
+    AuthenticatedActor,
     EvidenceSnippet,
     ReviewClaimPatch,
     ReviewEvent,
@@ -95,7 +96,13 @@ class ReviewService:
     def list_reviews(self, candidate_id: str | None = None):
         return self.review_store.list_reviews(candidate_id=candidate_id)
 
-    def review_candidate(self, candidate_id: str, request: ReviewRequest) -> ApprovedClaim | None:
+    def review_candidate(
+        self,
+        candidate_id: str,
+        request: ReviewRequest,
+        *,
+        actor: AuthenticatedActor,
+    ) -> ApprovedClaim | None:
         candidate = self.candidate_store.get_candidate(candidate_id)
         if candidate is None:
             return None
@@ -110,6 +117,8 @@ class ReviewService:
             decision=request.decision,
             override_status=request.override_status,
             notes=request.notes,
+            actor_id=actor.actor_id,
+            actor_role=actor.role,
         )
 
         if request.decision.value == "reject":

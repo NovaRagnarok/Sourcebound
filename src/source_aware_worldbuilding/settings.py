@@ -35,6 +35,8 @@ class Settings(BaseSettings):
     )
     app_postgres_schema: str = Field(default="sourcebound", alias="APP_POSTGRES_SCHEMA")
     app_ui_enabled: bool = Field(default=True, alias="APP_UI_ENABLED")
+    app_writer_token: str | None = Field(default=None, alias="APP_WRITER_TOKEN")
+    app_operator_token: str | None = Field(default=None, alias="APP_OPERATOR_TOKEN")
     app_strict_startup_checks: bool = Field(
         default=False,
         alias="APP_STRICT_STARTUP_CHECKS",

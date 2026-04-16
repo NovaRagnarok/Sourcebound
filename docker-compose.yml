@@ -1,3 +1,22 @@
+x-sourcebound-env: &sourcebound-env
+  APP_ENV: prod
+  APP_HOST: 0.0.0.0
+  APP_PORT: 8000
+  APP_UI_ENABLED: "true"
+  APP_STRICT_STARTUP_CHECKS: "true"
+  APP_STATE_BACKEND: postgres
+  APP_TRUTH_BACKEND: postgres
+  APP_DATA_DIR: /app/data
+  APP_SQLITE_PATH: /app/runtime/sourcebound.db
+  APP_POSTGRES_DSN: postgresql://saw:saw@postgres:5432/saw
+  APP_POSTGRES_SCHEMA: sourcebound
+  APP_JOB_WORKER_ENABLED: "true"
+  APP_ALLOW_QUEUED_JOBS_WITHOUT_WORKER: "false"
+  QDRANT_ENABLED: "true"
+  QDRANT_URL: http://qdrant:6333
+  RESEARCH_SEMANTIC_ENABLED: "false"
+  GRAPH_RAG_ENABLED: "false"
+
 services:
   postgres:
     image: postgres:16
@@ -5,6 +24,11 @@ services:
       POSTGRES_USER: saw
       POSTGRES_PASSWORD: saw
       POSTGRES_DB: saw
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U saw -d saw"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
     ports:
       - "5432:5432"
     volumes:
@@ -18,6 +42,47 @@ services:
     volumes:
       - qdrant_data:/qdrant/storage
 
+  app:
+    build:
+      context: .
+      dockerfile: infra/app/Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
+    environment: *sourcebound-env
+    command: ["saw", "serve", "--strict-runtime-checks"]
+    expose:
+      - "8000"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import sys, urllib.request; sys.exit(0) if urllib.request.urlopen('http://127.0.0.1:8000/health').status == 200 else sys.exit(1)",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    volumes:
+      - app_data:/app/data
+      - app_runtime:/app/runtime
+
+  proxy:
+    image: nginx:1.27-alpine
+    depends_on:
+      app:
+        condition: service_healthy
+    ports:
+      - "8080:80"
+    volumes:
+      - ./infra/nginx/sourcebound.conf:/etc/nginx/conf.d/default.conf:ro
+
 volumes:
+  app_data:
+  app_runtime:
   postgres_data:
   qdrant_data:

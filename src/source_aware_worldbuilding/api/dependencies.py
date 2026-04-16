@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Literal
+
+from fastapi import Depends, HTTPException, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from source_aware_worldbuilding.adapters.file_backed import (
     FileBibleProjectProfileStore,
@@ -66,7 +70,7 @@ from source_aware_worldbuilding.adapters.web_research_scout import (
 )
 from source_aware_worldbuilding.adapters.wikibase_adapter import WikibaseTruthStore
 from source_aware_worldbuilding.adapters.zotero_adapter import ZoteroCorpusAdapter
-from source_aware_worldbuilding.domain.models import ResearchExecutionPolicy
+from source_aware_worldbuilding.domain.models import AuthenticatedActor, ResearchExecutionPolicy
 from source_aware_worldbuilding.ports import ResearchSearchProviderPort
 from source_aware_worldbuilding.services.bible import BibleWorkspaceService
 from source_aware_worldbuilding.services.ingestion import IngestionService
@@ -79,8 +83,88 @@ from source_aware_worldbuilding.services.research import ResearchService
 from source_aware_worldbuilding.services.review import ReviewService
 from source_aware_worldbuilding.settings import settings
 
+AuthenticatedActorRole = Literal["writer", "operator"]
+
 _job_service: JobService | None = None
 _job_service_key: tuple[object, ...] | None = None
+_operator_bearer = HTTPBearer(auto_error=False)
+
+
+def _configured_auth_tokens() -> dict[AuthenticatedActorRole, str]:
+    tokens: dict[AuthenticatedActorRole, str] = {}
+    writer_token = (settings.app_writer_token or "").strip()
+    operator_token = (settings.app_operator_token or "").strip()
+    if writer_token:
+        tokens["writer"] = writer_token
+    if operator_token:
+        tokens["operator"] = operator_token
+    if tokens:
+        return tokens
+    raise HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail=(
+            "Protected auth is not configured. Set APP_WRITER_TOKEN or "
+            "APP_OPERATOR_TOKEN to enable protected routes."
+        ),
+    )
+
+
+def _require_configured_operator_token() -> str:
+    token = (settings.app_operator_token or "").strip()
+    if token:
+        return token
+    raise HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail=(
+            "Operator auth is not configured. Set APP_OPERATOR_TOKEN to enable "
+            "operator-only routes."
+        ),
+    )
+
+
+def _authenticate_actor(
+    credentials: HTTPAuthorizationCredentials | None = Depends(_operator_bearer),
+) -> AuthenticatedActor:
+    tokens = _configured_auth_tokens()
+    if credentials is None or credentials.scheme.lower() != "bearer":
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required for this route.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    matched_role: AuthenticatedActorRole | None = next(
+        (role for role, token in tokens.items() if credentials.credentials == token),
+        None,
+    )
+    if matched_role is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Authenticated actor is not authorized for this route.",
+        )
+    return AuthenticatedActor(actor_id=f"trusted-{matched_role}", role=matched_role)
+
+
+def require_writer_actor(
+    actor: AuthenticatedActor = Depends(_authenticate_actor),
+) -> AuthenticatedActor:
+    if actor.role in {"writer", "operator"}:
+        return actor
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="This route requires a writer or operator token.",
+    )
+
+
+def require_operator_actor(
+    _operator_token: str = Depends(_require_configured_operator_token),
+    actor: AuthenticatedActor = Depends(_authenticate_actor),
+) -> AuthenticatedActor:
+    if actor.role == "operator":
+        return actor
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="This route requires an operator token.",
+    )
 
 
 def _sqlite_path() -> Path:

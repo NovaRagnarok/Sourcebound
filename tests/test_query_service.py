@@ -440,6 +440,7 @@ def test_query_uses_projection_when_available(temp_data_dir: Path) -> None:
     ]
     assert result.metadata.retrieval_backend == "qdrant"
     assert result.metadata.fallback_used is False
+    assert result.metadata.retrieval_quality_tier == "projection"
     assert result.metadata.ranking_strategy == "blended"
 
 
@@ -498,7 +499,41 @@ def test_query_falls_back_to_memory_when_projection_fails(temp_data_dir: Path) -
     assert result.metadata.fallback_used is True
     assert result.metadata.fallback_reason == "Qdrant is disabled."
     assert result.metadata.ranking_strategy == "lexical"
+    assert result.metadata.retrieval_quality_tier == "memory_ranked"
     assert any("Qdrant fallback" in warning for warning in result.warnings)
+
+
+def test_query_falls_back_to_memory_when_projection_returns_no_usable_hits(
+    temp_data_dir: Path,
+) -> None:
+    claims = populate_query_fixtures(temp_data_dir)
+    service = build_query_service(
+        temp_data_dir,
+        claims,
+        projection=FakeProjection(
+            ProjectionSearchResult(
+                fallback_used=True,
+                fallback_reason="Qdrant returned no usable hits.",
+            )
+        ),
+    )
+
+    result = service.answer(
+        QueryRequest(
+            question="Rouen bread prices",
+            mode=QueryMode.STRICT_FACTS,
+        )
+    )
+
+    assert result.supporting_claims[0].claim_id == "claim-verified-1"
+    assert result.metadata.retrieval_backend == "memory"
+    assert result.metadata.fallback_used is True
+    assert result.metadata.fallback_reason == "Qdrant returned no usable hits."
+    assert result.metadata.retrieval_quality_tier == "memory_ranked"
+    assert any(
+        warning == "Qdrant fallback: Qdrant returned no usable hits."
+        for warning in result.warnings
+    )
 
 
 def test_query_surfaces_related_claims_and_relationship_warnings(temp_data_dir: Path) -> None:

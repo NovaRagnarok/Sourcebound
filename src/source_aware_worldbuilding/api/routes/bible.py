@@ -2,7 +2,11 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from source_aware_worldbuilding.api.dependencies import get_bible_workspace_service
+from source_aware_worldbuilding.api.dependencies import (
+    get_bible_workspace_service,
+    require_operator_actor,
+    require_writer_actor,
+)
 from source_aware_worldbuilding.api.routes._job_runtime import (
     require_job_service,
     try_get_job_service,
@@ -42,8 +46,9 @@ def save_profile(
     project_id: str,
     payload: BibleProjectProfileUpdateRequest,
     service: BibleWorkspaceService = Depends(get_bible_workspace_service),
+    actor=Depends(require_writer_actor),
 ) -> dict:
-    return service.save_profile(project_id, payload).model_dump(mode="json")
+    return service.save_profile(project_id, payload, actor=actor).model_dump(mode="json")
 
 
 @router.get("/sections")
@@ -62,6 +67,7 @@ def list_sections(
 @router.post("/sections", status_code=status.HTTP_202_ACCEPTED)
 def create_section(
     payload: BibleSectionCreateRequest,
+    _actor=Depends(require_writer_actor),
 ) -> dict:
     service = require_job_service(action="queueing Bible composition")
     try:
@@ -89,9 +95,10 @@ def update_section(
     section_id: str,
     payload: BibleSectionUpdateRequest,
     service: BibleWorkspaceService = Depends(get_bible_workspace_service),
+    actor=Depends(require_writer_actor),
 ) -> dict:
     try:
-        return service.update_section(section_id, payload).model_dump(mode="json")
+        return service.update_section(section_id, payload, actor=actor).model_dump(mode="json")
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
@@ -100,14 +107,23 @@ def update_section(
 def regenerate_section(
     section_id: str,
     payload: BibleSectionRegenerateRequest,
+    workspace_service: BibleWorkspaceService = Depends(get_bible_workspace_service),
+    actor=Depends(require_operator_actor),
 ) -> dict:
-    service = require_job_service(action="queueing Bible regeneration")
+    job_service = require_job_service(action="queueing Bible regeneration")
     try:
-        return service.enqueue_bible_regenerate(section_id, payload).model_dump(mode="json")
-    except WorkerUnavailableError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
+        event = workspace_service.record_regeneration_request(section_id, actor, payload)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    try:
+        job = job_service.enqueue_bible_regenerate(section_id, payload)
+    except WorkerUnavailableError as exc:
+        workspace_service.discard_regeneration_request(section_id, event.event_id)
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except ValueError as exc:
+        workspace_service.discard_regeneration_request(section_id, event.event_id)
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return job.model_dump(mode="json")
 
 
 @router.get("/sections/{section_id}/provenance")
@@ -134,6 +150,9 @@ def export_project(
             else None
         )
         if cached is not None:
+            latest = service.export_project(project_id).model_dump(mode="json")
+            cached["profile"] = latest["profile"]
+            cached["sections"] = latest["sections"]
             return cached
         return service.export_project(project_id).model_dump(mode="json")
     except ValueError as exc:
@@ -143,11 +162,20 @@ def export_project(
 @router.post("/exports/{project_id}", status_code=status.HTTP_202_ACCEPTED)
 def queue_export_project(
     project_id: str,
+    workspace_service: BibleWorkspaceService = Depends(get_bible_workspace_service),
+    actor=Depends(require_operator_actor),
 ) -> dict:
-    service = require_job_service(action="queueing Bible export")
+    job_service = require_job_service(action="queueing Bible export")
     try:
-        return service.enqueue_bible_export(project_id).model_dump(mode="json")
-    except WorkerUnavailableError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
+        event = workspace_service.record_export_request(project_id, actor)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    try:
+        job = job_service.enqueue_bible_export(project_id)
+    except WorkerUnavailableError as exc:
+        workspace_service.discard_export_request(project_id, event.event_id)
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except ValueError as exc:
+        workspace_service.discard_export_request(project_id, event.event_id)
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return job.model_dump(mode="json")

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Literal
+
 from fastapi import APIRouter
 
 from source_aware_worldbuilding.api.dependencies import (
@@ -21,6 +23,8 @@ from source_aware_worldbuilding.domain.models import (
 from source_aware_worldbuilding.services.status import build_runtime_status
 
 router = APIRouter(prefix="/v1/workspace", tags=["workspace"])
+
+WorkspaceTone = Literal["verified", "probable", "contested", "queued", "author_choice"]
 
 
 @router.get("/summary")
@@ -62,6 +66,15 @@ def get_workspace_summary(project_id: str | None = None) -> dict:
         if current_section is not None
         else None
     )
+    handoff_section = _select_handoff_section(sections)
+    handoff_snapshot = (
+        _section_snapshot(
+            handoff_section,
+            job_service.summarize_latest_for_section(handoff_section.section_id),
+        )
+        if handoff_section is not None
+        else None
+    )
     jobs = job_service.list_jobs()
     background_items = _build_background_items(jobs, sections)
     summary = WorkspaceSummary(
@@ -75,6 +88,7 @@ def get_workspace_summary(project_id: str | None = None) -> dict:
             evidence_count=len(evidence_store.list_evidence()),
             sections=sections,
             current_section=current_snapshot,
+            handoff_section=handoff_snapshot,
             background_items=background_items,
         ),
         background_items=background_items[:4],
@@ -122,12 +136,12 @@ def _build_setup_actions(runtime_status) -> list[WorkspaceAction]:
                 action_id="start-postgres",
                 title="Start Postgres",
                 summary=(
-                    "Run `docker compose up -d postgres` so Sourcebound can persist workflow "
+                    "Blocking the default workspace path until Sourcebound can persist workflow "
                     "state and canonical claims."
                 ),
                 screen="workspace",
                 tone="queued",
-                badge="postgres",
+                badge="blocking",
                 command="docker compose up -d postgres",
             )
         )
@@ -140,12 +154,12 @@ def _build_setup_actions(runtime_status) -> list[WorkspaceAction]:
                     action_id="seed-dev-data",
                     title="Seed dev data",
                     summary=(
-                        "Run `.venv/bin/saw seed-dev-data` to load the sample project and "
-                        "initialize the default Qdrant projection."
+                        "Required before the sample workspace can load with the default "
+                        "project and initialized Qdrant projection."
                     ),
                     screen="workspace",
                     tone="queued",
-                    badge="seed",
+                    badge="required next",
                     command=".venv/bin/saw seed-dev-data",
                 )
             )
@@ -155,12 +169,12 @@ def _build_setup_actions(runtime_status) -> list[WorkspaceAction]:
                     action_id="start-qdrant",
                     title="Start Qdrant",
                     summary=(
-                        "Run `docker compose up -d qdrant` so query and composition can use "
-                        "the default projection-backed retrieval path."
+                        "Blocking the default workspace path until query and composition can "
+                        "use projection-backed retrieval."
                     ),
                     screen="workspace",
                     tone="queued",
-                    badge="qdrant",
+                    badge="required next",
                     command="docker compose up -d qdrant",
                 )
             )
@@ -171,12 +185,12 @@ def _build_setup_actions(runtime_status) -> list[WorkspaceAction]:
                 action_id="enable-worker",
                 title="Enable the job worker",
                 summary=(
-                    "Set `APP_JOB_WORKER_ENABLED=true` so research, bible regeneration, and "
-                    "export jobs complete without manual intervention."
+                    "Blocking the full workspace loop until research, bible regeneration, and "
+                    "export jobs can finish without manual intervention."
                 ),
                 screen="workspace",
                 tone="queued",
-                badge="worker",
+                badge="blocking",
                 command="APP_JOB_WORKER_ENABLED=true .venv/bin/saw serve --reload",
             )
         )
@@ -185,16 +199,24 @@ def _build_setup_actions(runtime_status) -> list[WorkspaceAction]:
         actions.extend(
             WorkspaceAction(
                 action_id=f"runtime-step-{index}",
-                title="Follow the runtime checklist",
+                title="Blocking runtime step",
                 summary=step,
                 screen="workspace",
                 tone="queued",
-                badge="runtime",
+                badge="blocking",
             )
-            for index, step in enumerate(runtime_status.next_steps[:3], start=1)
+            for index, step in enumerate(_blocking_runtime_steps(runtime_status)[:3], start=1)
         )
 
     return actions[:4]
+
+
+def _blocking_runtime_steps(runtime_status) -> list[str]:
+    return [
+        step
+        for step in runtime_status.next_steps
+        if step.startswith("Required") or step.startswith("Non-default local mode detected")
+    ]
 
 
 def _select_current_section(sections: list[BibleSection]) -> BibleSection | None:
@@ -209,6 +231,15 @@ def _select_current_section(sections: list[BibleSection]) -> BibleSection | None
         )
 
     return sorted(sections, key=sort_key, reverse=True)[0]
+
+
+def _select_handoff_section(sections: list[BibleSection]) -> BibleSection | None:
+    handoff_ready = [
+        section for section in sections if section.ready_for_writer and section.has_manual_edits
+    ]
+    if not handoff_ready:
+        return None
+    return sorted(handoff_ready, key=lambda section: section.updated_at, reverse=True)[0]
 
 
 def _section_snapshot(
@@ -250,6 +281,7 @@ def _build_actions(
     evidence_count: int,
     sections: list[BibleSection],
     current_section: WorkspaceSectionSnapshot | None,
+    handoff_section: WorkspaceSectionSnapshot | None,
     background_items: list[WorkspaceBackgroundItem],
 ) -> list[WorkspaceAction]:
     actions: list[WorkspaceAction] = []
@@ -266,25 +298,56 @@ def _build_actions(
                 action_id="setup-project",
                 title="Set the project frame",
                 summary=(
-                    "Define place, era, and narrative focus so research, review, and bible "
-                    "work stay aimed at the same book."
+                    "Writer step: define place, era, and narrative focus so the writer and "
+                    "operator stay aimed at the same book."
                 ),
                 screen="bible",
                 tone="queued",
                 badge="setup",
             )
         )
-    if current_section is not None:
+    if handoff_section is not None:
+        actions.append(
+            WorkspaceAction(
+                action_id="operator-handoff",
+                title="Hand off the live section",
+                summary=(
+                    f"Writer edits are in place for {handoff_section.title}. An operator can "
+                    "regenerate the canon-backed draft or queue an export without overwriting "
+                    "manual text."
+                ),
+                screen="bible",
+                tone="author_choice",
+                badge="operator handoff",
+            )
+        )
+    if current_section is not None and (
+        handoff_section is None or current_section.section_id != handoff_section.section_id
+    ):
+        if current_section.ready_for_writer:
+            title = "Shape the live section"
+            summary = (
+                f"{current_section.title} has a dependable generated baseline. Writer can "
+                "refine it now, then hand it to an operator for regeneration or export."
+            )
+            tone: WorkspaceTone = "verified"
+            badge = "writer step"
+        else:
+            title = "Open the current section"
+            summary = (
+                f"{current_section.title} is the live writing surface, but it still needs "
+                "stronger support before the writer-to-operator handoff is dependable."
+            )
+            tone = "contested"
+            badge = "needs support"
         actions.append(
             WorkspaceAction(
                 action_id="open-current-section",
-                title="Open the current section",
-                summary=(
-                    f"{current_section.title} is the live writing surface for the current project."
-                ),
+                title=title,
+                summary=summary,
                 screen="bible",
-                tone="author_choice" if current_section.has_manual_edits else "verified",
-                badge="open",
+                tone=tone,
+                badge=badge,
             )
         )
     if pending_review_count:
@@ -293,8 +356,8 @@ def _build_actions(
                 action_id="review-facts",
                 title="Review new facts",
                 summary=(
-                    f"{pending_review_count} candidate facts are waiting at the trust "
-                    "boundary before they can support writing."
+                    f"Writer step: {pending_review_count} candidate facts are waiting at the "
+                    "trust boundary before they can support Bible drafting."
                 ),
                 screen="review",
                 tone="probable",
@@ -327,8 +390,8 @@ def _build_actions(
                 action_id="compose-first-section",
                 title="Compose the first section",
                 summary=(
-                    "Turn reviewed canon into an editable bible section with provenance and "
-                    "uncertainty still visible."
+                    "Writer step: turn reviewed canon into an editable Bible section with "
+                    "provenance and uncertainty still visible."
                 ),
                 screen="bible",
                 tone="queued",

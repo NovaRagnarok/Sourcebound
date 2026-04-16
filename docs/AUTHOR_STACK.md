@@ -48,6 +48,22 @@ GRAPH_RAG_ENABLED=false
 This is the recommended runtime because it matches the current shipped surface
 without forcing external integrations on first run.
 
+## Support Policy
+
+- Supported:
+  Python `3.11` and `3.12`, the Postgres-backed app-state and canon path, and
+  the trusted-operator stack with the in-process worker enabled
+- Experimental:
+  zero-infra file-backed local mode and SQLite app-state mode
+- Provisional:
+  GraphRAG, research semantics, live Zotero workflows, and the Wikibase
+  truth-store path
+
+Treat the support matrix in [Deployment Guide](DEPLOYMENT.md) as canonical for
+release decisions. For the routine release checklist, rollback guide, and issue
+triage standard for that same boundary, use
+[Release Operations](RELEASE_OPERATIONS.md).
+
 ## Why This Stack
 
 This keeps the daily writing and operator loop dependable:
@@ -73,6 +89,24 @@ This keeps the daily writing and operator loop dependable:
 - If GraphRAG is disabled, heuristic extraction remains the default and keeps
   startup dependency-light.
 
+## Routine Zotero Verification
+
+Zotero is the first optional integration we expect to feel routine when it is
+configured. Use this proof command:
+
+```bash
+.venv/bin/saw zotero-check --json-output
+```
+
+Treat Zotero as routine-ready only when that report shows:
+
+- `"read_path_ready": true`
+- `"write_path_ready": true`
+- `"routine_ready": true`
+
+If it is not routine-ready yet, follow the command's reported `next_action`
+before retrying.
+
 ## Smallest Supported Deployment Shape
 
 If you run Sourcebound outside local development, the smallest supported shape
@@ -94,6 +128,18 @@ Before relying on long-running jobs or retrieval:
 - verify `GET /health/runtime`
 - initialize or rebuild Qdrant when the default retrieval path is not ready
 - keep backups of the Postgres schema and important export bundles
+
+## Recovery Order
+
+When you need to recover the trusted-operator stack, use this order:
+
+1. back up the Postgres schema and any export bundles you want to keep
+2. restore the Postgres backup first
+3. run `.venv/bin/saw qdrant-rebuild` if the projection is stale or
+   uninitialized
+4. run `.venv/bin/saw seed-dev-data` only when you intentionally want the
+   sample corpus back on a fresh local stack
+5. confirm the stack with `.venv/bin/saw status` and `GET /health/runtime`
 
 For the minimal self-host checklist, environment variables, and unsupported
 areas, see [Deployment Guide](DEPLOYMENT.md).

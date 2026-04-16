@@ -1,3 +1,5 @@
+import socket
+
 import pytest
 from fastapi.testclient import TestClient
 from typer.testing import CliRunner
@@ -52,6 +54,8 @@ def test_runtime_health_reports_local_mvp_mode(monkeypatch) -> None:
         service["name"] == "bible_export" and service["mode"] == "job_backed"
         for service in body["services"]
     )
+    assert any("APP_STATE_BACKEND=postgres" in step for step in body["next_steps"])
+    assert any("APP_TRUTH_BACKEND=postgres" in step for step in body["next_steps"])
     assert any("Zotero" in step for step in body["next_steps"])
     assert any("Qdrant projection" in step for step in body["next_steps"])
     assert not any("WIKIBASE_API_URL" in step for step in body["next_steps"])
@@ -74,6 +78,53 @@ def test_cli_status_json_reports_runtime_state(monkeypatch) -> None:
     assert '"overall_status": "ready"' in result.stdout
     assert '"extraction_backend": "heuristic"' in result.stdout
     assert '"truth_backend": "file"' in result.stdout
+
+
+def test_cli_verify_default_stack_fails_for_non_default_local_mode(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "app_state_backend", "file")
+    monkeypatch.setattr(settings, "app_truth_backend", "file")
+    monkeypatch.setattr(settings, "graph_rag_enabled", False)
+    monkeypatch.setattr(settings, "qdrant_enabled", False)
+    monkeypatch.setattr(settings, "research_semantic_enabled", False)
+    monkeypatch.setattr(settings, "zotero_library_id", None)
+    monkeypatch.setattr(settings, "app_job_worker_enabled", True)
+
+    result = runner.invoke(cli_app, ["verify-default-stack"])
+
+    assert result.exit_code == 1
+    assert "APP_STATE_BACKEND=postgres" in result.output
+    assert "APP_TRUTH_BACKEND=postgres" in result.output
+    assert "QDRANT_ENABLED=true" in result.output
+
+
+def test_cli_verify_default_stack_succeeds_when_default_stack_is_ready(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "app_state_backend", "postgres")
+    monkeypatch.setattr(settings, "app_truth_backend", "postgres")
+    monkeypatch.setattr(settings, "graph_rag_enabled", False)
+    monkeypatch.setattr(settings, "qdrant_enabled", True)
+    monkeypatch.setattr(settings, "research_semantic_enabled", False)
+    monkeypatch.setattr(settings, "zotero_library_id", None)
+    monkeypatch.setattr(settings, "app_job_worker_enabled", True)
+    monkeypatch.setattr(
+        "source_aware_worldbuilding.services.status._probe_postgres",
+        lambda dsn: (True, "Postgres connection succeeded."),
+    )
+    monkeypatch.setattr(
+        QdrantProjectionAdapter,
+        "runtime_probe",
+        lambda self: (
+            "qdrant",
+            True,
+            True,
+            "Qdrant projection is ready.",
+        ),
+    )
+
+    result = runner.invoke(cli_app, ["verify-default-stack"])
+
+    assert result.exit_code == 0
+    assert "verification passed" in result.output.lower()
+    assert "recommended Postgres + Qdrant local path" in result.output
 
 
 def test_runtime_health_reports_graphrag_when_enabled(
@@ -227,6 +278,7 @@ def test_strict_startup_checks_fail_fast_when_qdrant_is_uninitialized(monkeypatc
 
 
 def test_cli_serve_strict_runtime_checks_fail_fast_when_projection_is_degraded(monkeypatch) -> None:
+    monkeypatch.setattr("source_aware_worldbuilding.cli._serve_port_preflight_issue", lambda: None)
     monkeypatch.setattr(settings, "app_strict_startup_checks", False)
     monkeypatch.setattr(settings, "qdrant_enabled", True)
     monkeypatch.setattr(
@@ -257,6 +309,9 @@ def test_cli_zotero_check_reports_missing_configuration(monkeypatch) -> None:
     assert result.exit_code == 0
     assert '"configured": false' in result.stdout
     assert '"success": false' in result.stdout
+    assert '"blocked_stage": "configuration"' in result.stdout
+    assert '"routine_ready": false' in result.stdout
+    assert '"verification_command": ".venv/bin/saw zotero-check --json-output"' in result.stdout
     assert '"ZOTERO_LIBRARY_ID"' in result.stdout
 
 
@@ -281,6 +336,7 @@ def test_runtime_health_reports_missing_postgres_dsn_with_fix(monkeypatch) -> No
 
 
 def test_cli_serve_fails_fast_for_enabled_but_unconfigured_wikibase(monkeypatch) -> None:
+    monkeypatch.setattr("source_aware_worldbuilding.cli._serve_port_preflight_issue", lambda: None)
     monkeypatch.setattr(settings, "app_truth_backend", "wikibase")
     monkeypatch.setattr(settings, "wikibase_api_url", None)
     monkeypatch.setattr(settings, "wikibase_username", None)
@@ -295,6 +351,7 @@ def test_cli_serve_fails_fast_for_enabled_but_unconfigured_wikibase(monkeypatch)
 
 
 def test_cli_serve_fails_fast_for_enabled_but_unready_graphrag(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr("source_aware_worldbuilding.cli._serve_port_preflight_issue", lambda: None)
     monkeypatch.setattr(settings, "graph_rag_enabled", True)
     monkeypatch.setattr(settings, "graph_rag_mode", "in_process")
     monkeypatch.setattr(settings, "graph_rag_root", tmp_path / "missing-graphrag")
@@ -304,3 +361,49 @@ def test_cli_serve_fails_fast_for_enabled_but_unready_graphrag(monkeypatch, tmp_
     assert result.exit_code == 1
     assert "GRAPH_RAG_ENABLED=true" in result.output
     assert "bootstrap-graphrag" in result.output
+
+
+def test_cli_serve_fails_fast_when_app_port_is_occupied(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "app_state_backend", "file")
+    monkeypatch.setattr(settings, "app_truth_backend", "file")
+    monkeypatch.setattr(settings, "graph_rag_enabled", False)
+    monkeypatch.setattr(settings, "qdrant_enabled", False)
+    monkeypatch.setattr(settings, "research_semantic_enabled", False)
+    monkeypatch.setattr(settings, "app_job_worker_enabled", True)
+    monkeypatch.setattr(settings, "app_host", "127.0.0.1")
+
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
+        listener.bind(("127.0.0.1", 0))
+        listener.listen(1)
+        monkeypatch.setattr(settings, "app_port", listener.getsockname()[1])
+
+        result = runner.invoke(cli_app, ["serve"])
+
+    assert result.exit_code == 1
+    assert "already in use" in result.output
+    assert "APP_PORT=" in result.output
+
+
+def test_cli_serve_fails_fast_when_postgres_is_unavailable(monkeypatch) -> None:
+    monkeypatch.setattr("source_aware_worldbuilding.cli._serve_port_preflight_issue", lambda: None)
+    monkeypatch.setattr(settings, "app_state_backend", "postgres")
+    monkeypatch.setattr(settings, "app_truth_backend", "postgres")
+    monkeypatch.setattr(settings, "graph_rag_enabled", False)
+    monkeypatch.setattr(settings, "qdrant_enabled", False)
+    monkeypatch.setattr(settings, "research_semantic_enabled", False)
+    monkeypatch.setattr(settings, "app_job_worker_enabled", True)
+    monkeypatch.setattr(
+        "source_aware_worldbuilding.services.status._probe_postgres",
+        lambda dsn: (
+            False,
+            "Postgres connection failed: test. Start it with "
+            "`docker compose up -d postgres`.",
+        ),
+    )
+
+    result = runner.invoke(cli_app, ["serve"])
+
+    assert result.exit_code == 1
+    assert "Postgres connection failed" in result.output
+    assert "docker compose up -d postgres" in result.output
+    assert "verify-default-stack" in result.output

@@ -34,6 +34,7 @@ writer-first workspace UI.
 ### Not yet productized
 
 - user auth and multi-user access control
+- public sign-up, tenant provisioning, or public multi-user hosting
 - production deployment beyond minimal self-host guidance
 - broad benchmark coverage beyond the current narrow evaluation paths
 
@@ -42,8 +43,28 @@ writer-first workspace UI.
 Sourcebound is currently a local-first or trusted-operator tool. It is usable
 today for technical users who can run Postgres, Qdrant, and the app worker
 themselves, but it does not yet ship a user auth or access-control
-layer. Deployment guidance is intentionally minimal and aimed at self-hosted
+layer. The planned auth boundary is for one self-hosted deployment used by a
+small trusted team, not a public sign-up or multi-tenant rollout. The
+near-term protected split is writer-facing workspace use versus operator-only
+surfaces such as `/operator/`, setup/recovery, and other mutation-heavy admin
+actions. Deployment guidance is intentionally minimal and aimed at self-hosted
 technical operators rather than a polished multi-tenant product rollout.
+
+## Support Policy
+
+- Supported:
+  Python `3.11` and `3.12`, the Postgres-plus-Postgres core backend path, and
+  the trusted-operator runtime with the in-process worker enabled
+- Experimental:
+  zero-infra file-backed local mode and SQLite app-state mode
+- Provisional:
+  GraphRAG, research semantics, live Zotero workflows, and the Wikibase
+  truth-store path
+
+For the canonical support matrix and deployment-policy wording, see
+[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md). For the routine release checklist,
+rollback guide, and issue-triage standard tied to that same boundary, see
+[docs/RELEASE_OPERATIONS.md](docs/RELEASE_OPERATIONS.md).
 
 ## What To Try First
 
@@ -81,6 +102,14 @@ rebuildable projection rather than the source of truth.
 
 Optional and disabled by default: Zotero, GraphRAG, research semantics, and
 Wikibase.
+
+For one supported single-host deployment shape with a reverse proxy in front of
+the app container, see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md). That path uses
+Docker Compose for Postgres, Qdrant, the app container with the in-process job
+worker enabled, and an HTTP reverse proxy on `http://localhost:8080/`.
+
+For the one supported writer-to-operator team loop inside the product today,
+see [docs/BIBLE_HANDOFF_WORKFLOW.md](docs/BIBLE_HANDOFF_WORKFLOW.md).
 
 ## How It Works
 
@@ -197,6 +226,26 @@ This is the recommended newcomer and external-operator path. It gives you:
 - the in-process job worker
 - heuristic extraction with no GraphRAG setup required
 
+### Supported Single-Host Deployment
+
+For the current supported self-host deployment path:
+
+```bash
+docker compose up -d postgres qdrant
+docker compose run --rm app saw seed-dev-data
+docker compose run --rm app saw verify-default-stack
+docker compose up -d app proxy
+```
+
+Then open:
+
+- `http://localhost:8080/workspace/`
+- `http://localhost:8080/operator/`
+- `http://localhost:8080/health/runtime`
+
+This is still a trusted-operator deployment for one self-hosted instance, not
+a public multi-user hosting story.
+
 ### Zero-infra local mode
 
 Use this only when you intentionally want a non-default local mode without
@@ -247,8 +296,11 @@ want a lighter non-default local mode:
   optional and disabled by default. Set `RESEARCH_SEMANTIC_ENABLED=true` and
   point it at the same Qdrant instance.
 - Zotero:
-  supported but still setup-dependent. Fill in the Zotero variables in `.env`
-  when you want live library pulls or write-back.
+  the first optional integration we expect to feel routine when configured.
+  Fill in `ZOTERO_LIBRARY_ID` for live pulls and `ZOTERO_API_KEY` for
+  write-back, then run `.venv/bin/saw zotero-check --json-output`. Treat
+  Zotero as routine-ready only when that command reports
+  `"routine_ready": true`.
 - Wikibase:
   optional and advanced. Set `APP_TRUTH_BACKEND=wikibase` and fill in the
   Wikibase variables before starting the app.
@@ -265,6 +317,12 @@ For the current release:
   exists conceptually but is not initialized yet
 - optional integrations should appear as optional or disabled when unconfigured,
   not as blockers for the core local path
+- the recovery order is backup Postgres and exports first, restore Postgres
+  next, then rebuild Qdrant or reseed only when you intentionally want the
+  sample corpus back
+- the full release checklist, rollback guide, and issue-triage standard live
+  in [Release Operations](docs/RELEASE_OPERATIONS.md), with deployment-specific
+  detail kept in [Deployment Guide](docs/DEPLOYMENT.md)
 
 For minimal self-host guidance, see [Operator Stack](docs/AUTHOR_STACK.md) and
 [Deployment Guide](docs/DEPLOYMENT.md).
@@ -338,6 +396,15 @@ Or run each command individually:
   This usually means the active backend is not reachable yet. For the default
   path, start Postgres first and Qdrant if you are using the recommended
   retrieval stack.
+- `saw zotero-check --json-output` says Zotero is not routine-ready:
+  Follow the reported `next_action`, then rerun the same command until
+  `routine_ready` is `true`. Missing `ZOTERO_LIBRARY_ID` blocks live pulls, and
+  missing `ZOTERO_API_KEY` blocks write-back.
+- Recovery feels unclear:
+  Follow the same order used in the deployment guide: back up Postgres,
+  restore Postgres, rebuild Qdrant if needed, then reseed only when you want
+  the sample corpus back on purpose. Use the deployment guide for the full
+  upgrade and rollback checklist.
 - `/health/runtime` looks unfamiliar:
   Optional services such as Zotero, research semantics, and GraphRAG can show
   as disabled or optional while the app is still fully ready for the default

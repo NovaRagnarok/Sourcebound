@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from typer.testing import CliRunner
 
 from source_aware_worldbuilding.cli import app as cli_app
@@ -92,6 +94,32 @@ def test_cli_qdrant_rebuild_backfills_projection_from_truth_store(monkeypatch) -
     assert result.exit_code == 0
     assert '"claim_count": 1' in result.stdout
     assert projection.upserted == ([claim], evidence)
+
+
+def test_cli_upgrade_check_reports_postgres_schema_version(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "app_state_backend", "postgres")
+    monkeypatch.setattr(settings, "app_truth_backend", "postgres")
+
+    monkeypatch.setattr(
+        "source_aware_worldbuilding.cli.PostgresAppStateStore.inspect_schema_compatibility",
+        lambda dsn, schema: {
+            "schema": schema,
+            "schema_version": 1,
+            "expected_schema_version": 1,
+            "compatible": True,
+            "detail": "Schema compatibility matches the current supported upgrade path.",
+        },
+    )
+
+    result = runner.invoke(cli_app, ["upgrade-check", "--json-output"])
+
+    assert result.exit_code == 0
+    body = json.loads(result.stdout)
+    assert body["postgres_enabled"] is True
+    assert body["schema_version"] == 1
+    assert body["expected_schema_version"] == 1
+    assert body["compatible"] is True
+    assert body["projection_rebuild_command"] == ".venv/bin/saw qdrant-rebuild --json-output"
 
 
 def test_cli_seed_dev_data_initializes_and_backfills_qdrant(temp_data_dir, monkeypatch) -> None:

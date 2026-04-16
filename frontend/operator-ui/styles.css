@@ -454,6 +454,23 @@ a {
   gap: 10px;
 }
 
+.setup-follow-up-note {
+  display: grid;
+  gap: 8px;
+  padding: 14px 16px;
+  border: 1px dashed rgba(25, 22, 20, 0.16);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.56);
+}
+
+.setup-follow-up-list {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--muted);
+  display: grid;
+  gap: 6px;
+}
+
 .workspace-next-move {
   display: grid;
   gap: 6px;
@@ -597,6 +614,28 @@ a {
 
 .next-step-list li {
   line-height: 1.45;
+}
+
+.runtime-step-group {
+  display: grid;
+  gap: 8px;
+}
+
+.runtime-step-group-optional {
+  padding-top: 8px;
+  border-top: 1px dashed rgba(25, 22, 20, 0.14);
+}
+
+.next-step-list-blocking li::marker {
+  color: var(--danger);
+}
+
+.next-step-list-optional {
+  color: var(--muted);
+}
+
+.runtime-helper-note {
+  padding-top: 4px;
 }
 
 .service-grid {
