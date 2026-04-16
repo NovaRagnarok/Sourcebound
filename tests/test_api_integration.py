@@ -566,6 +566,11 @@ def test_review_route_supports_claim_patch_and_deferred_states(
         assert workspace_summary.status_code == 200
         assert workspace_summary.json()["pending_review_count"] == 3
 
+        stored_reviews = client.get("/v1/candidates/cand-grain-bell-beadles/reviews")
+        assert stored_reviews.status_code == 200
+        assert stored_reviews.json()[-1]["actor_id"] == "trusted-operator"
+        assert stored_reviews.json()[-1]["actor_role"] == "operator"
+
 
 def test_review_route_rejects_unedited_approval_for_deferred_candidates(
     temp_data_dir, operator_auth_headers
@@ -581,6 +586,25 @@ def test_review_route_rejects_unedited_approval_for_deferred_candidates(
 
     assert response.status_code == 409
     assert "require edits" in response.json()["detail"].lower()
+
+
+def test_review_routes_return_404_for_missing_candidate(
+    temp_data_dir, operator_auth_headers
+) -> None:
+    seed_dev_data()
+
+    with TestClient(app) as client:
+        client.headers.update(operator_auth_headers)
+        reject_response = client.post(
+            "/v1/candidates/cand-missing/review",
+            json={"decision": "reject"},
+        )
+        history_response = client.get("/v1/candidates/cand-missing/reviews")
+
+    assert reject_response.status_code == 404
+    assert reject_response.json()["detail"] == "Candidate not found"
+    assert history_response.status_code == 404
+    assert history_response.json()["detail"] == "Candidate not found"
 
 
 def test_query_route_keeps_bread_token_question_topic_first(temp_data_dir) -> None:
@@ -612,8 +636,8 @@ def test_review_route_surfaces_wikibase_sync_failures(
     seed_dev_data()
 
     class FailingReviewService:
-        def review_candidate(self, candidate_id: str, request):
-            _ = candidate_id, request
+        def review_candidate(self, candidate_id: str, request, *, actor=None):
+            _ = candidate_id, request, actor
             raise WikibaseSyncError("Wikibase sync failed: upstream unavailable")
 
     try:

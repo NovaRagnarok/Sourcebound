@@ -14,6 +14,7 @@ from source_aware_worldbuilding.domain.enums import ClaimStatus, ReviewDecision,
 from source_aware_worldbuilding.domain.errors import ReviewConflictError, WikibaseSyncError
 from source_aware_worldbuilding.domain.models import (
     ApprovedClaim,
+    AuthenticatedActor,
     CandidateClaim,
     ClaimKind,
     ClaimRelationship,
@@ -71,6 +72,7 @@ def test_review_flow(temp_data_dir: Path) -> None:
     approved = service.review_candidate(
         "cand-grain-bell-beadles",
         ReviewRequest(decision=ReviewDecision.APPROVE),
+        actor=AuthenticatedActor(actor_id="trusted-writer", role="writer"),
     )
 
     assert approved is not None
@@ -86,6 +88,8 @@ def test_review_flow(temp_data_dir: Path) -> None:
         review_store.list_reviews("cand-grain-bell-beadles")[0].approved_claim_id
         == approved.claim_id
     )
+    assert review_store.list_reviews("cand-grain-bell-beadles")[0].actor_id == "trusted-writer"
+    assert review_store.list_reviews("cand-grain-bell-beadles")[0].actor_role == "writer"
 
 
 def test_review_reject_marks_candidate_without_creating_claim(temp_data_dir: Path) -> None:
@@ -95,6 +99,7 @@ def test_review_reject_marks_candidate_without_creating_claim(temp_data_dir: Pat
     rejected = service.review_candidate(
         "cand-blue-lanterns",
         ReviewRequest(decision=ReviewDecision.REJECT),
+        actor=AuthenticatedActor(actor_id="trusted-operator", role="operator"),
     )
 
     assert rejected is None
@@ -103,6 +108,7 @@ def test_review_reject_marks_candidate_without_creating_claim(temp_data_dir: Pat
     assert rejected_candidate.review_state == ReviewState.REJECTED
     assert truth_store.list_claims() == []
     assert review_store.list_reviews("cand-blue-lanterns")[0].decision == ReviewDecision.REJECT
+    assert review_store.list_reviews("cand-blue-lanterns")[0].actor_id == "trusted-operator"
 
 
 def test_review_override_can_mark_author_choice(temp_data_dir: Path) -> None:
@@ -116,6 +122,7 @@ def test_review_override_can_mark_author_choice(temp_data_dir: Path) -> None:
             override_status=ClaimStatus.AUTHOR_CHOICE,
             notes="Authorial call for the pilot.",
         ),
+        actor=AuthenticatedActor(actor_id="trusted-operator", role="operator"),
     )
 
     assert approved is not None
@@ -147,6 +154,7 @@ def test_review_approve_can_patch_claim_without_mutating_candidate(temp_data_dir
             ),
             notes="Tightened wording before approval.",
         ),
+        actor=AuthenticatedActor(actor_id="trusted-writer", role="writer"),
     )
 
     assert approved is not None
@@ -171,6 +179,7 @@ def test_review_reject_can_defer_candidate_for_edit(temp_data_dir: Path) -> None
             defer_state="needs_edit",
             notes="Keep the folklore framing explicit.",
         ),
+        actor=AuthenticatedActor(actor_id="trusted-operator", role="operator"),
     )
 
     assert rejected is None
@@ -192,6 +201,7 @@ def test_deferred_candidate_requires_meaningful_edit_before_approval(
         service.review_candidate(
             "cand-grain-bell-timing",
             ReviewRequest(decision=ReviewDecision.APPROVE),
+            actor=AuthenticatedActor(actor_id="trusted-writer", role="writer"),
         )
 
     stored_candidate = candidate_store.get_candidate("cand-grain-bell-timing")
@@ -273,9 +283,11 @@ def test_review_missing_candidate_returns_none(temp_data_dir: Path) -> None:
     _, truth_store, review_store, service = build_review_service(temp_data_dir)
     review_count_before = len(review_store.list_reviews())
 
-    assert (
-        service.review_candidate("missing", ReviewRequest(decision=ReviewDecision.APPROVE)) is None
-    )
+    assert service.review_candidate(
+        "missing",
+        ReviewRequest(decision=ReviewDecision.APPROVE),
+        actor=AuthenticatedActor(actor_id="trusted-writer", role="writer"),
+    ) is None
     assert truth_store.list_claims() == []
     assert len(review_store.list_reviews()) == review_count_before
 
@@ -287,6 +299,7 @@ def test_review_cannot_approve_same_candidate_twice(temp_data_dir: Path) -> None
     first = service.review_candidate(
         "cand-grain-bell-beadles",
         ReviewRequest(decision=ReviewDecision.APPROVE),
+        actor=AuthenticatedActor(actor_id="trusted-writer", role="writer"),
     )
     review_count_after_first = len(review_store.list_reviews())
 
@@ -296,6 +309,7 @@ def test_review_cannot_approve_same_candidate_twice(temp_data_dir: Path) -> None
         service.review_candidate(
             "cand-grain-bell-beadles",
             ReviewRequest(decision=ReviewDecision.APPROVE),
+            actor=AuthenticatedActor(actor_id="trusted-operator", role="operator"),
         )
 
     candidate = candidate_store.get_candidate("cand-grain-bell-beadles")
@@ -327,6 +341,7 @@ def test_review_keeps_candidate_pending_when_wikibase_sync_fails(temp_data_dir: 
         service.review_candidate(
             "cand-grain-bell-beadles",
             ReviewRequest(decision=ReviewDecision.APPROVE),
+            actor=AuthenticatedActor(actor_id="trusted-operator", role="operator"),
         )
     except WikibaseSyncError as exc:
         assert "upstream unavailable" in str(exc)

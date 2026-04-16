@@ -18,6 +18,7 @@ from source_aware_worldbuilding.domain.enums import (
 )
 from source_aware_worldbuilding.domain.models import (
     ApprovedClaim,
+    AuthenticatedActor,
     BibleCompositionDefaults,
     BibleProjectProfileUpdateRequest,
     BibleSectionCreateRequest,
@@ -145,6 +146,7 @@ def test_bible_workspace_creates_sections_with_provenance_and_guidance(temp_data
                 include_statuses=[ClaimStatus.VERIFIED, ClaimStatus.PROBABLE]
             ),
         ),
+        actor=AuthenticatedActor(actor_id="trusted-writer", role="writer"),
     )
 
     section = service.create_section(
@@ -167,6 +169,8 @@ def test_bible_workspace_creates_sections_with_provenance_and_guidance(temp_data
     assert isinstance(section.recommended_next_research, list)
     assert section.generation_status == BibleSectionGenerationStatus.THIN
     assert section.ready_for_writer is False
+    assert profile.audit_history[-1].event_type == "profile_saved"
+    assert profile.audit_history[-1].actor_id == "trusted-writer"
 
 
 def test_bible_workspace_preserves_manual_edits_when_regenerated(temp_data_dir: Path) -> None:
@@ -175,6 +179,7 @@ def test_bible_workspace_preserves_manual_edits_when_regenerated(temp_data_dir: 
     service.save_profile(
         "project-greyport",
         BibleProjectProfileUpdateRequest(project_name="Greyport Bible"),
+        actor=AuthenticatedActor(actor_id="trusted-writer", role="writer"),
     )
     section = service.create_section(
         BibleSectionCreateRequest(
@@ -189,12 +194,14 @@ def test_bible_workspace_preserves_manual_edits_when_regenerated(temp_data_dir: 
             title="Rumor Ledger",
             content=section.content + "\n\nAuthor note: keep this eerie but unconfirmed.",
         ),
+        actor=AuthenticatedActor(actor_id="trusted-writer", role="writer"),
     )
     regenerated = service.regenerate_section(
         section.section_id,
         BibleSectionRegenerateRequest(
             filters=BibleSectionFilters(statuses=[ClaimStatus.RUMOR, ClaimStatus.LEGEND])
         ),
+        actor=AuthenticatedActor(actor_id="trusted-operator", role="operator"),
     )
 
     assert edited.has_manual_edits is True
@@ -203,6 +210,10 @@ def test_bible_workspace_preserves_manual_edits_when_regenerated(temp_data_dir: 
     assert regenerated.manual_markdown is not None
     assert regenerated.ready_for_writer is False
     assert regenerated.generation_status == BibleSectionGenerationStatus.THIN
+    assert edited.audit_history[-1].event_type == "section_updated"
+    assert edited.audit_history[-1].actor_role == "writer"
+    assert regenerated.audit_history[-1].event_type == "section_regenerated"
+    assert regenerated.audit_history[-1].actor_role == "operator"
 
 
 def test_bible_workspace_creates_rumor_sections_without_blueprint_regression(
@@ -213,6 +224,7 @@ def test_bible_workspace_creates_rumor_sections_without_blueprint_regression(
     service.save_profile(
         "project-greyport",
         BibleProjectProfileUpdateRequest(project_name="Greyport Bible"),
+        actor=AuthenticatedActor(actor_id="trusted-writer", role="writer"),
     )
 
     section = service.create_section(
@@ -233,12 +245,17 @@ def test_bible_workspace_can_export_saved_project(temp_data_dir: Path) -> None:
     service.save_profile(
         "project-greyport",
         BibleProjectProfileUpdateRequest(project_name="Greyport Bible"),
+        actor=AuthenticatedActor(actor_id="trusted-writer", role="writer"),
     )
     service.create_section(
         BibleSectionCreateRequest(
             project_id="project-greyport",
             section_type=BibleSectionType.AUTHOR_DECISIONS,
         )
+    )
+    service.record_export_request(
+        "project-greyport",
+        AuthenticatedActor(actor_id="trusted-operator", role="operator"),
     )
 
     exported = service.export_project("project-greyport")
@@ -248,3 +265,5 @@ def test_bible_workspace_can_export_saved_project(temp_data_dir: Path) -> None:
     assert exported.sections[0].section_type == BibleSectionType.AUTHOR_DECISIONS
     assert exported.sections[0].generation_status == BibleSectionGenerationStatus.READY
     assert exported.sections[0].ready_for_writer is True
+    assert exported.profile.audit_history[-1].event_type == "project_export_requested"
+    assert exported.profile.audit_history[-1].actor_role == "operator"

@@ -15,9 +15,11 @@ from source_aware_worldbuilding.domain.enums import (
 )
 from source_aware_worldbuilding.domain.models import (
     ApprovedClaim,
+    AuthenticatedActor,
     BibleCoverageAnalysis,
     BibleCoverageBucket,
     BibleParagraphProvenance,
+    CanonAuditEvent,
     BibleParagraphProvenanceScope,
     BibleParagraphRole,
     BibleProjectExportResponse,
@@ -273,6 +275,8 @@ class BibleWorkspaceService:
         self,
         project_id: str,
         request: BibleProjectProfileUpdateRequest,
+        *,
+        actor: AuthenticatedActor | None = None,
     ) -> BibleProjectProfile:
         now = utc_now()
         existing = self.profile_store.get_profile(project_id)
@@ -289,8 +293,15 @@ class BibleWorkspaceService:
             desired_facets=request.desired_facets,
             tone=request.tone,
             composition_defaults=request.composition_defaults,
+            audit_history=list(existing.audit_history) if existing else [],
             created_at=existing.created_at if existing else now,
             updated_at=now,
+        )
+        self._append_audit_event(
+            profile.audit_history,
+            event_type="profile_saved",
+            actor=actor,
+            notes=f"Saved Bible project profile for {project_id}.",
         )
         self.profile_store.save_profile(profile)
         return profile
@@ -499,7 +510,13 @@ class BibleWorkspaceService:
     def create_section(self, request: BibleSectionCreateRequest) -> BibleSection:
         return self.compose_prepared_section(self.prepare_section(request).section_id)
 
-    def update_section(self, section_id: str, request: BibleSectionUpdateRequest) -> BibleSection:
+    def update_section(
+        self,
+        section_id: str,
+        request: BibleSectionUpdateRequest,
+        *,
+        actor: AuthenticatedActor | None = None,
+    ) -> BibleSection:
         section = self.section_store.get_section(section_id)
         if section is None:
             raise ValueError("Bible section not found.")
@@ -510,6 +527,12 @@ class BibleWorkspaceService:
         section.has_manual_edits = True
         section.updated_at = now
         section.last_edited_at = now
+        self._append_audit_event(
+            section.audit_history,
+            event_type="section_updated",
+            actor=actor,
+            notes=f"Updated Bible section {section_id}.",
+        )
         self.section_store.save_section(section)
         return section
 
@@ -518,6 +541,8 @@ class BibleWorkspaceService:
         section_id: str,
         request: BibleSectionRegenerateRequest | None = None,
         progress_callback: Callable[[str, str, int | None], None] | None = None,
+        *,
+        actor: AuthenticatedActor | None = None,
     ) -> BibleSection:
         section = self.section_store.get_section(section_id)
         if section is None:
@@ -560,6 +585,12 @@ class BibleWorkspaceService:
         section.ready_for_writer = draft.ready_for_writer
         section.updated_at = now
         section.last_generated_at = now
+        self._append_audit_event(
+            section.audit_history,
+            event_type="section_regenerated",
+            actor=actor,
+            notes=f"Regenerated Bible section {section_id}.",
+        )
         self.section_store.save_section(section)
         return section
 
@@ -576,6 +607,104 @@ class BibleWorkspaceService:
                 ],
                 key=lambda item: (item.section_type.value, item.title.lower()),
             ),
+        )
+
+    def record_regeneration_request(
+        self,
+        section_id: str,
+        actor: AuthenticatedActor,
+        request: BibleSectionRegenerateRequest | None = None,
+    ) -> CanonAuditEvent:
+        section = self.section_store.get_section(section_id)
+        if section is None:
+            raise ValueError("Bible section not found.")
+        metadata: dict[str, object] = {}
+        if request is not None and request.filters is not None:
+            metadata["filters"] = request.filters.model_dump(mode="json")
+        event = self._build_audit_event(
+            event_type="section_regenerate_requested",
+            actor=actor,
+            notes=f"Queued Bible regeneration for {section_id}.",
+            metadata=metadata,
+        )
+        section.audit_history.append(event)
+        section.updated_at = utc_now()
+        self.section_store.save_section(section)
+        return event
+
+    def discard_regeneration_request(self, section_id: str, event_id: str) -> None:
+        section = self.section_store.get_section(section_id)
+        if section is None:
+            raise ValueError("Bible section not found.")
+        section.audit_history = [
+            item for item in section.audit_history if item.event_id != event_id
+        ]
+        section.updated_at = utc_now()
+        self.section_store.save_section(section)
+
+    def record_export_request(
+        self,
+        project_id: str,
+        actor: AuthenticatedActor,
+    ) -> CanonAuditEvent:
+        profile = self.profile_store.get_profile(project_id)
+        if profile is None:
+            raise ValueError("Bible project profile not found.")
+        event = self._build_audit_event(
+            event_type="project_export_requested",
+            actor=actor,
+            notes=f"Queued Bible export for {project_id}.",
+        )
+        profile.audit_history.append(event)
+        profile.updated_at = utc_now()
+        self.profile_store.save_profile(profile)
+        return event
+
+    def discard_export_request(self, project_id: str, event_id: str) -> None:
+        profile = self.profile_store.get_profile(project_id)
+        if profile is None:
+            raise ValueError("Bible project profile not found.")
+        profile.audit_history = [
+            item for item in profile.audit_history if item.event_id != event_id
+        ]
+        profile.updated_at = utc_now()
+        self.profile_store.save_profile(profile)
+
+    def _append_audit_event(
+        self,
+        audit_history: list[CanonAuditEvent],
+        *,
+        event_type: str,
+        actor: AuthenticatedActor | None,
+        notes: str | None = None,
+        metadata: dict[str, object] | None = None,
+    ) -> None:
+        if actor is None:
+            return
+        audit_history.append(
+            self._build_audit_event(
+                event_type=event_type,
+                actor=actor,
+                notes=notes,
+                metadata=metadata,
+            )
+        )
+
+    def _build_audit_event(
+        self,
+        *,
+        event_type: str,
+        actor: AuthenticatedActor,
+        notes: str | None = None,
+        metadata: dict[str, object] | None = None,
+    ) -> CanonAuditEvent:
+        return CanonAuditEvent(
+            event_id=f"audit-{uuid4().hex[:12]}",
+            event_type=event_type,
+            actor_id=actor.actor_id,
+            actor_role=actor.role,
+            notes=notes,
+            metadata=dict(metadata or {}),
         )
 
     def _compose_section(

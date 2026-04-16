@@ -476,6 +476,8 @@ class ReviewEvent(BaseModel):
     override_status: ClaimStatus | None = None
     notes: str | None = None
     approved_claim_id: str | None = None
+    actor_id: str | None = None
+    actor_role: Literal["writer", "operator"] | None = None
 
 
 class ReviewClaimPatch(BaseModel):
@@ -826,6 +828,7 @@ class BibleProjectProfile(BaseModel):
     desired_facets: list[str] = Field(default_factory=list)
     tone: BibleTone = BibleTone.GROUNDED_LITERARY
     composition_defaults: BibleCompositionDefaults = Field(default_factory=BibleCompositionDefaults)
+    audit_history: list[CanonAuditEvent] = Field(default_factory=list)
     created_at: str = Field(default_factory=utc_now)
     updated_at: str = Field(default_factory=utc_now)
 
@@ -976,6 +979,7 @@ class BibleSection(BaseModel):
     ready_for_writer: bool = False
     has_manual_edits: bool = False
     latest_job: JobSummary | None = None
+    audit_history: list[CanonAuditEvent] = Field(default_factory=list)
     created_at: str = Field(default_factory=utc_now)
     updated_at: str = Field(default_factory=utc_now)
     last_generated_at: str | None = None
@@ -1468,6 +1472,22 @@ class ResearchFacetCoverage(BaseModel):
 class AuthenticatedActor(BaseModel):
     actor_id: str
     role: Literal["writer", "operator"]
+
+
+class CanonAuditEvent(BaseModel):
+    event_id: str
+    event_type: Literal[
+        "profile_saved",
+        "section_updated",
+        "section_regenerated",
+        "section_regenerate_requested",
+        "project_export_requested",
+    ]
+    actor_id: str
+    actor_role: Literal["writer", "operator"]
+    acted_at: str = Field(default_factory=utc_now)
+    notes: str | None = None
+    metadata: dict[str, object] = Field(default_factory=dict)
 
 
 class RuntimeDependencyStatus(BaseModel):
