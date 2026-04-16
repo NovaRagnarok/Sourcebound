@@ -5,6 +5,7 @@ from collections import Counter, defaultdict
 from collections.abc import Callable, Collection
 from dataclasses import dataclass, field
 from hashlib import sha1
+from typing import Literal
 from uuid import uuid4
 
 from source_aware_worldbuilding.domain.enums import (
@@ -101,6 +102,15 @@ class SectionCompositionPlan:
     skipped_beats: list[SkippedBeat]
     beat_to_claim_reservations: dict[str, list[str]]
     section_coverage_metrics: SectionCoverageMetricsInternal
+
+
+CanonAuditEventType = Literal[
+    "profile_saved",
+    "section_updated",
+    "section_regenerated",
+    "section_regenerate_requested",
+    "project_export_requested",
+]
 
 
 class BibleWorkspaceService:
@@ -674,7 +684,7 @@ class BibleWorkspaceService:
         self,
         audit_history: list[CanonAuditEvent],
         *,
-        event_type: str,
+        event_type: CanonAuditEventType,
         actor: AuthenticatedActor | None,
         notes: str | None = None,
         metadata: dict[str, object] | None = None,
@@ -693,7 +703,7 @@ class BibleWorkspaceService:
     def _build_audit_event(
         self,
         *,
-        event_type: str,
+        event_type: CanonAuditEventType,
         actor: AuthenticatedActor,
         notes: str | None = None,
         metadata: dict[str, object] | None = None,

@@ -15,11 +15,6 @@ else
   exit 1
 fi
 
-if ! command -v setsid >/dev/null 2>&1; then
-  echo "Missing \`setsid\`, which is required to manage the smoke server process." >&2
-  exit 1
-fi
-
 TMP_DIR=$(mktemp -d)
 SERVER_LOG="$TMP_DIR/newcomer-smoke-server.log"
 SERVER_PID=""
@@ -30,7 +25,7 @@ APP_BASE_URL=""
 
 cleanup() {
   if [[ -n "${SERVER_PID}" ]]; then
-    kill -- -"${SERVER_PID}" >/dev/null 2>&1 || true
+    kill "${SERVER_PID}" >/dev/null 2>&1 || true
     wait "${SERVER_PID}" >/dev/null 2>&1 || true
   fi
   if [[ "${RESTORE_ENV}" -eq 1 ]]; then
@@ -71,7 +66,7 @@ PY
 }
 
 server_process_alive() {
-  [[ -n "${SERVER_PID}" ]] && kill -0 -- -"${SERVER_PID}" >/dev/null 2>&1
+  [[ -n "${SERVER_PID}" ]] && kill -0 "${SERVER_PID}" >/dev/null 2>&1
 }
 
 server_log_mentions_port() {
@@ -184,7 +179,7 @@ assert research["ready"] is True, research
 '
 
 echo "[newcomer-smoke] starting smoke server"
-setsid "$SAW_BIN" serve >"$SERVER_LOG" 2>&1 &
+"$PYTHON_BIN" -m source_aware_worldbuilding.cli serve >"$SERVER_LOG" 2>&1 &
 SERVER_PID=$!
 
 for _ in $(seq 1 60); do

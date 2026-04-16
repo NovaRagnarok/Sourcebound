@@ -75,3 +75,11 @@ strict = false
 warn_unused_ignores = true
 warn_redundant_casts = true
 warn_unused_configs = true
+
+[[tool.mypy.overrides]]
+module = [
+  "graphrag.api.index",
+  "graphrag.config.load_config",
+  "pdfminer.high_level",
+]
+ignore_missing_imports = true

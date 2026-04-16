@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Literal
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -82,20 +83,21 @@ from source_aware_worldbuilding.services.research import ResearchService
 from source_aware_worldbuilding.services.review import ReviewService
 from source_aware_worldbuilding.settings import settings
 
+AuthenticatedActorRole = Literal["writer", "operator"]
+
 _job_service: JobService | None = None
 _job_service_key: tuple[object, ...] | None = None
 _operator_bearer = HTTPBearer(auto_error=False)
 
 
-def _configured_auth_tokens() -> dict[str, str]:
-    tokens = {
-        role: token
-        for role, token in (
-            ("writer", (settings.app_writer_token or "").strip()),
-            ("operator", (settings.app_operator_token or "").strip()),
-        )
-        if token
-    }
+def _configured_auth_tokens() -> dict[AuthenticatedActorRole, str]:
+    tokens: dict[AuthenticatedActorRole, str] = {}
+    writer_token = (settings.app_writer_token or "").strip()
+    operator_token = (settings.app_operator_token or "").strip()
+    if writer_token:
+        tokens["writer"] = writer_token
+    if operator_token:
+        tokens["operator"] = operator_token
     if tokens:
         return tokens
     raise HTTPException(
@@ -130,7 +132,7 @@ def _authenticate_actor(
             detail="Authentication required for this route.",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    matched_role = next(
+    matched_role: AuthenticatedActorRole | None = next(
         (role for role, token in tokens.items() if credentials.credentials == token),
         None,
     )

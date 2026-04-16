@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Literal
+
 from fastapi import APIRouter
 
 from source_aware_worldbuilding.api.dependencies import (
@@ -21,6 +23,8 @@ from source_aware_worldbuilding.domain.models import (
 from source_aware_worldbuilding.services.status import build_runtime_status
 
 router = APIRouter(prefix="/v1/workspace", tags=["workspace"])
+
+WorkspaceTone = Literal["verified", "probable", "contested", "queued", "author_choice"]
 
 
 @router.get("/summary")
@@ -326,7 +330,7 @@ def _build_actions(
                 f"{current_section.title} has a dependable generated baseline. Writer can "
                 "refine it now, then hand it to an operator for regeneration or export."
             )
-            tone = "verified"
+            tone: WorkspaceTone = "verified"
             badge = "writer step"
         else:
             title = "Open the current section"
