@@ -277,8 +277,11 @@ want a lighter non-default local mode:
   optional and disabled by default. Set `RESEARCH_SEMANTIC_ENABLED=true` and
   point it at the same Qdrant instance.
 - Zotero:
-  supported but still setup-dependent. Fill in the Zotero variables in `.env`
-  when you want live library pulls or write-back.
+  the first optional integration we expect to feel routine when configured.
+  Fill in `ZOTERO_LIBRARY_ID` for live pulls and `ZOTERO_API_KEY` for
+  write-back, then run `.venv/bin/saw zotero-check --json-output`. Treat
+  Zotero as routine-ready only when that command reports
+  `"routine_ready": true`.
 - Wikibase:
   optional and advanced. Set `APP_TRUTH_BACKEND=wikibase` and fill in the
   Wikibase variables before starting the app.
@@ -373,6 +376,10 @@ Or run each command individually:
   This usually means the active backend is not reachable yet. For the default
   path, start Postgres first and Qdrant if you are using the recommended
   retrieval stack.
+- `saw zotero-check --json-output` says Zotero is not routine-ready:
+  Follow the reported `next_action`, then rerun the same command until
+  `routine_ready` is `true`. Missing `ZOTERO_LIBRARY_ID` blocks live pulls, and
+  missing `ZOTERO_API_KEY` blocks write-back.
 - Recovery feels unclear:
   Follow the same order used in the deployment guide: back up Postgres,
   restore Postgres, rebuild Qdrant if needed, then reseed only when you want

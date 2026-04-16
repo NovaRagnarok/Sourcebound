@@ -109,7 +109,9 @@ uses service-local addresses for Postgres and Qdrant:
 
 Optional integrations remain opt-in:
 
-- Zotero for live library pull and write-back
+- Zotero for live library pull and write-back. The routine verification command
+  is `.venv/bin/saw zotero-check --json-output`, and Zotero should only be
+  treated as routine-ready when that report returns `"routine_ready": true`.
 - research semantics when you want Qdrant-backed dedupe and reranking
 - GraphRAG when you are ready to manage its dependency and artifact setup
 - Wikibase only if you intentionally want it as the truth-store backend

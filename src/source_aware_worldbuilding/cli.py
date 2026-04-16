@@ -2429,12 +2429,15 @@ def _build_zotero_report(*, source_limit: int, include_text_units: bool) -> dict
     if not settings.zotero_library_id:
         missing.append("ZOTERO_LIBRARY_ID")
     write_path_ready, write_path_detail = _zotero_write_path_detail()
+    verification_command = ".venv/bin/saw zotero-check --json-output"
 
     report: dict = {
         "configured": not missing,
         "read_path_ready": not missing,
         "write_path_ready": write_path_ready,
         "write_path_detail": write_path_detail,
+        "routine_ready": False,
+        "verification_command": verification_command,
         "library_type": settings.zotero_library_type,
         "library_id_present": bool(settings.zotero_library_id),
         "collection_key_present": bool(settings.zotero_collection_key),
@@ -2462,6 +2465,11 @@ def _build_zotero_report(*, source_limit: int, include_text_units: bool) -> dict
         report["detail"] = (
             "Zotero read path is unavailable until ZOTERO_LIBRARY_ID is set. "
             "Set ZOTERO_API_KEY too if you want live write-back."
+        )
+        report["blocked_stage"] = "configuration"
+        report["next_action"] = (
+            "Set ZOTERO_LIBRARY_ID for live pulls and ZOTERO_API_KEY for write-back, "
+            f"then rerun `{verification_command}`."
         )
         return report
 
@@ -2492,6 +2500,12 @@ def _build_zotero_report(*, source_limit: int, include_text_units: bool) -> dict
             ]
 
         report["success"] = True
+        report["routine_ready"] = report["read_path_ready"] and report["write_path_ready"]
+        if report["routine_ready"] and not report["next_action"]:
+            report["next_action"] = (
+                "Zotero is ready for routine pull and write-back checks. "
+                f"Rerun `{verification_command}` after library or collection changes."
+            )
         report["detail"] = "Zotero pull succeeded."
         return report
     except ZoteroError as exc:
@@ -2533,9 +2547,14 @@ def _print_zotero_report(report: dict) -> None:
     print(
         "Read path: "
         f"{'ready' if report['read_path_ready'] else 'not ready'} | "
-        f"Write path: {'ready' if report['write_path_ready'] else 'not ready'}"
+        f"Write path: {'ready' if report['write_path_ready'] else 'not ready'} | "
+        f"Routine ready: {'yes' if report['routine_ready'] else 'no'}"
     )
     print(report["write_path_detail"])
+    print(f"Verification command: {report['verification_command']}")
+
+    if report["next_action"]:
+        print(f"Next action: {report['next_action']}")
 
     if report["success"]:
         print(
@@ -2548,7 +2567,7 @@ def _print_zotero_report(report: dict) -> None:
             f"{json.dumps(report['stage_breakdown'], sort_keys=True)} | "
             f"Failed documents: {report['failed_document_count']}"
         )
-        if report["blocked_stage"] and report["next_action"]:
+        if report["blocked_stage"]:
             print(
                 "Blocked stage: "
                 f"{report['blocked_stage']} | "

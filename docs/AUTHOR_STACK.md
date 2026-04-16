@@ -73,6 +73,24 @@ This keeps the daily writing and operator loop dependable:
 - If GraphRAG is disabled, heuristic extraction remains the default and keeps
   startup dependency-light.
 
+## Routine Zotero Verification
+
+Zotero is the first optional integration we expect to feel routine when it is
+configured. Use this proof command:
+
+```bash
+.venv/bin/saw zotero-check --json-output
+```
+
+Treat Zotero as routine-ready only when that report shows:
+
+- `"read_path_ready": true`
+- `"write_path_ready": true`
+- `"routine_ready": true`
+
+If it is not routine-ready yet, follow the command's reported `next_action`
+before retrying.
+
 ## Smallest Supported Deployment Shape
 
 If you run Sourcebound outside local development, the smallest supported shape

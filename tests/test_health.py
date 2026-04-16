@@ -308,6 +308,9 @@ def test_cli_zotero_check_reports_missing_configuration(monkeypatch) -> None:
     assert result.exit_code == 0
     assert '"configured": false' in result.stdout
     assert '"success": false' in result.stdout
+    assert '"blocked_stage": "configuration"' in result.stdout
+    assert '"routine_ready": false' in result.stdout
+    assert '"verification_command": ".venv/bin/saw zotero-check --json-output"' in result.stdout
     assert '"ZOTERO_LIBRARY_ID"' in result.stdout
 
 
