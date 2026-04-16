@@ -11,6 +11,8 @@ want a trustworthy runtime boundary today.
 - Postgres-backed app state and canon
 - browser UI served by the app process
 - persisted background jobs with the in-process worker
+- shared writer/operator bearer-token protection for mutation routes in the
+  trusted-team runtime
 
 ### Enabled by default but still maturing
 
@@ -35,7 +37,8 @@ want a trustworthy runtime boundary today.
 Sourcebound should currently be treated as a local-first or trusted-operator
 application:
 
-- there is no shipped user auth or access-control layer
+- protected write routes use shared writer/operator bearer tokens
+- there is no built-in identity provider, per-user login, or session layer
 - the recommended deployment shape assumes a small trusted team or single
   operator in one self-hosted deployment
 - the intended next auth boundary is writer-facing workspace use versus
@@ -53,7 +56,7 @@ application:
 | Python versions | Python `3.11` and `3.12` | none | none |
 | Backend combinations | `APP_STATE_BACKEND=postgres` + `APP_TRUTH_BACKEND=postgres` | `APP_STATE_BACKEND=file` + `APP_TRUTH_BACKEND=file`; `APP_STATE_BACKEND=sqlite` with the configured truth backend | `APP_TRUTH_BACKEND=wikibase` |
 | Retrieval/runtime modes | Postgres-backed app state and canon with `QDRANT_ENABLED=true` in the trusted-operator stack | Postgres-backed app state and canon with `QDRANT_ENABLED=false`; zero-infra file-backed local mode | GraphRAG-backed extraction; research semantics; live Zotero workflows |
-| Deployment shapes | local developer mode and the supported single-host Compose path in this guide | none | broader public-internet or multi-host deployment shapes |
+| Deployment shapes | local developer mode; the supported single-host Compose path in this guide; the supported internet-facing Compose overlay in this guide | none | broader public-internet or multi-host deployment shapes |
 
 Use these support levels consistently:
 
@@ -94,9 +97,141 @@ Expected endpoints after startup:
 - operator view: `http://localhost:8080/operator/`
 - runtime health: `http://localhost:8080/health/runtime`
 
-This compose path is the current supported self-host deployment for a single
-trusted deployment. It is not a public-internet hardening guide and does not
-claim TLS, secret-management, or public multi-user readiness.
+This compose path remains the easiest way to prove the baseline stack on one
+host. For internet-facing use, layer the supported HTTPS/auth overlay below on
+top of this base stack instead of exposing the HTTP-only proxy directly.
+
+## Supported Internet-Facing Compose Overlay
+
+The one supported internet-facing shape in this repo is:
+
+- base stack: `docker-compose.yml`
+- overlay: `infra/compose/internet-facing.yml`
+- TLS proxy config: `infra/nginx/sourcebound.internet-facing.conf`
+
+This shape is still meant for a small trusted team. It gives you:
+
+- TLS termination at the public `proxy`
+- the app container kept private on the Compose network
+- required shared writer and operator bearer tokens for protected routes
+- read-only mounted TLS material instead of baking certs or tokens into the
+  image
+
+It does not give you:
+
+- per-user login
+- user self-service account recovery
+- multi-tenant isolation
+- autoscaled worker or multi-host rollout patterns
+
+### TLS Handling
+
+The public proxy expects an operator-managed PEM certificate and key mounted
+read-only into the container:
+
+- `SOURCEBOUND_PUBLIC_HOST=sourcebound.example.com`
+- `SOURCEBOUND_TLS_CERT_PATH=/absolute/path/to/fullchain.pem`
+- `SOURCEBOUND_TLS_KEY_PATH=/absolute/path/to/privkey.pem`
+
+The repo does not automate certificate issuance or renewal. Use your normal
+host-level certificate workflow, then point the overlay at those files.
+
+For a real deployment, publish `80` and `443`. For a local proof run, you can
+override them with higher ports such as `8080` and `8443`.
+
+### Auth Handling
+
+The internet-facing overlay requires both of these secrets before Compose will
+start:
+
+- `APP_WRITER_TOKEN`
+- `APP_OPERATOR_TOKEN`
+
+Auth shape for this deployment:
+
+- writer token: routine workspace mutations for trusted writers
+- operator token: setup, runtime, intake, recovery, and other operator-only
+  mutations
+- public health and read-only workspace pages may still load without a token,
+  but any exposed deployment should be treated as a trusted-team surface, not a
+  public sign-up app
+
+### Secret Handling
+
+Do not commit deployment secrets into the repository, the Compose file, or a
+checked-in `.env`.
+
+Recommended handling:
+
+- keep `APP_WRITER_TOKEN`, `APP_OPERATOR_TOKEN`, Postgres credentials, and TLS
+  paths, plus `SOURCEBOUND_PUBLIC_HOST`, in a host-managed secret store or an
+  uncommitted env file with `0600` permissions
+- load that env into your shell before you run Compose
+- mount TLS files read-only from the host
+- rotate shared tokens when team membership changes
+
+Example shell loading pattern:
+
+```bash
+set -a
+. /etc/sourcebound/sourcebound.env
+set +a
+```
+
+Required env for the supported overlay:
+
+```bash
+APP_WRITER_TOKEN=replace-with-trusted-writer-token
+APP_OPERATOR_TOKEN=replace-with-trusted-operator-token
+SOURCEBOUND_PUBLIC_HOST=sourcebound.example.com
+SOURCEBOUND_TLS_CERT_PATH=/etc/letsencrypt/live/sourcebound/fullchain.pem
+SOURCEBOUND_TLS_KEY_PATH=/etc/letsencrypt/live/sourcebound/privkey.pem
+SOURCEBOUND_HTTP_PORT=80
+SOURCEBOUND_HTTPS_PORT=443
+```
+
+### Startup Flow
+
+```bash
+set -a
+. /etc/sourcebound/sourcebound.env
+set +a
+
+docker compose -f docker-compose.yml -f infra/compose/internet-facing.yml up -d postgres qdrant
+docker compose -f docker-compose.yml -f infra/compose/internet-facing.yml run --rm app saw seed-dev-data
+docker compose -f docker-compose.yml -f infra/compose/internet-facing.yml run --rm app saw verify-default-stack
+docker compose -f docker-compose.yml -f infra/compose/internet-facing.yml up -d --build app proxy
+```
+
+Expected endpoints after startup:
+
+- writer workspace: `https://your-host/workspace/`
+- operator view: `https://your-host/operator/`
+- runtime health: `https://your-host/health/runtime`
+
+### End-To-End Verification
+
+The minimum honest proof for this shape is:
+
+1. runtime health is `ready` through the HTTPS proxy
+2. the HTTP listener redirects to the configured HTTPS host and port
+3. the workspace entrypoint loads through the HTTPS proxy
+4. one operator-only mutation succeeds through the HTTPS proxy with
+   `Authorization: Bearer $APP_OPERATOR_TOKEN`
+
+Example authenticated proof:
+
+```bash
+curl -fsSI http://127.0.0.1:${SOURCEBOUND_HTTP_PORT:-80}/workspace/
+curl -kfsS https://127.0.0.1:${SOURCEBOUND_HTTPS_PORT:-443}/health/runtime
+curl -kfsS https://127.0.0.1:${SOURCEBOUND_HTTPS_PORT:-443}/workspace/ >/dev/null
+curl -kfsS \
+  -H "Authorization: Bearer $APP_OPERATOR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -X POST \
+  -d '{"title":"Deployment proof","text":"proxy-authenticated intake check"}' \
+  https://127.0.0.1:${SOURCEBOUND_HTTPS_PORT:-443}/v1/intake/text
+```
 
 ## Baseline Environment
 
@@ -140,6 +275,10 @@ Before expecting the app to be healthy:
 3. run `docker compose run --rm app saw verify-default-stack`
 4. bring up the app and reverse proxy with `docker compose up -d app proxy`
 5. verify `http://localhost:8080/health/runtime` reports `ready`
+
+For the internet-facing overlay, run the same sequence with
+`-f docker-compose.yml -f infra/compose/internet-facing.yml` and confirm the
+redirect plus the proxy-backed health endpoint over HTTPS instead.
 
 `APP_STRICT_STARTUP_CHECKS=true` is recommended when you want boot to fail
 instead of silently accepting an uninitialized default retrieval path.
@@ -276,10 +415,9 @@ If an upgrade needs to be rolled back:
 
 The following should not be implied by the current deployment guidance:
 
-- built-in user auth
-- built-in multi-user access control
+- built-in identity provider or per-user login flow
+- built-in multi-user access control beyond shared writer/operator tokens
 - public sign-up or tenant provisioning
-- hardened public-internet exposure guidance
 - autoscaled worker architecture
 - broad observability and SLO guidance
 - a production-grade benchmark suite covering all major workflows
