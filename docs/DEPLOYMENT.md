@@ -112,13 +112,102 @@ Healthy default-stack signals:
 
 ## Backups And Recovery
 
+Use this order when you need to recover the trusted-operator stack:
+
+1. back up Postgres and any export bundles you want to keep
+2. restore Postgres first
+3. rebuild Qdrant if the default projection is stale or uninitialized
+4. reseed only when you intentionally want the sample corpus back
+5. verify readiness with `.venv/bin/saw status` and `GET /health/runtime`
+
+### Back Up
+
 Back up the parts that carry authority:
 
 - the Postgres schema used for app state and canon
 - exported Bible bundles if you are using the tool for active writing work
 
+A practical local backup uses a custom-format Postgres dump:
+
+```bash
+mkdir -p backups
+pg_dump --format=custom --file backups/sourcebound-$(date +%F).dump "$APP_POSTGRES_DSN"
+```
+
+### Restore
+
+Restore the Postgres backup before you try to repair retrieval or reseed data.
+Use this order:
+
+1. stop the Sourcebound app process so no new writes land during recovery
+2. restore the Postgres backup
+3. rerun `.venv/bin/saw status` to confirm the app-state and canon paths are
+   back in shape
+4. rebuild Qdrant only after Postgres is healthy again
+
+If you used a custom-format dump, restore it with `pg_restore`:
+
+```bash
+pg_restore --clean --if-exists --dbname "$APP_POSTGRES_DSN" backups/sourcebound-YYYY-MM-DD.dump
+```
+
+If you have a plain SQL dump instead, restore it with `psql`:
+
+```bash
+psql "$APP_POSTGRES_DSN" < backups/sourcebound-YYYY-MM-DD.sql
+```
+
+After restore, run `.venv/bin/saw status` to confirm the app-state and canon
+paths are back in shape before you touch Qdrant or reseed.
+
+### Qdrant Rebuild
+
 Qdrant does not need to be treated as the authoritative data source. It is a
 rebuildable projection that can be restored from canon plus evidence.
+
+If the projection exists but is stale or uninitialized:
+
+1. bring Qdrant back up if needed with `docker compose up -d qdrant`
+2. run `.venv/bin/saw qdrant-rebuild`
+3. rerun `.venv/bin/saw status` and confirm the projection is ready
+
+If you want to repopulate the seeded sample corpus after a local reset, run
+`.venv/bin/saw seed-dev-data` after Postgres and Qdrant are available.
+
+### Reseed
+
+Use reseed when you intentionally want the demo corpus back on a fresh local
+stack or after a local wipe:
+
+```bash
+docker compose up -d postgres qdrant
+.venv/bin/saw seed-dev-data
+```
+
+`seed-dev-data` repopulates the sample data and also initializes or refreshes
+the Qdrant projection when the default retrieval path is enabled.
+
+### Upgrade
+
+For a routine local upgrade:
+
+1. take a Postgres backup first
+2. update the checked-out code and any dependency pins
+3. rerun `make bootstrap` if the dependency set changed
+4. run `make check`
+5. restart the app and verify with `.venv/bin/saw status`
+
+### Rollback
+
+If an upgrade needs to be rolled back:
+
+1. stop the app process
+2. restore the previous code checkout or release artifact
+3. restore the Postgres backup taken before the upgrade if schema or data
+   changed
+4. rerun `.venv/bin/saw qdrant-rebuild` if the projection needs to be brought
+   back into sync
+5. confirm readiness with `.venv/bin/saw status`
 
 ## Unsupported Or Not Yet Productized
 

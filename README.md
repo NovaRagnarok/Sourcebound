@@ -265,6 +265,11 @@ For the current release:
   exists conceptually but is not initialized yet
 - optional integrations should appear as optional or disabled when unconfigured,
   not as blockers for the core local path
+- the recovery order is backup Postgres and exports first, restore Postgres
+  next, then rebuild Qdrant or reseed only when you intentionally want the
+  sample corpus back
+- the full upgrade and rollback checklist lives in
+  [Deployment Guide](docs/DEPLOYMENT.md)
 
 For minimal self-host guidance, see [Operator Stack](docs/AUTHOR_STACK.md) and
 [Deployment Guide](docs/DEPLOYMENT.md).
@@ -338,6 +343,11 @@ Or run each command individually:
   This usually means the active backend is not reachable yet. For the default
   path, start Postgres first and Qdrant if you are using the recommended
   retrieval stack.
+- Recovery feels unclear:
+  Follow the same order used in the deployment guide: back up Postgres,
+  restore Postgres, rebuild Qdrant if needed, then reseed only when you want
+  the sample corpus back on purpose. Use the deployment guide for the full
+  upgrade and rollback checklist.
 - `/health/runtime` looks unfamiliar:
   Optional services such as Zotero, research semantics, and GraphRAG can show
   as disabled or optional while the app is still fully ready for the default

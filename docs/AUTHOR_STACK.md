@@ -95,5 +95,17 @@ Before relying on long-running jobs or retrieval:
 - initialize or rebuild Qdrant when the default retrieval path is not ready
 - keep backups of the Postgres schema and important export bundles
 
+## Recovery Order
+
+When you need to recover the trusted-operator stack, use this order:
+
+1. back up the Postgres schema and any export bundles you want to keep
+2. restore the Postgres backup first
+3. run `.venv/bin/saw qdrant-rebuild` if the projection is stale or
+   uninitialized
+4. run `.venv/bin/saw seed-dev-data` only when you intentionally want the
+   sample corpus back on a fresh local stack
+5. confirm the stack with `.venv/bin/saw status` and `GET /health/runtime`
+
 For the minimal self-host checklist, environment variables, and unsupported
 areas, see [Deployment Guide](DEPLOYMENT.md).
