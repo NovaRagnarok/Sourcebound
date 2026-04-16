@@ -1041,6 +1041,7 @@
     const readyCount = state.runtimeStatus.services.filter((service) => service.ready).length;
     const overallTone = runtimeStatusTone(state.runtimeStatus.overall_status);
     const summaryLine = summarizeRuntime() || "Runtime details are available.";
+    const runtimeSteps = partitionRuntimeSteps(state.runtimeStatus.next_steps || []);
 
     nodes.runtimePanel.innerHTML = `
       <div class="runtime-shell">
@@ -1057,16 +1058,56 @@
           ${
             state.runtimeStatus.next_steps.length
               ? `
-                <div class="field">
-                  <label>Next steps</label>
-                  <ol class="next-step-list">
-                    ${state.runtimeStatus.next_steps
-                      .map((step) => `<li>${escapeHtml(step)}</li>`)
-                      .join("")}
-                  </ol>
-                </div>
+                ${runtimeSteps.blocking.length
+                  ? `
+                    <div class="field runtime-step-group">
+                      <label>Blocking the default path</label>
+                      <ol class="next-step-list next-step-list-blocking">
+                        ${runtimeSteps.blocking
+                          .map((step) => `<li>${escapeHtml(step)}</li>`)
+                          .join("")}
+                      </ol>
+                    </div>
+                  `
+                  : ""
+                }
+                ${runtimeSteps.optional.length
+                  ? `
+                    <div class="field runtime-step-group runtime-step-group-optional">
+                      <label>Optional later</label>
+                      <ol class="next-step-list next-step-list-optional">
+                        ${runtimeSteps.optional
+                          .map((step) => `<li>${escapeHtml(step)}</li>`)
+                          .join("")}
+                      </ol>
+                    </div>
+                  `
+                  : ""
+                }
+                ${runtimeSteps.other.length
+                  ? `
+                    <div class="field runtime-step-group">
+                      <label>Additional follow-up</label>
+                      <ol class="next-step-list">
+                        ${runtimeSteps.other
+                          .map((step) => `<li>${escapeHtml(step)}</li>`)
+                          .join("")}
+                      </ol>
+                    </div>
+                  `
+                  : ""
+                }
               `
               : "<div class='helper'>No follow-up steps are reported.</div>"
+          }
+          ${
+            runtimeSteps.optional.length
+              ? `
+                <div class="helper runtime-helper-note">
+                  Optional integrations can wait until the default Postgres + Qdrant path is stable.
+                </div>
+              `
+              : ""
           }
         </div>
         <div class="service-grid">
@@ -1208,12 +1249,13 @@
     const nextMove = visibleWriterActions[0];
     const sampleProjectLoaded = isSeededSampleProject(profile);
     const setupChecklist = buildWorkspaceSetupChecklist(profile);
+    const runtimeSteps = partitionRuntimeSteps(state.runtimeStatus?.next_steps || []);
     const remainingSetupSteps = setupChecklist.filter((item) => !item.ready).length;
     const workspaceTitle = setupMode
       ? "Finish the local stack setup"
       : (profile?.project_name || "Set up your first writing project");
     const workspaceLead = setupMode
-      ? "Bring Postgres and Qdrant online, seed the sample project, and the workspace will shift into the normal research-review-compose loop."
+      ? "Finish the blocking setup steps first. Optional integrations can wait until the default Postgres + Qdrant workspace is live."
       : sampleProjectLoaded
         ? (
             profile?.narrative_focus ||
@@ -1236,12 +1278,12 @@
     });
     const actionHeading = setupMode ? "First-run checklist" : "Next actions";
     const actionLead = setupMode
-      ? "Run these in order for the default Postgres + Qdrant stack. The workspace will settle into the normal loop once the sample project appears."
+      ? "Run these blocking steps in order for the default Postgres + Qdrant stack. Optional integrations stay below the line until the sample project appears."
       : "The shortest route to stronger pages is research, review, compose, then edit.";
     const placeSummary = setupMode ? "Rouen sample project" : (profile?.geography || "Not set");
     const eraSummary = setupMode ? "Postgres + Qdrant default path" : projectPeriod;
     const attentionSummary = setupMode
-      ? `${remainingSetupSteps} ${remainingSetupSteps === 1 ? "step" : "steps"} left`
+      ? `${remainingSetupSteps} ${remainingSetupSteps === 1 ? "blocking step" : "blocking steps"} left`
       : (nextMove?.badge || `${state.workspaceSummary?.pending_review_count ?? pendingCandidates.length} waiting`);
 
     return `
@@ -1265,7 +1307,7 @@
                 : ""
             }
             <div class="workspace-hero-actions">${heroActionMarkup}</div>
-            ${setupMode ? renderWorkspaceSetupChecklist(setupChecklist) : ""}
+            ${setupMode ? renderWorkspaceSetupChecklist(setupChecklist, runtimeSteps.optional) : ""}
           </div>
           <div class="workspace-hero-meta">
             <div class="workspace-keyline">
@@ -1533,7 +1575,7 @@
         command: "docker compose up -d postgres",
         ready: postgresReady,
         tone: postgresReady ? "verified" : "queued",
-        badge: postgresReady ? "ready" : "required",
+        badge: postgresReady ? "ready" : "required now",
       },
       {
         step: "2",
@@ -1542,7 +1584,7 @@
         command: "docker compose up -d qdrant",
         ready: qdrantReady,
         tone: qdrantReady ? "verified" : "queued",
-        badge: qdrantReady ? "ready" : (postgresReady ? "next" : "after Postgres"),
+        badge: qdrantReady ? "ready" : (postgresReady ? "required next" : "after Postgres"),
       },
       {
         step: "3",
@@ -1551,12 +1593,12 @@
         command: ".venv/bin/saw seed-dev-data",
         ready: sampleReady,
         tone: sampleReady ? "verified" : "probable",
-        badge: sampleReady ? "loaded" : (qdrantReady ? "next" : "after Qdrant"),
+        badge: sampleReady ? "loaded" : (qdrantReady ? "required next" : "after Qdrant"),
       },
     ];
   }
 
-  function renderWorkspaceSetupChecklist(checklist) {
+  function renderWorkspaceSetupChecklist(checklist, optionalSteps = []) {
     return `
       <div class="workspace-setup-strip">
         ${checklist
@@ -1582,6 +1624,21 @@
           )
           .join("")}
       </div>
+      ${
+        optionalSteps.length
+          ? `
+            <div class="setup-follow-up-note">
+              <span class="rail-label">Optional later</span>
+              <ul class="setup-follow-up-list">
+                ${optionalSteps
+                  .slice(0, 3)
+                  .map((step) => `<li>${escapeHtml(step)}</li>`)
+                  .join("")}
+              </ul>
+            </div>
+          `
+          : ""
+      }
     `;
   }
 
@@ -5421,6 +5478,22 @@
       return "uninitialized";
     }
     return service.ready ? "healthy" : "attention";
+  }
+
+  function partitionRuntimeSteps(steps) {
+    return (steps || []).reduce(
+      (groups, step) => {
+        if (step.startsWith("Optional after first run")) {
+          groups.optional.push(step);
+        } else if (step.startsWith("Required") || step.startsWith("Non-default local mode detected")) {
+          groups.blocking.push(step);
+        } else {
+          groups.other.push(step);
+        }
+        return groups;
+      },
+      { blocking: [], optional: [], other: [] }
+    );
   }
 
   function renderReachability(value) {

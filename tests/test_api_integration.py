@@ -220,6 +220,20 @@ def test_setup_surfaces_boot_without_default_services(monkeypatch) -> None:
     monkeypatch.setattr(settings, "research_semantic_enabled", False)
     monkeypatch.setattr(settings, "graph_rag_enabled", False)
     monkeypatch.setattr(settings, "zotero_library_id", None)
+    monkeypatch.setattr(
+        "source_aware_worldbuilding.services.status._probe_postgres",
+        lambda dsn: (False, "Postgres connection failed for test."),
+    )
+    monkeypatch.setattr(
+        QdrantProjectionAdapter,
+        "runtime_probe",
+        lambda self: (
+            "qdrant:unavailable",
+            False,
+            False,
+            "Qdrant is unavailable for test.",
+        ),
+    )
 
     with TestClient(app) as client:
         root = client.get("/", follow_redirects=False)
@@ -235,8 +249,12 @@ def test_setup_surfaces_boot_without_default_services(monkeypatch) -> None:
     assert workspace.status_code == 200
     body = workspace.json()
     assert body["project"] is None
-    assert any(item["title"] == "Start Postgres" for item in body["next_actions"])
-    assert any(item["title"] == "Start Qdrant" for item in body["next_actions"])
+    postgres_action = next(item for item in body["next_actions"] if item["title"] == "Start Postgres")
+    qdrant_action = next(item for item in body["next_actions"] if item["title"] == "Start Qdrant")
+    assert postgres_action["badge"] == "blocking"
+    assert "blocking the default workspace path" in postgres_action["summary"].lower()
+    assert qdrant_action["badge"] == "required next"
+    assert not any("zotero" in item["summary"].lower() for item in body["next_actions"])
 
 
 def test_runtime_health_route_reports_degraded_when_quality_layers_are_missing(monkeypatch) -> None:
@@ -362,8 +380,10 @@ def test_workspace_summary_guides_unseeded_default_style_runtime(
     body = workspace_summary.json()
     assert body["project"] is None
     assert body["reviewed_canon_count"] == 0
-    assert any(item["title"] == "Seed dev data" for item in body["next_actions"])
-    assert any(item["badge"] == "seed" for item in body["next_actions"])
+    seed_action = next(item for item in body["next_actions"] if item["title"] == "Seed dev data")
+    assert seed_action["badge"] == "required next"
+    assert "required before the sample workspace can load" in seed_action["summary"].lower()
+    assert not any("optional" in (item["badge"] or "").lower() for item in body["next_actions"])
 
 
 def test_review_queue_route_returns_enriched_cards(temp_data_dir) -> None:

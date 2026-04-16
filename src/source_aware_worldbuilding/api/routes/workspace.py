@@ -122,12 +122,12 @@ def _build_setup_actions(runtime_status) -> list[WorkspaceAction]:
                 action_id="start-postgres",
                 title="Start Postgres",
                 summary=(
-                    "Run `docker compose up -d postgres` so Sourcebound can persist workflow "
+                    "Blocking the default workspace path until Sourcebound can persist workflow "
                     "state and canonical claims."
                 ),
                 screen="workspace",
                 tone="queued",
-                badge="postgres",
+                badge="blocking",
                 command="docker compose up -d postgres",
             )
         )
@@ -140,12 +140,12 @@ def _build_setup_actions(runtime_status) -> list[WorkspaceAction]:
                     action_id="seed-dev-data",
                     title="Seed dev data",
                     summary=(
-                        "Run `.venv/bin/saw seed-dev-data` to load the sample project and "
-                        "initialize the default Qdrant projection."
+                        "Required before the sample workspace can load with the default "
+                        "project and initialized Qdrant projection."
                     ),
                     screen="workspace",
                     tone="queued",
-                    badge="seed",
+                    badge="required next",
                     command=".venv/bin/saw seed-dev-data",
                 )
             )
@@ -155,12 +155,12 @@ def _build_setup_actions(runtime_status) -> list[WorkspaceAction]:
                     action_id="start-qdrant",
                     title="Start Qdrant",
                     summary=(
-                        "Run `docker compose up -d qdrant` so query and composition can use "
-                        "the default projection-backed retrieval path."
+                        "Blocking the default workspace path until query and composition can "
+                        "use projection-backed retrieval."
                     ),
                     screen="workspace",
                     tone="queued",
-                    badge="qdrant",
+                    badge="required next",
                     command="docker compose up -d qdrant",
                 )
             )
@@ -171,12 +171,12 @@ def _build_setup_actions(runtime_status) -> list[WorkspaceAction]:
                 action_id="enable-worker",
                 title="Enable the job worker",
                 summary=(
-                    "Set `APP_JOB_WORKER_ENABLED=true` so research, bible regeneration, and "
-                    "export jobs complete without manual intervention."
+                    "Blocking the full workspace loop until research, bible regeneration, and "
+                    "export jobs can finish without manual intervention."
                 ),
                 screen="workspace",
                 tone="queued",
-                badge="worker",
+                badge="blocking",
                 command="APP_JOB_WORKER_ENABLED=true .venv/bin/saw serve --reload",
             )
         )
@@ -185,16 +185,24 @@ def _build_setup_actions(runtime_status) -> list[WorkspaceAction]:
         actions.extend(
             WorkspaceAction(
                 action_id=f"runtime-step-{index}",
-                title="Follow the runtime checklist",
+                title="Blocking runtime step",
                 summary=step,
                 screen="workspace",
                 tone="queued",
-                badge="runtime",
+                badge="blocking",
             )
-            for index, step in enumerate(runtime_status.next_steps[:3], start=1)
+            for index, step in enumerate(_blocking_runtime_steps(runtime_status)[:3], start=1)
         )
 
     return actions[:4]
+
+
+def _blocking_runtime_steps(runtime_status) -> list[str]:
+    return [
+        step
+        for step in runtime_status.next_steps
+        if step.startswith("Required") or step.startswith("Non-default local mode detected")
+    ]
 
 
 def _select_current_section(sections: list[BibleSection]) -> BibleSection | None:
