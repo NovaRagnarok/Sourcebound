@@ -5,7 +5,8 @@ from pathlib import Path
 from typer.testing import CliRunner
 
 from source_aware_worldbuilding.adapters.file_backed import FileBibleSectionStore, FileTruthStore
-from source_aware_worldbuilding.cli import _build_zotero_report, app as cli_app
+from source_aware_worldbuilding.cli import _build_zotero_report
+from source_aware_worldbuilding.cli import app as cli_app
 from source_aware_worldbuilding.domain.enums import (
     BibleSectionGenerationStatus,
     BibleSectionType,
@@ -20,7 +21,6 @@ from source_aware_worldbuilding.pilot_corpus import (
     load_pilot_corpus_manifest,
     run_pilot_corpus,
 )
-from source_aware_worldbuilding.domain.models import SourceRecord
 
 runner = CliRunner()
 

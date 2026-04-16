@@ -25,11 +25,6 @@ from source_aware_worldbuilding.demo_corpus import (
     _build_source_document_record,
     load_demo_corpus_manifest,
 )
-from source_aware_worldbuilding.pilot_corpus import (
-    _build_pilot_source_document_record,
-    available_pilot_corpora,
-    load_pilot_corpus_manifest,
-)
 from source_aware_worldbuilding.domain.enums import ExtractionRunStatus
 from source_aware_worldbuilding.domain.models import (
     CandidateClaim,
@@ -39,6 +34,11 @@ from source_aware_worldbuilding.domain.models import (
     SourceDocumentRecord,
     SourceRecord,
     TextUnit,
+)
+from source_aware_worldbuilding.pilot_corpus import (
+    _build_pilot_source_document_record,
+    available_pilot_corpora,
+    load_pilot_corpus_manifest,
 )
 from source_aware_worldbuilding.services.normalization import NormalizationService
 
@@ -291,25 +291,27 @@ def _prepare_corpus(dataset: ExtractionEvalDataset) -> _PreparedCorpus:
         source_documents: list[SourceDocumentRecord]
         source_ids: list[str]
         if dataset.corpus_id in set(available_pilot_corpora()):
-            manifest, corpus_dir = load_pilot_corpus_manifest(dataset.corpus_id)
+            pilot_manifest, corpus_dir = load_pilot_corpus_manifest(dataset.corpus_id)
             sources = []
             source_documents = []
-            for source_spec in manifest.sources:
+            for source_spec in pilot_manifest.sources:
                 if source_spec.source is None:
                     continue
                 source = source_spec.source.model_copy(deep=True)
                 source.external_source = "pilot_fixture"
-                source.external_id = f"PILOT-{manifest.corpus_id}-{source_spec.lane_id}".upper()
+                source.external_id = (
+                    f"PILOT-{pilot_manifest.corpus_id}-{source_spec.lane_id}".upper()
+                )
                 source.zotero_item_key = source.external_id
                 source.raw_metadata_json = {
-                    "pilot_corpus_id": manifest.corpus_id,
+                    "pilot_corpus_id": pilot_manifest.corpus_id,
                     "pilot_lane_id": source_spec.lane_id,
                 }
                 sources.append(source)
                 for document_spec in source_spec.documents:
                     source_documents.append(
                         _build_pilot_source_document_record(
-                            manifest=manifest,
+                            manifest=pilot_manifest,
                             corpus_dir=corpus_dir,
                             source_id=source.source_id,
                             lane_id=source_spec.lane_id,
@@ -318,8 +320,8 @@ def _prepare_corpus(dataset: ExtractionEvalDataset) -> _PreparedCorpus:
                     )
             source_ids = [source.source_id for source in sources]
         else:
-            manifest, corpus_dir = load_demo_corpus_manifest(dataset.corpus_id)
-            source = manifest.source.model_copy(deep=True)
+            demo_manifest, corpus_dir = load_demo_corpus_manifest(dataset.corpus_id)
+            source = demo_manifest.source.model_copy(deep=True)
             source.external_source = "demo"
             source.external_id = dataset.corpus_id
             source.zotero_item_key = f"demo-{dataset.corpus_id}"
@@ -327,12 +329,12 @@ def _prepare_corpus(dataset: ExtractionEvalDataset) -> _PreparedCorpus:
             sources = [source]
             source_documents = [
                 _build_source_document_record(
-                    manifest,
+                    demo_manifest,
                     corpus_dir,
                     source.source_id,
                     document_spec,
                 )
-                for document_spec in manifest.documents
+                for document_spec in demo_manifest.documents
             ]
             source_ids = [source.source_id]
 

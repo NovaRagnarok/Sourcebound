@@ -395,7 +395,9 @@ def run_pilot_corpus(
         candidate_store=candidate_store,
         evidence_store=evidence_store,
     )
-    extraction_output = ingestion_service.extract_candidates(source_ids=list(lane_to_source_id.values()))
+    extraction_output = ingestion_service.extract_candidates(
+        source_ids=list(lane_to_source_id.values())
+    )
 
     review_service = ReviewService(
         candidate_store=candidate_store,
@@ -518,7 +520,7 @@ def run_pilot_corpus(
         candidate_count=len(extraction_output.candidates),
         needs_split_count=sum(1 for item in final_candidates if item.review_state == "needs_split"),
         needs_edit_count=sum(1 for item in final_candidates if item.review_state == "needs_edit"),
-        evidence_quality_mix=dict(evidence_quality_mix),
+        evidence_quality_mix={str(key): value for key, value in evidence_quality_mix.items()},
         blind_review_card_count=evidence_quality_mix.get("blind", 0),
         approved_claim_count=len(truth_store.list_claims()),
         unresolved_candidate_count=sum(
@@ -603,7 +605,8 @@ def _build_source_summaries(
         gate_failures: list[str] = []
         if len(documents) != source_spec.expected_outcome.document_count:
             gate_failures.append(
-                f"expected {source_spec.expected_outcome.document_count} documents, got {len(documents)}"
+                "expected "
+                f"{source_spec.expected_outcome.document_count} documents, got {len(documents)}"
             )
         for key, value in source_spec.expected_outcome.stage_summary.items():
             if stage_summary.get(key, 0) != value:
@@ -655,7 +658,9 @@ def _evaluate_pilot_thresholds(
     if happy_path_failed_documents > manifest.thresholds.max_happy_path_failed_documents:
         failures.append(
             "happy-path document failures exceeded threshold "
-            f"({happy_path_failed_documents} > {manifest.thresholds.max_happy_path_failed_documents})"
+            "("
+            f"{happy_path_failed_documents} > "
+            f"{manifest.thresholds.max_happy_path_failed_documents})"
         )
     blind_review_cards = sum(1 for card in review_cards if card.evidence_quality == "blind")
     if blind_review_cards > manifest.thresholds.max_blind_review_cards:
@@ -712,7 +717,10 @@ def _evaluate_pilot_thresholds(
                 failures.append("important_fact_recall fell below pilot threshold.")
             if metrics.get("claim_precision", 0.0) < thresholds.claim_precision:
                 failures.append("claim_precision fell below pilot threshold.")
-            if burden.get("avg_actions_per_matched_candidate", 99.0) > thresholds.avg_reviewer_actions:
+            if (
+                burden.get("avg_actions_per_matched_candidate", 99.0)
+                > thresholds.avg_reviewer_actions
+            ):
                 failures.append("avg reviewer actions exceeded pilot threshold.")
             if evidence.get("avg_anchor_focus", 0.0) < thresholds.avg_anchor_focus:
                 failures.append("avg anchor focus fell below pilot threshold.")
@@ -735,7 +743,11 @@ def _run_live_zotero_smoke(manifest: PilotCorpusManifest) -> PilotCorpusLiveZote
     adapter = ZoteroCorpusAdapter()
     try:
         sources = adapter.pull_sources_by_item_keys(live_spec.item_keys)
-        documents = adapter.discover_source_documents(sources, existing_documents=[], force_refresh=True)
+        documents = adapter.discover_source_documents(
+            sources,
+            existing_documents=[],
+            force_refresh=True,
+        )
     except Exception as exc:
         return PilotCorpusLiveZoteroSummary(
             status="failed",
@@ -878,7 +890,11 @@ def _build_pilot_report(summary: PilotCorpusRunSummary, review_cards) -> str:
         )
     if summary.extraction_eval is not None:
         heuristic = next(
-            (item for item in summary.extraction_eval.get("paths", []) if item.get("path") == "heuristic"),
+            (
+                item
+                for item in summary.extraction_eval.get("paths", [])
+                if item.get("path") == "heuristic"
+            ),
             None,
         )
         if heuristic is not None:
@@ -891,7 +907,8 @@ def _build_pilot_report(summary: PilotCorpusRunSummary, review_cards) -> str:
                     "## Extraction Eval",
                     f"- important_fact_recall: {metrics.get('important_fact_recall')}",
                     f"- claim_precision: {metrics.get('claim_precision')}",
-                    f"- avg_actions_per_matched_candidate: {burden.get('avg_actions_per_matched_candidate')}",
+                    "- avg_actions_per_matched_candidate: "
+                    f"{burden.get('avg_actions_per_matched_candidate')}",
                     f"- avg_anchor_focus: {evidence.get('avg_anchor_focus')}",
                 ]
             )
