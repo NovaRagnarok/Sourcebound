@@ -50,6 +50,20 @@ surfaces such as `/operator/`, setup/recovery, and other mutation-heavy admin
 actions. Deployment guidance is intentionally minimal and aimed at self-hosted
 technical operators rather than a polished multi-tenant product rollout.
 
+## Support Policy
+
+- Supported:
+  Python `3.11` and `3.12`, the Postgres-plus-Postgres core backend path, and
+  the trusted-operator runtime with the in-process worker enabled
+- Experimental:
+  zero-infra file-backed local mode and SQLite app-state mode
+- Provisional:
+  GraphRAG, research semantics, live Zotero workflows, and the Wikibase
+  truth-store path
+
+For the canonical support matrix and deployment-policy wording, see
+[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+
 ## What To Try First
 
 For the recommended fresh-clone local path:

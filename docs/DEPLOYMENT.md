@@ -46,6 +46,21 @@ application:
   rebuildable projection rather than the source of truth
 - Postgres-backed app state and canon are the stable core runtime path
 
+## Support Matrix
+
+| Area | Supported | Experimental | Provisional |
+| --- | --- | --- | --- |
+| Python versions | Python `3.11` and `3.12` | none | none |
+| Backend combinations | `APP_STATE_BACKEND=postgres` + `APP_TRUTH_BACKEND=postgres` | `APP_STATE_BACKEND=file` + `APP_TRUTH_BACKEND=file`; `APP_STATE_BACKEND=sqlite` with the configured truth backend | `APP_TRUTH_BACKEND=wikibase` |
+| Retrieval/runtime modes | Postgres-backed app state and canon with `QDRANT_ENABLED=true` in the trusted-operator stack | Postgres-backed app state and canon with `QDRANT_ENABLED=false`; zero-infra file-backed local mode | GraphRAG-backed extraction; research semantics; live Zotero workflows |
+| Deployment shapes | local developer mode and the supported single-host Compose path in this guide | none | broader public-internet or multi-host deployment shapes |
+
+Use these support levels consistently:
+
+- `Supported`: routine and documented for the current trusted-operator product boundary
+- `Experimental`: usable for intentional local testing, but not the default operator path
+- `Provisional`: implemented or supported in narrow cases, but still setup-heavy or not yet routine
+
 ## Recommended Runtime Shape
 
 Smallest supported self-host deployment:

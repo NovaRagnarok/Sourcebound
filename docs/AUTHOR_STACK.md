@@ -48,6 +48,17 @@ GRAPH_RAG_ENABLED=false
 This is the recommended runtime because it matches the current shipped surface
 without forcing external integrations on first run.
 
+## Support Policy
+
+- Supported:
+  Python `3.11` and `3.12`, the Postgres-backed app-state and canon path, and
+  the trusted-operator stack with the in-process worker enabled
+- Experimental:
+  zero-infra file-backed local mode and SQLite app-state mode
+- Provisional:
+  GraphRAG, research semantics, live Zotero workflows, and the Wikibase
+  truth-store path
+
 ## Why This Stack
 
 This keeps the daily writing and operator loop dependable:
