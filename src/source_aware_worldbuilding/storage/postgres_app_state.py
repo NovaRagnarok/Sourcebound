@@ -11,8 +11,13 @@ from psycopg.types.json import Jsonb
 from pydantic import BaseModel
 
 T = TypeVar("T", bound=BaseModel)
+POSTGRES_SCHEMA_VERSION = 1
 
 TABLE_DEFINITIONS = {
+    "schema_metadata": """
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+    """,
     "sources": """
         source_id TEXT PRIMARY KEY,
         payload JSONB NOT NULL
@@ -211,6 +216,7 @@ TABLE_DEFINITIONS = {
 }
 
 TABLE_ORDER = [
+    "schema_metadata",
     "author_decisions",
     "claim_versions",
     "claim_reviews",
@@ -272,6 +278,64 @@ class PostgresAppStateStore:
     def _connect(self):
         return connect(self.dsn, autocommit=True, row_factory=dict_row)
 
+    @classmethod
+    def inspect_schema_compatibility(cls, dsn: str, schema: str) -> dict[str, object]:
+        report: dict[str, object] = {
+            "schema": schema,
+            "schema_version": None,
+            "expected_schema_version": POSTGRES_SCHEMA_VERSION,
+            "compatible": False,
+        }
+        with connect(dsn, autocommit=True, row_factory=dict_row) as connection:
+            schema_row = connection.execute(
+                """
+                SELECT 1
+                FROM information_schema.schemata
+                WHERE schema_name = %s
+                """,
+                (schema,),
+            ).fetchone()
+            if schema_row is None:
+                report["detail"] = "Schema does not exist yet."
+                return report
+
+            table_row = connection.execute(
+                """
+                SELECT 1
+                FROM information_schema.tables
+                WHERE table_schema = %s AND table_name = 'schema_metadata'
+                """,
+                (schema,),
+            ).fetchone()
+            if table_row is None:
+                report["detail"] = "Schema metadata table is missing."
+                return report
+
+            version_row = connection.execute(
+                SQL("SELECT value FROM {}.schema_metadata WHERE key = %s").format(
+                    Identifier(schema),
+                ),
+                ("schema_version",),
+            ).fetchone()
+            if version_row is None:
+                report["detail"] = "Schema version marker is missing."
+                return report
+
+        try:
+            current_version = int(version_row["value"])
+        except (TypeError, ValueError):
+            report["detail"] = "Schema version marker is invalid."
+            return report
+
+        report["schema_version"] = current_version
+        report["compatible"] = current_version == POSTGRES_SCHEMA_VERSION
+        report["detail"] = (
+            "Schema compatibility matches the current supported upgrade path."
+            if report["compatible"]
+            else "Schema compatibility does not match the current supported upgrade path."
+        )
+        return report
+
     def _initialize(self) -> None:
         with self._connect() as connection:
             cursor = connection.cursor()
@@ -287,6 +351,26 @@ class PostgresAppStateStore:
                 )
             for statement in POST_INIT_STATEMENTS:
                 cursor.execute(SQL(statement.format(schema="{}")).format(Identifier(self.schema)))
+            cursor.execute(
+                SQL(
+                    "INSERT INTO {}.schema_metadata (key, value) VALUES (%s, %s) "
+                    "ON CONFLICT (key) DO NOTHING"
+                ).format(Identifier(self.schema)),
+                ("schema_version", str(POSTGRES_SCHEMA_VERSION)),
+            )
+
+    def schema_version(self) -> int | None:
+        query = SQL("SELECT value FROM {}.schema_metadata WHERE key = %s").format(
+            Identifier(self.schema),
+        )
+        with self._connect() as connection:
+            row = connection.execute(query, ("schema_version",)).fetchone()
+        if row is None:
+            return None
+        return int(row["value"])
+
+    def schema_version_report(self) -> dict[str, object]:
+        return self.inspect_schema_compatibility(self.dsn, self.schema)
 
     def clear_all(self) -> None:
         with self._connect() as connection:

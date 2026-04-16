@@ -215,9 +215,13 @@ paths are back in shape before you touch Qdrant or reseed.
 ### Qdrant Rebuild
 
 Qdrant does not need to be treated as the authoritative data source. It is a
-rebuildable projection that can be restored from canon plus evidence.
+refreshable projection layer over canon plus evidence.
 
-If the projection exists but is stale or uninitialized:
+`qdrant-rebuild` re-upserts the current approved claims and evidence into the
+active projection collection so the supported retrieval path can catch back up
+to the current canon state.
+
+If the projection is stale or uninitialized:
 
 1. bring Qdrant back up if needed with `docker compose up -d qdrant`
 2. run `.venv/bin/saw qdrant-rebuild`
@@ -246,8 +250,13 @@ For a routine local upgrade:
 1. take a Postgres backup first
 2. update the checked-out code and any dependency pins
 3. rerun `make bootstrap` if the dependency set changed
-4. run `make check`
-5. restart the app and verify with `.venv/bin/saw status`
+4. run `.venv/bin/saw upgrade-check --json-output` and confirm the Postgres
+   schema is compatible with the current code
+5. if the default retrieval path is enabled, run
+   `.venv/bin/saw qdrant-rebuild --json-output` to re-upsert the current canon
+   and evidence into the active projection collection
+6. run `make check`
+7. restart the app and verify with `.venv/bin/saw status`
 
 ### Rollback
 
@@ -257,9 +266,11 @@ If an upgrade needs to be rolled back:
 2. restore the previous code checkout or release artifact
 3. restore the Postgres backup taken before the upgrade if schema or data
    changed
-4. rerun `.venv/bin/saw qdrant-rebuild` if the projection needs to be brought
+4. rerun `.venv/bin/saw upgrade-check --json-output` to confirm the restored
+   checkout still matches the restored Postgres schema
+5. rerun `.venv/bin/saw qdrant-rebuild` if the projection needs to be brought
    back into sync
-5. confirm readiness with `.venv/bin/saw status`
+6. confirm readiness with `.venv/bin/saw status`
 
 ## Unsupported Or Not Yet Productized
 

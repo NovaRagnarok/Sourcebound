@@ -170,6 +170,7 @@ from source_aware_worldbuilding.services.status import (
     runtime_startup_issues,
 )
 from source_aware_worldbuilding.settings import settings
+from source_aware_worldbuilding.storage.postgres_app_state import PostgresAppStateStore
 
 app = typer.Typer(help="Source-Aware Worldbuilding CLI")
 
@@ -1891,6 +1892,33 @@ def _rebuild_qdrant_projection() -> dict[str, object]:
     }
 
 
+def _upgrade_check_report() -> dict[str, object]:
+    postgres_enabled = settings.postgres_enabled
+    report: dict[str, object] = {
+        "postgres_enabled": postgres_enabled,
+        "state_backend": settings.app_state_backend,
+        "truth_backend": settings.app_truth_backend,
+        "projection_rebuild_command": ".venv/bin/saw qdrant-rebuild --json-output",
+        "status_command": ".venv/bin/saw status --json-output",
+    }
+    if not postgres_enabled:
+        report.update(
+            {
+                "compatible": True,
+                "detail": "Postgres is not enabled for the current app state or truth store.",
+            }
+        )
+        return report
+
+    report.update(
+        PostgresAppStateStore.inspect_schema_compatibility(
+            settings.app_postgres_dsn,
+            settings.app_postgres_schema,
+        )
+    )
+    return report
+
+
 def _ensure_seed_prerequisites() -> dict[str, object] | None:
     startup_issues = settings.startup_validation_issues()
     if startup_issues:
@@ -1991,6 +2019,31 @@ def qdrant_rebuild(json_output: bool = False) -> None:
         f"with {report['claim_count']} claims and {report['evidence_count']} evidence snippets "
         f"(created={'yes' if report['projection_created'] else 'no'})."
     )
+
+
+@app.command("upgrade-check")
+def upgrade_check(json_output: bool = False) -> None:
+    try:
+        report = _upgrade_check_report()
+    except RuntimeError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    if json_output:
+        typer.echo(json.dumps(report, indent=2))
+        return
+
+    if not report["postgres_enabled"]:
+        print(f"[yellow]Upgrade check skipped:[/yellow] {report['detail']}")
+        return
+
+    compatibility = "compatible" if report["compatible"] else "incompatible"
+    print(
+        f"[green]Postgres schema check:[/green] {compatibility} "
+        f"(schema={report['schema']}, version={report['schema_version']}, "
+        f"expected={report['expected_schema_version']})"
+    )
+    print(f"[cyan]Projection rebuild command:[/cyan] {report['projection_rebuild_command']}")
+    print(f"[cyan]Status verification command:[/cyan] {report['status_command']}")
 
 
 @app.command()

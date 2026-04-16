@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import socket
 import subprocess
@@ -9,9 +10,11 @@ import pytest
 from fastapi.testclient import TestClient
 from psycopg import connect
 from psycopg.sql import SQL, Identifier
+from typer.testing import CliRunner
 
 from source_aware_worldbuilding.adapters.postgres_backed import PostgresTruthStore
 from source_aware_worldbuilding.api.main import app
+from source_aware_worldbuilding.cli import app as cli_app
 from source_aware_worldbuilding.cli import seed_dev_data
 from source_aware_worldbuilding.domain.enums import ClaimKind, ClaimStatus, ReviewDecision
 from source_aware_worldbuilding.domain.models import ApprovedClaim, EvidenceSnippet, ReviewEvent
@@ -28,6 +31,9 @@ def _table_count(dsn: str, schema: str, table_name: str) -> int:
         count = connection.execute(query).fetchone()
     assert count is not None
     return int(count[0])
+
+
+runner = CliRunner()
 
 
 def test_operator_flow_routes_share_postgres_backed_state(
@@ -351,6 +357,50 @@ def test_postgres_truth_store_supports_manual_relationship_curation(
         and item.source_kind == "manual"
         for item in store.list_relationships("claim-a")
     )
+
+
+def test_upgrade_check_reports_supported_postgres_schema_version(
+    postgres_app_state: dict[str, str | Path],
+) -> None:
+    seed_dev_data()
+
+    result = runner.invoke(cli_app, ["upgrade-check", "--json-output"])
+
+    assert result.exit_code == 0
+    body = json.loads(result.stdout)
+    assert body["postgres_enabled"] is True
+    assert body["schema"] == str(postgres_app_state["schema"])
+    assert body["schema_version"] == 1
+    assert body["expected_schema_version"] == 1
+    assert body["compatible"] is True
+
+
+def test_upgrade_check_reports_uninitialized_schema_without_bootstrapping(
+    postgres_app_state: dict[str, str | Path],
+) -> None:
+    dsn = str(postgres_app_state["dsn"])
+    schema = str(postgres_app_state["schema"])
+
+    result = runner.invoke(cli_app, ["upgrade-check", "--json-output"])
+
+    assert result.exit_code == 0
+    body = json.loads(result.stdout)
+    assert body["postgres_enabled"] is True
+    assert body["schema"] == schema
+    assert body["schema_version"] is None
+    assert body["compatible"] is False
+    assert "does not exist" in body["detail"].lower()
+
+    with connect(dsn, autocommit=True) as connection:
+        exists_row = connection.execute(
+            """
+            SELECT 1
+            FROM information_schema.schemata
+            WHERE schema_name = %s
+            """,
+            (schema,),
+        ).fetchone()
+    assert exists_row is None
 
 
 @pytest.mark.live_qdrant
